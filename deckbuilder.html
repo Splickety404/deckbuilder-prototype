@@ -8,6 +8,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- Google Identity Services — the sign-in gate below is what card access
+     is actually restricted by; see the ACCESS section further down. -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{
   --bg:#f4f5f7;
@@ -108,6 +111,29 @@ select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(
 }
 .loading-text{font-size:16px;font-weight:600;color:var(--text-soft);}
 @keyframes eoo-spin{ to{ transform:rotate(360deg); } }
+
+/* ---------- Sign-in gate ---------- */
+/* Blocks the whole app until Google sign-in succeeds AND the signed-in
+   email has been granted access to at least one card set (see whoAmI in
+   the Apps Script). Sits above everything, including #loading-overlay,
+   and is never dismissible by clicking outside or pressing Escape — this
+   isn't a modal, it's the front door. */
+#signin-gate{
+  position:fixed;inset:0;z-index:300;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);
+}
+#signin-gate.hidden{display:none;}
+#signin-gate .signin-box{
+  width:min(360px,90vw);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:16px;
+}
+#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
+#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
+#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
+#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
+#signinAccountLine{font-size:12px;color:var(--text-soft);cursor:pointer;white-space:nowrap;}
+#signinAccountLine:hover{color:var(--text);text-decoration:underline;}
 
 /* ---------- Top bar ---------- */
 #topbar{
@@ -393,6 +419,16 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 </head>
 <body>
 
+<div id="signin-gate">
+  <div class="signin-box">
+    <h1>ECHO OF OMENS</h1>
+    <p>Sign in with the Google account you were given access with.</p>
+    <div id="googleSignInButton"></div>
+    <div class="signin-status" id="signinStatus"></div>
+    <div class="signin-error" id="signinError"></div>
+  </div>
+</div>
+
 <div id="loading-overlay">
   <div class="loading-spinner"></div>
   <div class="loading-text">Loading card data…</div>
@@ -414,13 +450,14 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
     <div class="btn btn-accent" id="btnExport">Export ▾</div>
     <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
     <div class="btn" id="btnDownloadPcio">Download Board</div>
-    <div class="btn btn-sm" id="btnManageSets" title="Import or remove additional card sets">Sets</div>
+    <div class="btn btn-sm" id="btnManageSets" title="Which card sets you have access to">Sets</div>
     <div class="btn btn-icon" id="btnHelp" title="Help">❔</div>
     <label id="cardScaleControl" title="Card size" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-soft);">
       <span>Size</span>
       <input type="range" id="cardScaleSlider" min="120" max="280" step="10" style="width:80px;">
     </label>
     <div class="btn btn-icon" id="btnThemeToggle" title="Toggle light/dark">🌓</div>
+    <div id="signinAccountLine" title="Click to sign out"></div>
     <div id="sync-status">loading card data…</div>
     <div class="btn btn-sm" id="btnResync" title="Re-fetch latest card data">↻ Resync</div>
   </header>
@@ -553,13 +590,8 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
     <div class="modal-box" style="width:min(480px,92vw);">
       <div class="modal-header"><h2>Card Sets</h2><div class="btn btn-icon" data-close="setsModal">✕</div></div>
       <div class="modal-body">
-        <div id="setsList" style="margin-bottom:14px;"></div>
-        <label style="font-size:12px;font-weight:600;color:var(--text-soft);display:block;margin-bottom:6px;">Import an additional set by its Google Drive folder ID</label>
-        <div style="display:flex;gap:8px;">
-          <input type="text" id="setFolderIdInput" placeholder="Paste folder ID..." style="flex:1;">
-          <div class="btn btn-accent btn-sm" id="btnImportSet">Import</div>
-        </div>
-        <div id="setImportStatus" style="font-size:12.5px;color:var(--text-soft);margin-top:8px;min-height:1em;"></div>
+        <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">The sets below are the ones your signed-in Google account currently has access to. This list is entirely server-controlled — to get access to another set, ask whoever administers the sets to share its Drive folder with your account.</p>
+        <div id="setsList"></div>
       </div>
     </div>
   </div>
@@ -626,32 +658,21 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 /* =========================================================================
    CONFIG
    ========================================================================= */
-// No Google Sheet id is hardcoded here — not even Set 1's. The user pastes every
-// sheet id (Set 1 included) via the Card Sets modal, same as every additional set.
+// No Google Sheet id is hardcoded here. Which sets exist, and which of them this signed-in
+// user can see, is decided entirely by the server (Code.gs), based on live Google Drive
+// folder-sharing permissions — this file never maintains its own access list.
 // WEBAPP_URL is the deckbuilder's own Apps Script deployment — reusable infrastructure,
-// not a specific spreadsheet — so it (and the generic card-back image URLs it serves)
-// is the only thing that may stay hardcoded.
+// not a specific spreadsheet — so it is the only endpoint that may stay hardcoded.
 const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxuoxW84Mn4Grrq2T9_RCoCJO1ftMdBPJ2gNqcwW5T7wXNonNjZaKOcxgc3ZQAHanVpZQ/exec';
-function gvizJsonpUrl(sheetId){ return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json&headers=1&gid=0&responseHandler=`; }
-function csvUrl(sheetId){ return `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&gid=0`; }
-function csvUrlFallback(sheetId){ return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`; }
+// Google OAuth Client ID — not a secret, meant to sit in client-side code. Must match the
+// OAUTH_CLIENT_ID constant in Code.gs so the server accepts ID tokens minted for this app.
+const GOOGLE_CLIENT_ID = '1053912607552-pvrm9heedm4floaohv1olp5k5mdp95lq.apps.googleusercontent.com';
 const DECK_LIMIT = 50;
 const MAX_COPIES = 3;
 const SCHEME_DECK_SIZE = 5;
 const LS_DECKS_KEY = 'eoo_deckbuilder_saved_decks_v2';
 const LS_THEME_KEY = 'eoo_theme';
 const LS_LAST_VISIT_KEY = 'eoo_last_visit';
-const LS_IMPORTED_SETS_KEY = 'eoo_imported_sets';
-const LS_SET1_ENABLED_KEY = 'eoo_set1_enabled';
-const LS_SET1_SHEET_ID_KEY = 'eoo_set1_sheet_id';
-function getSet1Enabled(){ return localStorage.getItem(LS_SET1_ENABLED_KEY) === 'true'; } // default false — Set 1 is opt-in like every other set now
-function setSet1Enabled(v){ localStorage.setItem(LS_SET1_ENABLED_KEY, v ? 'true' : 'false'); }
-// Set 1's own spreadsheet id — pasted by the user (never hardcoded), persisted per-browser.
-function getSet1SheetId(){ return localStorage.getItem(LS_SET1_SHEET_ID_KEY) || ''; }
-function setSet1SheetId(v){
-  if(v) localStorage.setItem(LS_SET1_SHEET_ID_KEY, v);
-  else localStorage.removeItem(LS_SET1_SHEET_ID_KEY);
-}
 const LS_CARD_SCALE_KEY = 'eoo_card_scale';
 const CARD_SCALE_MIN = 120, CARD_SCALE_MAX = 280, CARD_SCALE_DEFAULT = 170;
 // Hover preview is always 20% bigger than the largest size cards can be scaled to —
@@ -660,15 +681,6 @@ const CARD_SCALE_MIN = 120, CARD_SCALE_MAX = 280, CARD_SCALE_DEFAULT = 170;
 const HOVER_PREVIEW_WIDTH = Math.round(CARD_SCALE_MAX * 1.2);
 const HOVER_PREVIEW_SCHEME_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 7/5); // rotated card — width should roughly match a normal preview's height
 const HOVER_FETCH_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 1.3); // fetched a bit larger than display size for crispness
-const SET1_LABEL = 'Set 1 - Emergence';
-
-function getImportedSets(){
-  try{ return JSON.parse(localStorage.getItem(LS_IMPORTED_SETS_KEY) || '[]'); }
-  catch(e){ return []; }
-}
-function setImportedSets(list){
-  localStorage.setItem(LS_IMPORTED_SETS_KEY, JSON.stringify(list));
-}
 
 // Structural fields the app's mechanics depend on — never treated as generic filters.
 const NEVER_FIELDS = new Set(['name','ability','id','is_double_sided','front-image-url','back-image-url','last-updated']);
@@ -713,9 +725,9 @@ function freshDeckSlot(){
 }
 const state = {
   cards: [], byId: new Map(), headers: [], hasImages: false, fieldDefs: [],
-  importedSets: [], // {folderId, setName} — mirrors localStorage, refreshed each load
-  set1Enabled: false, // opt-in like every other set now — read from localStorage at init
-  set1SheetId: '', // user-pasted spreadsheet id for Set 1 — read from localStorage at init, never hardcoded
+  idToken: '', // Google ID token from Sign In With Google — sent with every data request so the server can check Drive permissions
+  userEmail: '', // signed-in user's email, from the server's whoami response (not decoded client-side)
+  authorizedSets: [], // [{folderId, label}] — the sets this signed-in user may see, entirely server-decided
   cardScale: CARD_SCALE_DEFAULT, // grid tile min-width in px — user-adjustable, persisted per-browser
   deckType: 'overlord',          // 'overlord' | 'champion' — which deck you're currently viewing
   // Overlord and Champion are built entirely independently — separate leader, aspect,
@@ -741,86 +753,6 @@ function activeIsSchemeMode(){ return state.deckType==='overlord' && curDeck().o
 /* =========================================================================
    DATA LOADING
    ========================================================================= */
-function loadViaJSONP(sheetId){
-  return new Promise((resolve,reject)=>{
-    const cbName = '__eooCb_' + Math.random().toString(36).slice(2);
-    const script = document.createElement('script');
-    const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP request timed out')); }, 15000);
-    function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-    window[cbName] = (data)=>{ cleanup(); resolve(data); };
-    script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-    script.src = gvizJsonpUrl(sheetId) + cbName + '&_=' + Date.now();
-    document.head.appendChild(script);
-  });
-}
-
-function gvizDataToRowsAndHeaders(data){
-  if(!data || !data.table || !data.table.cols) throw new Error('unexpected response shape from Google Sheets');
-  const headers = data.table.cols.map(c=>(c.label||'').trim());
-  const rows = (data.table.rows||[]).map(r=>{
-    const obj={};
-    headers.forEach((h,i)=>{
-      if(!h) return;
-      const cell = r.c && r.c[i];
-      obj[h] = (cell && cell.v!==null && cell.v!==undefined) ? String(cell.v) : '';
-    });
-    return obj;
-  });
-  return { rows, headers };
-}
-
-// Fetches any spreadsheet's card rows through the deckbuilder's own Apps Script
-// deployment (elevated "Execute as: Me" permissions — works regardless of whether the
-// target sheet itself is publicly shared), given just its user-pasted sheet id. Used
-// for Set 1 exactly the same way fetchSetData() is used for additional sets — no sheet
-// id is ever baked into this app's own source.
-async function fetchCardsBySheetId(sheetId){
-  const url = `${WEBAPP_URL}?cardsForSheet=${encodeURIComponent(sheetId)}`;
-  let result;
-  try{
-    const res = await fetch(url + '&_=' + Date.now());
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    result = await res.json();
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooWaCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result || !result.ok) throw new Error((result && result.error) || 'Unknown error fetching that sheet.');
-  if(!Array.isArray(result.rows) || !result.rows.length) throw new Error('empty/unexpected response shape');
-  return { rows: result.rows, headers: Object.keys(result.rows[0]) };
-}
-
-async function fetchCsvAsRowsAndHeaders(url){
-  const res = await fetch(url + '&_=' + Date.now());
-  if(!res.ok) throw new Error('HTTP '+res.status);
-  const text = await res.text();
-  const parsed = Papa.parse(text, {header:true, skipEmptyLines:true});
-  return { rows: parsed.data, headers: parsed.meta.fields || [] };
-}
-
-async function fetchCardData(sheetId){
-  const attempts = [
-    ['Apps Script Web App', () => fetchCardsBySheetId(sheetId)],
-    ['gviz JSONP', () => loadViaJSONP(sheetId).then(gvizDataToRowsAndHeaders)],
-    ['gviz CSV fetch', () => fetchCsvAsRowsAndHeaders(csvUrl(sheetId))],
-    ['export CSV fetch', () => fetchCsvAsRowsAndHeaders(csvUrlFallback(sheetId))],
-  ];
-  const errors = [];
-  for(const [label, fn] of attempts){
-    try{ return await fn(); }
-    catch(e){ errors.push(`${label}: ${e.message}`); }
-  }
-  throw new Error(`All sync methods failed (${errors.join(' | ')}). Make sure the sheet id is correct and still shared as "Anyone with the link" can view.`);
-}
-
 // Filters + tags a raw set of sheet rows into real card objects, exactly the same way
 // regardless of which set they came from — reused for Set 1's own feed and for every
 // additionally imported set, so behavior stays identical either way.
@@ -884,10 +816,10 @@ function mergeCardSets(setCardLists){
   return [...byId.values()];
 }
 
-// Fetches an additional set's data given just its root folder id — same robust
-// fetch-then-JSONP fallback used everywhere else in this app.
+// Fetches one authorized set's data given its root folder id — the server checks this
+// signed-in user's live Drive permission on that folder before returning anything.
 async function fetchSetData(folderId){
-  const url = `${WEBAPP_URL}?scanSet=${encodeURIComponent(folderId)}`;
+  const url = `${WEBAPP_URL}?scanSet=${encodeURIComponent(folderId)}&idToken=${encodeURIComponent(state.idToken)}`;
   let result;
   try{
     const res = await fetch(url + '&_=' + Date.now());
@@ -909,44 +841,51 @@ async function fetchSetData(folderId){
   return result; // {ok:true, setName, rows}
 }
 
+// Asks the server who this ID token belongs to, and which sets (folder id + label)
+// that email currently has live Drive access to. This is the ONLY place the list of
+// available sets comes from — nothing about sets is ever stored client-side.
+async function fetchWhoAmI(idToken){
+  const url = `${WEBAPP_URL}?whoami=1&idToken=${encodeURIComponent(idToken)}`;
+  let result;
+  try{
+    const res = await fetch(url + '&_=' + Date.now());
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    result = await res.json();
+  }catch(fetchErr){
+    result = await new Promise((resolve,reject)=>{
+      const cbName = '__eooWhoCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+  if(!result.ok) throw new Error(result.error || 'Could not verify your sign-in.');
+  return result; // {ok:true, email, sets:[{folderId,label}]}
+}
+
 async function loadData(silent){
   if(!silent) setSyncStatus('loading card data…');
   showLoadingOverlay();
   try{
     const setCardLists = [];
 
-    if(state.set1Enabled && state.set1SheetId){
-      try{
-        const { rows: rawRows, headers } = await fetchCardData(state.set1SheetId);
-        if(!state.headers.length){ state.headers = headers; state.hasImages = headers.includes('front-image-url'); }
-        setCardLists.push(processRawRows(rawRows, SET1_LABEL, state.set1SheetId));
-      }catch(e){
-        console.error('Could not load Set 1:', e);
-        toast(`Could not load Set 1: ${e.message}`);
-      }
-    }
-
-    const imported = getImportedSets();
-    const stillImported = [];
-    for(const entry of imported){
+    for(const entry of state.authorizedSets){
       try{
         const result = await fetchSetData(entry.folderId);
         if(!state.headers.length && result.rows.length){
-          // Set 1 may be disabled — take the field schema from whichever set loads
-          // data first instead, since every set shares the same column shape.
           state.headers = Object.keys(result.rows[0]);
           state.hasImages = state.headers.includes('front-image-url');
         }
-        setCardLists.push(processRawRows(result.rows, result.setName, result.sheetId));
-        stillImported.push({ folderId: entry.folderId, setName: result.setName, sheetId: result.sheetId }); // keep the label/id fresh if the folder got renamed
+        setCardLists.push(processRawRows(result.rows, result.setName || entry.label, entry.folderId));
       }catch(e){
-        console.error('Could not load imported set '+entry.folderId+':', e);
-        toast(`Could not load set "${entry.setName}": ${e.message}`);
-        stillImported.push(entry); // keep it remembered so they can retry later — just skip its cards this time
+        console.error('Could not load set '+entry.folderId+':', e);
+        toast(`Could not load set "${entry.label}": ${e.message}`);
       }
     }
-    setImportedSets(stillImported);
-    state.importedSets = stillImported;
 
     const rows = mergeCardSets(setCardLists);
 
@@ -990,6 +929,71 @@ async function fetchGenericBacks(){
     }
   }
 }
+
+/* =========================================================================
+   SIGN-IN — Google Identity Services gates the whole app. Nothing loads until
+   the server has verified an ID token and told us which sets that account may see.
+   ========================================================================= */
+const LS_LAST_EMAIL_KEY = 'eoo_last_signed_in_email'; // display-only, purely cosmetic (shown briefly before the button renders) — never used for access control
+function showSigninGate(){ document.getElementById('signin-gate').classList.remove('hidden'); }
+function hideSigninGate(){ document.getElementById('signin-gate').classList.add('hidden'); }
+function setSigninStatus(s){ document.getElementById('signinStatus').textContent = s; }
+function setSigninError(s){ document.getElementById('signinError').textContent = s; }
+
+function initGoogleSignIn(){
+  const remembered = localStorage.getItem(LS_LAST_EMAIL_KEY);
+  if(remembered) setSigninStatus(`Last signed in as ${remembered}`);
+  if(!window.google || !google.accounts || !google.accounts.id){
+    setSigninError('Could not load Google Sign-In. Check your connection and reload.');
+    return;
+  }
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: onGoogleSignIn,
+  });
+  google.accounts.id.renderButton(document.getElementById('googleSignInButton'), {
+    theme: 'outline', size: 'large', text: 'signin_with', width: 280,
+  });
+  google.accounts.id.prompt(); // offers One Tap for a returning, already-Google-signed-in user
+}
+
+async function onGoogleSignIn(response){
+  setSigninError('');
+  setSigninStatus('Checking your access…');
+  try{
+    const who = await fetchWhoAmI(response.credential);
+    if(!who.sets.length){
+      setSigninStatus('');
+      setSigninError(`Signed in as ${who.email}, but that account doesn't have access to any card sets yet. Ask whoever administers the sets to share a set's Drive folder with this account.`);
+      return;
+    }
+    state.idToken = response.credential;
+    state.userEmail = who.email;
+    state.authorizedSets = who.sets;
+    localStorage.setItem(LS_LAST_EMAIL_KEY, who.email);
+    document.getElementById('signinAccountLine').textContent = who.email;
+    hideSigninGate();
+    loadData(false);
+  }catch(e){
+    setSigninStatus('');
+    setSigninError('Sign-in failed: ' + e.message);
+  }
+}
+
+function signOut(){
+  state.idToken = '';
+  state.userEmail = '';
+  state.authorizedSets = [];
+  state.cards = [];
+  state.byId = new Map();
+  if(window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
+  setSigninStatus('');
+  setSigninError('');
+  showSigninGate();
+}
+document.getElementById('signinAccountLine').addEventListener('click', ()=>{
+  if(confirm('Sign out of the deckbuilder?')) signOut();
+});
 
 /* =========================================================================
    HELP
@@ -1058,7 +1062,10 @@ document.getElementById('btnHelp').addEventListener('click', ()=>openHelpModal()
    CARD SETS — import/remove additional sets by folder id
    ========================================================================= */
 function allSetNames(){
-  return [...(state.set1Enabled && state.set1SheetId ? [SET1_LABEL] : []), ...state.importedSets.map(s=>s.setName)];
+  // The filter UI needs the names actually attached to loaded cards (the server's
+  // own setName for each folder), not just the authorized labels, so derive it from
+  // whatever _setName values are currently loaded.
+  return [...new Set(state.cards.map(c=>c._setName))];
 }
 function renderSetFilterGroup(){
   const el = document.getElementById('setFilterGroup');
@@ -1079,95 +1086,25 @@ function renderSetFilterGroup(){
     });
   });
 }
+// Read-only: which sets you can see is decided entirely by the server, from live
+// Drive folder-sharing permissions on your signed-in Google account. There is
+// nothing to import, connect, or forget here anymore — ask whoever administers
+// the sets to share (or unshare) a set's Drive folder with your account.
 function renderSetsList(){
   const el = document.getElementById('setsList');
-  const rows = [];
-  if(state.set1SheetId){
-    rows.push(`<div class="row-item"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="set1EnabledCheckbox" ${state.set1Enabled?'checked':''}><span>${escapeHtml(SET1_LABEL)}</span></label><div class="btn btn-sm" id="btnForgetSet1">Forget ID</div></div>`);
-  }else{
-    rows.push(`<div class="row-item" style="flex-direction:column;align-items:stretch;gap:8px;">
-      <span style="font-weight:600;">${escapeHtml(SET1_LABEL)} — not connected</span>
-      <div style="display:flex;gap:8px;">
-        <input type="text" id="set1SheetIdInput" placeholder="Paste Set 1's spreadsheet ID..." style="flex:1;">
-        <div class="btn btn-accent btn-sm" id="btnConnectSet1">Connect</div>
-      </div>
-    </div>`);
+  if(!state.authorizedSets.length){
+    el.innerHTML = `<div class="row-item" style="color:var(--text-soft);">You don't have access to any card sets yet. Ask whoever administers the sets to share a set's Drive folder with ${escapeHtml(state.userEmail||'your Google account')}.</div>`;
+    return;
   }
-  state.importedSets.forEach(s=>{
-    rows.push(`<div class="row-item"><span>${escapeHtml(s.setName)}</span><div class="btn btn-sm" data-remove="${escapeHtml(s.folderId)}">Remove</div></div>`);
-  });
-  el.innerHTML = rows.join('');
-  if(state.set1SheetId){
-    document.getElementById('set1EnabledCheckbox').addEventListener('change', async (e)=>{
-      state.set1Enabled = e.target.checked;
-      setSet1Enabled(state.set1Enabled);
-      toast(state.set1Enabled ? 'Loading Set 1…' : 'Removing Set 1 — resyncing…');
-      await loadData(false);
-      renderSetsList();
-    });
-    document.getElementById('btnForgetSet1').addEventListener('click', async ()=>{
-      state.set1SheetId = '';
-      setSet1SheetId('');
-      state.set1Enabled = false;
-      setSet1Enabled(false);
-      toast('Set 1 disconnected — resyncing…');
-      renderSetsList();
-      await loadData(false);
-    });
-  }else{
-    document.getElementById('btnConnectSet1').addEventListener('click', async ()=>{
-      const id = document.getElementById('set1SheetIdInput').value.trim();
-      if(!id) return;
-      state.set1SheetId = id;
-      setSet1SheetId(id);
-      state.set1Enabled = true;
-      setSet1Enabled(true);
-      toast('Connecting Set 1…');
-      renderSetsList();
-      await loadData(false);
-    });
-  }
-  el.querySelectorAll('[data-remove]').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      const folderId = btn.dataset.remove;
-      const removed = state.importedSets.find(s=>s.folderId===folderId);
-      state.importedSets = state.importedSets.filter(s=>s.folderId!==folderId);
-      setImportedSets(state.importedSets);
-      renderSetsList();
-      toast(`Removed "${removed?removed.setName:'set'}" — resyncing…`);
-      await loadData(false);
-    });
-  });
+  el.innerHTML = state.authorizedSets.map(s=>
+    `<div class="row-item"><span>${escapeHtml(s.label)}</span></div>`
+  ).join('');
 }
 function openSetsModal(){
-  document.getElementById('setImportStatus').textContent = '';
-  document.getElementById('setFolderIdInput').value = '';
   renderSetsList();
   document.getElementById('setsModal').classList.remove('hidden');
 }
 document.getElementById('btnManageSets').addEventListener('click', openSetsModal);
-document.getElementById('btnImportSet').addEventListener('click', async ()=>{
-  const folderId = document.getElementById('setFolderIdInput').value.trim();
-  const statusEl = document.getElementById('setImportStatus');
-  if(!folderId){ statusEl.textContent = 'Paste a folder ID first.'; statusEl.style.color = 'var(--danger)'; return; }
-  if(state.importedSets.some(s=>s.folderId===folderId)){ statusEl.textContent = 'That set is already imported.'; statusEl.style.color = 'var(--danger)'; return; }
-  statusEl.textContent = 'Scanning folder…';
-  statusEl.style.color = 'var(--text-soft)';
-  try{
-    const result = await fetchSetData(folderId);
-    state.importedSets = [...state.importedSets, { folderId, setName: result.setName }];
-    setImportedSets(state.importedSets);
-    statusEl.textContent = `Imported "${result.setName}" — resyncing…`;
-    statusEl.style.color = 'var(--ok)';
-    renderSetsList();
-    document.getElementById('setFolderIdInput').value = '';
-    await loadData(false);
-    statusEl.textContent = `Imported "${result.setName}" successfully.`;
-  }catch(e){
-    statusEl.textContent = 'Could not import that folder: ' + e.message;
-    statusEl.style.color = 'var(--danger)';
-  }
-});
 
 /* Neutral cards are identified by their aspect value itself (e.g. "OLNeutral"/"CHNeutral"
    in the live data) rather than by process-of-elimination against leader cards. */
@@ -3186,9 +3123,10 @@ initCardScale();
 initVisitTracking();
 document.documentElement.style.setProperty('--hover-preview-width', HOVER_PREVIEW_WIDTH+'px');
 document.documentElement.style.setProperty('--hover-preview-scheme-width', HOVER_PREVIEW_SCHEME_WIDTH+'px');
-state.set1Enabled = getSet1Enabled();
-state.set1SheetId = getSet1SheetId();
-loadData(false);
+// The app itself stays inert until sign-in succeeds — no card data, no sets, nothing
+// is fetched until the server has verified an ID token and told us what that account
+// may see. initGoogleSignIn() renders the button; onGoogleSignIn() is what calls loadData().
+initGoogleSignIn();
 fetchHelpArticles().catch(()=>{}); // warm the cache early so opening Help later feels instant
 </script>
 </body>
