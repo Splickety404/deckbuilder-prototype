@@ -1,0 +1,3133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Echo of Omens — Deckbuilder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- Google Identity Services — the sign-in gate below is what card access
+     is actually restricted by; see the ACCESS section further down. -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root{
+  --bg:#f4f5f7;
+  --surface:#ffffff;
+  --surface-2:#eceef2;
+  --border:#dfe2e8;
+  --text:#171a21;
+  --text-soft:#6b7280;
+  --accent:#4f46e5;
+  --accent-contrast:#ffffff;
+  --accent-soft:#eceafd;
+  --danger:#dc2626;
+  --danger-bg:#fde8e8;
+  --ok:#16a34a;
+  --radius:10px;
+  --radius-sm:6px;
+  --shadow:0 1px 2px rgba(20,20,30,.06), 0 2px 8px rgba(20,20,30,.06);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+html[data-theme="dark"]{
+  --bg:#14161b;
+  --surface:#1c1f26;
+  --surface-2:#242830;
+  --border:#333844;
+  --text:#e7e9ee;
+  --text-soft:#9aa1ae;
+  --accent:#8385f5;
+  --accent-contrast:#12131a;
+  --accent-soft:#292a4a;
+  --danger:#f87171;
+  --danger-bg:#3a1a1a;
+  --ok:#4ade80;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 2px 10px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;}
+body{
+  background:var(--bg);
+  font-family:var(--font);
+  color:var(--text);
+  font-size:14px;
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:6px;}
+
+.card-surface{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
+
+.btn{
+  font-family:var(--font);
+  font-weight:600;
+  font-size:13px;
+  padding:8px 13px;
+  cursor:pointer;
+  color:var(--text);
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  user-select:none;
+  line-height:1.3;
+  transition:background .12s, border-color .12s;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.btn:hover{background:var(--surface-2);}
+.btn:active{transform:translateY(1px);}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.btn-accent{color:var(--accent-contrast);background:var(--accent);border-color:var(--accent);}
+.btn-accent:hover{filter:brightness(1.08);}
+.btn-icon{padding:8px;width:34px;justify-content:center;}
+.btn-sm{padding:3px 8px;font-size:12px;}
+
+h1,h2,h3{font-family:var(--font);margin:0;}
+label{font-size:12px;color:var(--text-soft);font-weight:500;}
+select, input[type=text], input[type=number]{
+  font-family:var(--font);
+  font-size:13px;
+  padding:6px 8px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface);
+  color:var(--text);
+}
+select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent);}
+
+#app{display:flex;flex-direction:column;height:100vh;}
+#loading-overlay{
+  position:fixed;inset:0;z-index:250;
+  display:none;align-items:center;justify-content:center;flex-direction:column;gap:18px;
+  background:var(--bg);
+}
+#loading-overlay.active{display:flex;}
+.loading-spinner{
+  width:64px;height:64px;border-radius:50%;
+  border:6px solid var(--border);border-top-color:var(--accent);
+  animation:eoo-spin 0.9s linear infinite;
+}
+.loading-text{font-size:16px;font-weight:600;color:var(--text-soft);}
+@keyframes eoo-spin{ to{ transform:rotate(360deg); } }
+
+/* ---------- Sign-in gate ---------- */
+/* Blocks the whole app until Google sign-in succeeds AND the signed-in
+   email has been granted access to at least one card set (see whoAmI in
+   the Apps Script). Sits above everything, including #loading-overlay,
+   and is never dismissible by clicking outside or pressing Escape — this
+   isn't a modal, it's the front door. */
+#signin-gate{
+  position:fixed;inset:0;z-index:300;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);
+}
+#signin-gate.hidden{display:none;}
+#signin-gate .signin-box{
+  width:min(360px,90vw);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:16px;
+}
+#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
+#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
+#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
+#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
+#signinAccountLine{font-size:12px;color:var(--text-soft);cursor:pointer;white-space:nowrap;}
+#signinAccountLine:hover{color:var(--text);text-decoration:underline;}
+
+/* ---------- Top bar ---------- */
+#topbar{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 12px;
+  border-bottom:1px solid var(--border);
+  background:var(--surface);
+  flex-wrap:wrap;
+}
+#topbar h1{font-size:16px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;margin-right:6px;}
+.tab-group{display:flex;gap:2px;background:var(--surface-2);padding:3px;border-radius:var(--radius-sm);}
+.tab{font-size:12px;font-weight:600;padding:6px 12px;cursor:pointer;border-radius:5px;color:var(--text-soft);}
+.tab.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow);}
+#sync-status{font-size:12px;color:var(--text-soft);margin-left:auto;white-space:nowrap;}
+#deckNameInput{width:160px;}
+
+/* ---------- Main layout: deck (left) | library (middle) | filters (right) ---------- */
+#main-layout{flex:1;display:flex;min-height:0;}
+
+/* ---------- Deck panel (left) ---------- */
+#deck-panel{
+  width:300px;flex:none;overflow-y:auto;
+  padding:12px;border-right:1px solid var(--border);
+  background:var(--surface);
+  display:flex;flex-direction:column;gap:10px;
+}
+#deck-controls{display:flex;flex-direction:column;gap:8px;padding:10px;background:var(--surface-2);border-radius:var(--radius);}
+.mode-toggle{display:flex;gap:2px;background:var(--surface);padding:3px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+.mode-toggle .tab{flex:1;text-align:center;}
+.leader-chip{display:flex;align-items:center;gap:8px;padding:6px;cursor:pointer;border-radius:var(--radius-sm);}
+.leader-chip:hover{background:var(--surface);}
+.leader-chip img{width:36px;height:50px;object-fit:cover;border-radius:4px;border:1px solid var(--border);}
+.leader-chip .landscape-frame{width:50px;flex:none;border-radius:4px;border:1px solid var(--border);overflow:hidden;}
+.leader-chip .placeholder{font-size:12px;color:var(--text-soft);}
+.leader-chip span:not(.placeholder):not(.chip-remove){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.leader-chip .chip-remove{margin-left:auto;flex:none;padding:3px 7px;border-radius:5px;font-size:12px;color:var(--text-soft);}
+.changed-badge{
+  flex:none;cursor:pointer;font-size:13px;padding:2px 5px;border-radius:5px;
+  background:#fef3c7;color:#92400e;border:1px solid #fbbf24;
+}
+html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-color:#92720a;}
+.leader-chip .changed-badge{margin-left:auto;}
+.deck-stack .changed-badge{margin-left:6px;}
+.removed-badge{
+  flex:none;cursor:pointer;font-size:12px;font-weight:600;padding:2px 6px;border-radius:5px;
+  background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger);white-space:nowrap;
+}
+.leader-chip .removed-badge + span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.deck-stack .removed-badge{margin-left:6px;}
+.leader-chip .chip-remove:hover{background:var(--danger-bg);color:var(--danger);}
+#aspectRow{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+#aspectRow select{flex:1;}
+#deckCountLabel{font-weight:700;font-size:13px;}
+#deckCountLabel.bad{color:var(--danger);}
+#deckHeaderLine{display:flex;align-items:center;justify-content:space-between;}
+#deckHeaderLine h3{font-size:13px;}
+
+#deckRulesChecklist{font-size:12px;margin:8px 0;display:flex;flex-direction:column;gap:3px;}
+#deckRulesChecklist .rule-ok{color:var(--ok);}
+#deckRulesChecklist .rule-warn{color:var(--danger);}
+#deckStatsPanel, #viewStatsPanel, #deckSetupPanel, #deckRulesPanel{margin:8px 0;font-size:12px;}
+#deckStatsPanel summary, #viewStatsPanel summary, #deckSetupPanel summary, #deckRulesPanel summary{cursor:pointer;font-weight:600;color:var(--text-soft);padding:4px 2px;border-radius:var(--radius-sm);}
+#deckStatsPanel summary:hover, #viewStatsPanel summary:hover, #deckSetupPanel summary:hover, #deckRulesPanel summary:hover{background:var(--surface-2);}
+#deckStatsBody, #viewStatsBody{padding:6px 2px 2px 2px;}
+.stat-empty-msg{color:var(--text-soft);font-size:12px;padding:4px 0;}
+.stat-summary{font-size:12px;color:var(--text-soft);margin-bottom:8px;}
+.stat-summary b{color:var(--text);}
+.stat-group{margin-bottom:12px;}
+.stat-group:last-child{margin-bottom:0;}
+.stat-group-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-soft);margin-bottom:5px;}
+.stat-empty{font-size:12px;color:var(--text-soft);}
+.stat-bar-row{display:flex;align-items:center;gap:7px;margin-bottom:3px;font-size:11.5px;}
+.stat-bar-label{width:84px;flex:none;text-align:right;color:var(--text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.stat-bar-track{flex:1;height:13px;background:var(--surface-2);border-radius:3px;overflow:hidden;}
+.stat-bar-fill{height:100%;background:var(--accent);border-radius:3px;min-width:2px;}
+.stat-bar-value{width:26px;flex:none;text-align:left;font-weight:600;color:var(--text);}
+#deck-drop-zone{
+  min-height:120px;padding:6px;flex:1;
+  display:flex;flex-direction:column;gap:5px;overflow-y:auto;
+  border:1px dashed var(--border);border-radius:var(--radius);
+}
+#deck-drop-zone.dragover{background:var(--accent-soft);border-color:var(--accent);}
+.deck-stack{
+  position:relative;
+  display:flex;align-items:center;gap:8px;padding:5px;cursor:grab;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);
+}
+.deck-stack.over-limit{border-color:var(--danger);background:var(--danger-bg);}
+.deck-stack.dragover-row{background:var(--accent-soft);border-color:var(--accent);}
+.reorder-indicator{height:3px;background:var(--accent);border-radius:2px;flex:none;}
+.deck-stack img{width:28px;height:39px;object-fit:cover;border-radius:3px;flex:none;}
+.deck-stack.scheme-row img{width:auto;height:28px;aspect-ratio:5/7;object-fit:cover;transform:rotate(-90deg);}
+.deck-stack .dsname{flex:1;font-size:12.5px;line-height:1.2;}
+.deck-stack .dscount{font-weight:700;font-size:12px;color:var(--accent);}
+.deck-stack .dscount.over{color:var(--danger);}
+.deck-stack .stepper{display:flex;gap:2px;}
+.deck-stack .drop-indicator{position:absolute;left:4px;right:4px;height:2px;background:var(--accent);}
+.deck-stack .drop-indicator.top{top:-3px;}
+.deck-stack .drop-indicator.bottom{bottom:-3px;}
+#deck-empty-hint{font-size:12.5px;color:var(--text-soft);text-align:center;padding:20px 6px;}
+#deck-legend{font-size:11px;color:var(--text-soft);line-height:1.4;}
+
+/* ---------- Library (middle) ---------- */
+#library-wrap{flex:1;overflow-y:auto;padding:14px;min-width:0;position:relative;}
+#btnScrollTop{
+  position:sticky;float:right;bottom:16px;right:16px;
+  opacity:0;pointer-events:none;transition:opacity .15s;
+  box-shadow:var(--shadow);z-index:5;
+}
+#btnScrollTop.visible{opacity:1;pointer-events:auto;}
+#library-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;}
+#library-count{font-size:12.5px;color:var(--text-soft);}
+#sortSelect{width:auto;}
+#library-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(var(--card-min-width, 170px),1fr));
+  gap:14px;
+}
+.card-tile{
+  position:relative;cursor:grab;
+  border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);overflow:hidden;
+  transition:box-shadow .12s, transform .12s;
+  user-select:none;
+}
+.card-tile:hover{box-shadow:var(--shadow);transform:translateY(-2px);}
+.card-tile.selected{outline:2px solid var(--accent);outline-offset:-2px;}
+.card-tile img{width:100%;display:block;aspect-ratio:5/7;object-fit:cover;background:var(--surface-2);}
+/* Scheme card art is authored on the same portrait-cut physical card as everything else,
+   with its content printed sideways — so the frame itself must be landscape-shaped (not
+   the whole tile rotated, which was the previous bug: rotating a box swaps its visual
+   orientation, so rotating a landscape box produced a portrait-looking tile). The frame
+   stays upright and landscape; only the image inside is rotated to face the right way. */
+.landscape-frame{position:relative;overflow:hidden;aspect-ratio:7/5;background:var(--surface-2);}
+.landscape-frame img.rotate-90-fill{
+  position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%) rotate(-90deg);
+  display:block;background:none;max-width:none;
+}
+.card-tile.scheme-card .fallback-face{aspect-ratio:7/5;}
+.card-tile.scheme-card{grid-column:span 2;width:calc(var(--card-min-width, 170px) * 1.647);max-width:calc(var(--card-min-width, 170px) * 1.647);justify-self:start;} /* rotated 90° — wants roughly a portrait card's height as its width, not the full 2-column stretch. Fixed width (not just max-width) matters: without it, an un-stretched tile shrinks/grows to fit its own name text, which is why different scheme cards were rendering at different sizes. Scales with the card-size setting via the same ratio (280/170) established when this was first tuned, so schemes stay visually consistent with normal cards at any size. */
+.card-tile.illegal{opacity:.42;filter:grayscale(75%);}
+.card-tile.illegal:hover{opacity:.7;}
+.card-tile .fallback-face{
+  aspect-ratio:5/7;padding:8px;display:flex;flex-direction:column;gap:4px;
+  font-size:11.5px;overflow:hidden;
+}
+.card-tile .fallback-face .fname{font-weight:700;font-size:12px;line-height:1.25;}
+.card-tile .fallback-face .ftype{font-size:11px;color:var(--text-soft);}
+.card-tile .fallback-face .fability{font-size:11px;flex:1;overflow:hidden;}
+.card-tile .count-badge{
+  position:absolute;top:5px;right:5px;
+  background:var(--accent);color:var(--accent-contrast);
+  font-weight:700;font-size:11px;
+  padding:2px 6px;border-radius:20px;
+}
+.card-tile .updated-dot{
+  position:absolute;bottom:5px;right:5px;z-index:1;
+  background:var(--ok);color:#fff;
+  font-weight:700;font-size:9.5px;letter-spacing:.03em;text-transform:uppercase;
+  padding:2px 6px;border-radius:20px;
+  box-shadow:var(--shadow);
+}
+.diff-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;}
+.diff-table th{text-align:left;font-size:11px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.03em;padding:4px 8px;border-bottom:1px solid var(--border);}
+.diff-table td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;}
+.diff-table td.diff-old{color:var(--danger);text-decoration:line-through;text-decoration-color:var(--danger);}
+.diff-table td.diff-new{color:var(--ok);font-weight:600;}
+.diff-art-row{display:flex;gap:14px;margin-bottom:6px;}
+.diff-art-row > div{flex:1;text-align:center;}
+.diff-art-row img{width:100%;max-width:180px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+.diff-art-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--text-soft);margin-bottom:4px;}
+.diff-art-empty{width:100%;max-width:180px;aspect-ratio:5/7;margin:0 auto;background:var(--surface-2);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text-soft);}
+#helpArticleList{flex:none;width:210px;border-right:1px solid var(--border);overflow-y:auto;padding:10px 0;}
+.help-article-title{padding:8px 14px;cursor:pointer;font-size:13px;border-left:3px solid transparent;}
+.help-article-title:hover{background:var(--surface-2);}
+.help-article-title.active{border-left-color:var(--accent);background:var(--accent-soft);font-weight:600;}
+#helpArticleContent{flex:1;overflow-y:auto;padding:16px 20px;font-size:13.5px;line-height:1.65;}
+#helpArticleContent h3{margin:0 0 10px 0;font-size:16px;}
+.card-tile .name-bar{
+  font-size:11.5px;font-weight:600;padding:5px 6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.tile-actions{position:absolute;top:5px;left:5px;display:flex;gap:4px;opacity:0;transition:opacity .1s;}
+.card-tile:hover .tile-actions{opacity:1;}
+.tile-btn{
+  width:22px;height:22px;border-radius:50%;
+  background:rgba(255,255,255,.92);color:#111;border:1px solid rgba(0,0,0,.15);
+  display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;
+  cursor:pointer;line-height:1;
+}
+.tile-btn:hover{background:#fff;}
+.deck-stack .tile-actions{position:static;opacity:1;margin-left:auto;}
+.deck-stack .stepper .tile-btn{width:20px;height:20px;font-size:12px;}
+
+/* ---------- Filters (right) ---------- */
+#filters-panel{
+  width:250px;flex:none;overflow-y:auto;
+  padding:12px;border-left:1px solid var(--border);
+  background:var(--surface);
+}
+#filters-panel h3{font-size:12px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;}
+.filter-group{margin-bottom:12px;}
+.filter-group summary{font-size:12px;font-weight:600;cursor:pointer;padding:4px 0;list-style:none;}
+.filter-group summary::-webkit-details-marker{display:none;}
+.filter-group summary::before{content:'▸ ';color:var(--text-soft);font-size:10px;}
+.filter-group[open] summary::before{content:'▾ ';}
+.filter-chip-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
+.filter-chip{
+  font-size:12px;padding:4px 9px;cursor:pointer;border-radius:20px;
+  background:var(--surface-2);border:1px solid var(--border);
+}
+.filter-chip.on{background:var(--accent);color:var(--accent-contrast);border-color:var(--accent);}
+.range-row{display:flex;align-items:center;gap:5px;margin-top:5px;}
+.range-row input{width:56px;}
+#searchBox{width:100%;margin-bottom:10px;}
+.toggle-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:7px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);cursor:pointer;font-size:12.5px;}
+.toggle-row:hover{background:var(--surface-2);}
+.toggle-row input{flex:none;cursor:pointer;}
+
+/* ---------- Modals ---------- */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(15,17,22,.55);
+  display:flex;align-items:center;justify-content:center;
+  z-index:50;
+}
+.modal-overlay.hidden{display:none;}
+.modal-box{
+  width:min(760px,92vw);max-height:86vh;
+  display:flex;flex-direction:column;
+  background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);
+  border:1px solid var(--border);
+}
+.modal-header{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:12px 14px;border-bottom:1px solid var(--border);
+}
+.modal-header h2{font-size:14px;}
+.modal-body{padding:14px;overflow-y:auto;}
+.leader-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;}
+.leader-pick-tile{cursor:pointer;text-align:center;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);}
+.leader-pick-tile:hover{box-shadow:var(--shadow);}
+.leader-pick-tile img{width:100%;aspect-ratio:5/7;object-fit:cover;display:block;}
+.leader-pick-tile .lname{font-size:12px;padding:5px;}
+#preview-modal .modal-body{display:flex;gap:16px;padding:16px;flex-wrap:wrap;align-items:flex-start;}
+#preview-img-frame{width:330px;flex:none;align-self:flex-start;border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;}
+#preview-img-frame.scheme{aspect-ratio:7/5;position:relative;}
+#preview-img{width:100%;display:block;}
+#preview-img-frame.scheme #preview-img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-90deg);max-width:none;}
+#preview-text{flex:1;min-width:220px;font-size:13px;line-height:1.5;}
+#preview-text dt{font-weight:700;font-size:11px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.03em;margin-top:8px;}
+#preview-text dd{margin:2px 0 0 0;}
+.export-option{padding:12px;margin-bottom:10px;cursor:pointer;border-radius:var(--radius);}
+.export-option h3{font-size:13px;margin-bottom:4px;}
+.export-option p{font-size:12.5px;margin:0;color:var(--text-soft);}
+#export-progress{font-size:13px;padding:8px;display:none;}
+#loadModalBody .row-item{display:flex;justify-content:space-between;align-items:center;padding:8px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+#setsList .row-item, #sealedSetList .row-item{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+#sealedSetList .row-item{cursor:pointer;}
+#sealedSetList .row-item:hover{background:var(--surface-2);}
+#importFileInput{display:none;}
+
+/* ---------- Hover preview ---------- */
+#hover-preview{
+  position:fixed;z-index:80;pointer-events:none;
+  width:var(--hover-preview-width, 260px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:8px;display:none;
+}
+#hover-preview.scheme{width:var(--hover-preview-scheme-width, 364px);} /* rotated card — width should roughly match a normal preview's HEIGHT for comparable prominence */
+#hover-preview img{width:100%;border-radius:6px;display:block;}
+#hover-preview .hp-frame.scheme{position:relative;overflow:hidden;aspect-ratio:7/5;border-radius:6px;}
+#hover-preview .hp-frame.scheme img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-90deg);border-radius:0;max-width:none;}
+#hover-preview .hp-name{font-size:12px;font-weight:700;margin-top:6px;}
+
+#toast{
+  position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+  background:var(--text);color:var(--bg);
+  padding:10px 16px;font-size:13px;z-index:100;
+  border-radius:var(--radius-sm);display:none;
+  max-width:70vw;box-shadow:var(--shadow);
+}
+</style>
+</head>
+<body>
+
+<div id="signin-gate">
+  <div class="signin-box">
+    <h1>ECHO OF OMENS</h1>
+    <p>Sign in with the Google account you were given access with.</p>
+    <div id="googleSignInButton"></div>
+    <div class="signin-status" id="signinStatus"></div>
+    <div class="signin-error" id="signinError"></div>
+  </div>
+</div>
+
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Loading card data…</div>
+</div>
+
+<div id="app">
+
+  <header id="topbar">
+    <h1>ECHO OF OMENS</h1>
+    <div class="tab-group" id="deckTypeTabs">
+      <div class="tab" data-type="overlord">Overlord</div>
+      <div class="tab" data-type="champion">Champion</div>
+    </div>
+    <input type="text" id="deckNameInput" placeholder="Deck name...">
+    <div class="btn" id="btnNewDeck">New</div>
+    <div class="btn" id="btnSealedDeck" title="Randomly build a full deck from scratch, following the sealed-deck rules">Get Sealed Deck</div>
+    <div class="btn" id="btnSaveDeck">Save</div>
+    <div class="btn" id="btnLoadDeck">Load ▾</div>
+    <div class="btn btn-accent" id="btnExport">Export ▾</div>
+    <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
+    <div class="btn" id="btnDownloadPcio">Download Board</div>
+    <div class="btn btn-sm" id="btnManageSets" title="Which card sets you have access to">Sets</div>
+    <div class="btn btn-icon" id="btnHelp" title="Help">❔</div>
+    <label id="cardScaleControl" title="Card size" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-soft);">
+      <span>Size</span>
+      <input type="range" id="cardScaleSlider" min="120" max="280" step="10" style="width:80px;">
+    </label>
+    <div class="btn btn-icon" id="btnThemeToggle" title="Toggle light/dark">🌓</div>
+    <div id="signinAccountLine" title="Click to sign out"></div>
+    <div id="sync-status">loading card data…</div>
+    <div class="btn btn-sm" id="btnResync" title="Re-fetch latest card data">↻ Resync</div>
+  </header>
+
+  <div id="main-layout">
+
+    <aside id="deck-panel">
+      <div id="deck-controls">
+        <div class="mode-toggle" id="overlordModeToggle">
+          <div class="tab" data-mode="main">Main Deck (50)</div>
+          <div class="tab" data-mode="scheme">Scheme Deck (5)</div>
+        </div>
+        <details id="deckSetupPanel" open>
+          <summary>Deck Setup</summary>
+          <div id="deck-leader-slot" class="leader-chip">
+            <span class="placeholder">Click to choose a leader</span>
+          </div>
+          <div id="deck-bonus-slot" class="leader-chip">
+            <span class="placeholder" id="bonusSlotPlaceholder">Click to choose a Domination card</span>
+          </div>
+          <div id="deck-extra-slot" class="leader-chip">
+            <span class="placeholder" id="extraSlotPlaceholder">Click to choose a Stronghold</span>
+          </div>
+          <div id="aspectRow">
+            <label id="aspectLabel">Domination Aspect</label>
+            <span id="aspectValue" style="font-size:13px;color:var(--text-soft);">—</span>
+          </div>
+        </details>
+        <div id="deckHeaderLine">
+          <h3 id="deckPanelTitle">Your Deck</h3>
+          <span id="deckCountLabel">0 / 50</span>
+        </div>
+        <div class="btn btn-sm" id="btnClearIllegal" style="display:none;">Remove illegal cards</div>
+        <details id="deckRulesPanel">
+          <summary>Rules Check</summary>
+          <div id="deckRulesChecklist"></div>
+        </details>
+        <details id="deckStatsPanel">
+          <summary>Deck Stats</summary>
+          <div id="deckStatsBody"></div>
+        </details>
+      </div>
+
+      <div id="deck-drop-zone">
+        <div id="deck-empty-hint">Drag cards here, or use the + button on a card.</div>
+      </div>
+      <div id="deck-legend">Drag rows to reorder — export follows this order. Shift-click a stack to remove it entirely.</div>
+    </aside>
+
+    <section id="library-wrap">
+      <div id="library-toolbar">
+        <div id="library-count"></div>
+        <label>Sort by <select id="sortSelect"></select></label>
+      </div>
+      <div id="library-grid"></div>
+      <div class="btn btn-icon" id="btnScrollTop" title="Scroll to top">↑</div>
+    </section>
+
+    <aside id="filters-panel">
+      <h3>Filters</h3>
+      <label id="deckViewToggle" class="toggle-row">
+        <input type="checkbox" id="deckViewCheckbox">
+        <span>Deck View — only show cards currently in this deck</span>
+      </label>
+      <div id="setFilterGroup" style="display:none;"></div>
+      <input type="text" id="searchBox" placeholder="Search name / ability...">
+      <div id="filterGroups"></div>
+      <div class="btn btn-sm" id="btnClearFilters" style="width:100%;justify-content:center;margin-top:6px;">Clear Filters</div>
+      <details id="viewStatsPanel">
+        <summary>Current View Stats</summary>
+        <div id="viewStatsBody"></div>
+      </details>
+    </aside>
+
+  </div>
+
+  <!-- Leader picker modal -->
+  <div class="modal-overlay hidden" id="cardPickerModal">
+    <div class="modal-box">
+      <div class="modal-header"><h2 id="cardPickerTitle">Choose a card</h2><div class="btn btn-icon" data-close="cardPickerModal">✕</div></div>
+      <div class="modal-body"><div class="leader-grid" id="cardPickerGrid"></div></div>
+    </div>
+  </div>
+
+  <!-- Card preview modal -->
+  <div class="modal-overlay hidden" id="preview-modal">
+    <div class="modal-box">
+      <div class="modal-header"><h2>Card detail</h2><div class="btn btn-icon" data-close="preview-modal">✕</div></div>
+      <div class="modal-body">
+        <div id="preview-img-frame"><img id="preview-img" src=""></div>
+        <div style="flex:1;min-width:220px;">
+          <div class="btn btn-sm" id="btnFlipCard" style="margin-bottom:10px;display:none;">Show Back</div>
+          <dl id="preview-text"></dl>
+          <div id="previewLastUpdated" style="font-size:12px;color:var(--text-soft);margin-top:10px;"></div>
+          <div class="btn btn-sm" id="btnViewHistory" style="margin-top:6px;display:none;">Version History</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Version history list -->
+  <div class="modal-overlay hidden" id="historyModal">
+    <div class="modal-box" style="width:min(440px,92vw);">
+      <div class="modal-header"><h2>Version History</h2><div class="btn btn-icon" data-close="historyModal">✕</div></div>
+      <div class="modal-body" id="historyModalBody"></div>
+    </div>
+  </div>
+
+  <!-- Diff view: a past version vs. today -->
+  <div class="modal-overlay hidden" id="diffModal">
+    <div class="modal-box">
+      <div class="modal-header"><h2 id="diffModalTitle">Comparing versions</h2><div class="btn btn-icon" data-close="diffModal">✕</div></div>
+      <div class="modal-body" id="diffModalBody"></div>
+    </div>
+  </div>
+
+  <!-- Help modal -->
+  <div class="modal-overlay hidden" id="helpModal">
+    <div class="modal-box" style="width:min(820px,94vw);">
+      <div class="modal-header"><h2>Help</h2><div class="btn btn-icon" data-close="helpModal">✕</div></div>
+      <div class="modal-body" style="display:flex;gap:0;min-height:340px;max-height:70vh;padding:0;">
+        <div id="helpArticleList"></div>
+        <div id="helpArticleContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage card sets -->
+  <div class="modal-overlay hidden" id="setsModal">
+    <div class="modal-box" style="width:min(480px,92vw);">
+      <div class="modal-header"><h2>Card Sets</h2><div class="btn btn-icon" data-close="setsModal">✕</div></div>
+      <div class="modal-body">
+        <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">The sets below are the ones your signed-in Google account currently has access to. This list is entirely server-controlled — to get access to another set, ask whoever administers the sets to share its Drive folder with your account.</p>
+        <div id="setsList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sealed deck: choose which set -->
+  <div class="modal-overlay hidden" id="sealedSetModal">
+    <div class="modal-box" style="width:min(420px,92vw);">
+      <div class="modal-header"><h2>Choose a Set</h2><div class="btn btn-icon" data-close="sealedSetModal">✕</div></div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--text-soft);margin-top:0;">All cards in the sealed deck will be drawn from this set only.</p>
+        <div id="sealedSetList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load deck modal -->
+  <div class="modal-overlay hidden" id="loadModal">
+    <div class="modal-box" style="width:min(440px,92vw);">
+      <div class="modal-header"><h2>Load / import deck</h2><div class="btn btn-icon" data-close="loadModal">✕</div></div>
+      <div class="modal-body">
+        <div class="btn" id="btnImportFile" style="width:100%;justify-content:center;margin-bottom:10px;">Import from file (.txt or .json)</div>
+        <input type="file" id="importFileInput" accept=".txt,.json">
+        <div id="loadModalBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export modal -->
+  <div class="modal-overlay hidden" id="exportModal">
+    <div class="modal-box" style="width:min(540px,92vw);">
+      <div class="modal-header"><h2>Export deck</h2><div class="btn btn-icon" data-close="exportModal">✕</div></div>
+      <div class="modal-body">
+        <div class="export-option card-surface" id="optExportPdf">
+          <h3>🖨️ Print &amp; Play PDF (3×3, Letter)</h3>
+          <p>Overlord export order: leader, then your 5 schemes, then your 50-card deck (in your reordered sequence). Double-sided cards print front then back. Scheme cards print at their native angle, same physical size as every other card — rotate the printed card by hand to read it.</p>
+          <p id="pdfPageEstimate" style="font-weight:600;"></p>
+        </div>
+        <div class="export-option card-surface" id="optExportCsv">
+          <h3>🃏 playingcards.io CSV</h3>
+          <p>Columns: name, front, back — one row per physical copy, in deck order. For an Overlord deck this downloads two files: the 50-card deck (leader first) and the 5-card scheme deck, separately.</p>
+        </div>
+        <div class="export-option card-surface" id="optExportTxt">
+          <h3>📋 Plain-text decklist</h3>
+          <p>Human-readable list you can paste into Discord/chat to share with friends.</p>
+        </div>
+        <div class="export-option card-surface" id="optExportClipboard">
+          <h3>📎 Copy to clipboard</h3>
+          <p>Same plain-text decklist, copied instantly — no file, no timestamp change.</p>
+        </div>
+        <div class="export-option card-surface" id="optExportJson">
+          <h3>💾 JSON decklist</h3>
+          <p>Exact, lossless — re-import this to restore the deck perfectly, including card order.</p>
+        </div>
+        <div id="export-progress" class="card-surface"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="hover-preview"><div class="hp-frame" id="hoverPreviewFrame"><img id="hoverPreviewImg" src=""></div><div class="hp-name" id="hoverPreviewName"></div></div>
+  <div id="toast"></div>
+</div>
+
+<script>
+/* =========================================================================
+   CONFIG
+   ========================================================================= */
+// No Google Sheet id is hardcoded here. Which sets exist, and which of them this signed-in
+// user can see, is decided entirely by the server (Code.gs), based on live Google Drive
+// folder-sharing permissions — this file never maintains its own access list.
+// WEBAPP_URL is the deckbuilder's own Apps Script deployment — reusable infrastructure,
+// not a specific spreadsheet — so it is the only endpoint that may stay hardcoded.
+const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxuoxW84Mn4Grrq2T9_RCoCJO1ftMdBPJ2gNqcwW5T7wXNonNjZaKOcxgc3ZQAHanVpZQ/exec';
+// Google OAuth Client ID — not a secret, meant to sit in client-side code. Must match the
+// OAUTH_CLIENT_ID constant in Code.gs so the server accepts ID tokens minted for this app.
+const GOOGLE_CLIENT_ID = '1053912607552-pvrm9heedm4floaohv1olp5k5mdp95lq.apps.googleusercontent.com';
+const DECK_LIMIT = 50;
+const MAX_COPIES = 3;
+const SCHEME_DECK_SIZE = 5;
+const LS_DECKS_KEY = 'eoo_deckbuilder_saved_decks_v2';
+const LS_THEME_KEY = 'eoo_theme';
+const LS_LAST_VISIT_KEY = 'eoo_last_visit';
+const LS_CARD_SCALE_KEY = 'eoo_card_scale';
+const CARD_SCALE_MIN = 120, CARD_SCALE_MAX = 280, CARD_SCALE_DEFAULT = 170;
+// Hover preview is always 20% bigger than the largest size cards can be scaled to —
+// tied to CARD_SCALE_MAX itself, not the current slider value, so it stays consistently
+// large-and-readable regardless of how small the user has the grid tiles set.
+const HOVER_PREVIEW_WIDTH = Math.round(CARD_SCALE_MAX * 1.2);
+const HOVER_PREVIEW_SCHEME_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 7/5); // rotated card — width should roughly match a normal preview's height
+const HOVER_FETCH_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 1.3); // fetched a bit larger than display size for crispness
+
+// Structural fields the app's mechanics depend on — never treated as generic filters.
+const NEVER_FIELDS = new Set(['name','ability','id','is_double_sided','front-image-url','back-image-url','last-updated']);
+// Numeric stat fields where a literal 0 means "doesn't have this stat" (as opposed to
+// cost/difficulty, which already correctly use a blank cell for "not applicable").
+const ZERO_AS_ABSENT = new Set(['health-number','attack','block','inherent-arcane','inherent-diplomacy','inherent-stealth','leadership','willpower']);
+const LABEL_OVERRIDES = {
+  'card-cost':'Cost','health-number':'Health','inherent-arcane':'Arcane',
+  'inherent-diplomacy':'Diplomacy','inherent-stealth':'Stealth',
+  'skill-check-type':'Skill Check Type','bonus-icons-scripted':'Bonus Icons',
+};
+
+const ASPECT_COLORS = { 'Corruption':'#6b3fa0','Wrath':'#a03f3f','Deceit':'#3f8f7a' };
+function colorForAspect(a){
+  if(ASPECT_COLORS[a]) return ASPECT_COLORS[a];
+  let h=0; for(const c of (a||'')) h=(h*31+c.charCodeAt(0))>>>0;
+  return `hsl(${h%360},45%,45%)`;
+}
+
+/* =========================================================================
+   THEME
+   ========================================================================= */
+function applyTheme(t){ document.documentElement.setAttribute('data-theme', t); localStorage.setItem(LS_THEME_KEY, t); }
+function initTheme(){
+  const saved = localStorage.getItem(LS_THEME_KEY);
+  const theme = saved || ((window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light');
+  applyTheme(theme);
+}
+initTheme();
+
+/* =========================================================================
+   STATE
+   ========================================================================= */
+function freshDeckSlot(){
+  return {
+    name:'', leaderId:null, deckCards:new Map(), deckOrder:[], schemeIds:[], overlordMode:'main',
+    bonusCardId:null,  // O - Domination (Overlord) / C - Quest (Champion) — its aspect drives bonusAspect below
+    extraCardId:null,  // O - Stronghold (Overlord) / C - Resistance (Champion), or the Z-Custom placeholder until real cards exist
+    bonusAspect:'',    // derived from bonusCardId's aspect whenever it's set — never chosen independently anymore
+    sourceExportedAt:null, // timestamp this deck was last exported (or the imported file's own stamp) — the "changed since" baseline
+  };
+}
+const state = {
+  cards: [], byId: new Map(), headers: [], hasImages: false, fieldDefs: [],
+  idToken: '', // Google ID token from Sign In With Google — sent with every data request so the server can check Drive permissions
+  userEmail: '', // signed-in user's email, from the server's whoami response (not decoded client-side)
+  authorizedSets: [], // [{folderId, label}] — the sets this signed-in user may see, entirely server-decided
+  cardScale: CARD_SCALE_DEFAULT, // grid tile min-width in px — user-adjustable, persisted per-browser
+  deckType: 'overlord',          // 'overlord' | 'champion' — which deck you're currently viewing
+  // Overlord and Champion are built entirely independently — separate leader, aspect,
+  // scheme deck, main deck, and name — so switching tabs never loses or merges either.
+  decks: { overlord: freshDeckSlot(), champion: freshDeckSlot() },
+  // Kept separate from the deck slots above (not per-saved-deck) since filters are a
+  // browsing preference tied to which TAB you're on, not which deck you're editing —
+  // they should survive New/Save/Load, just never cross between Overlord and Champion.
+  filtersByType: { overlord: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()}, champion: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()} },
+  openFilterGroups: new Set(['type','aspect','loyalty']),
+  sortField: 'name',
+  selection: new Set(),
+  lastClickIndex: null,
+  visibleCardsOrder: [],
+  genericBacks: { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' }, // generic per-type card backs, for exports only
+  flippedCards: new Set(), // ids currently showing their real back (double-sided cards only)
+};
+function curDeck(){ return state.decks[state.deckType]; }
+function curFilters(){ return state.filtersByType[state.deckType]; }
+
+function activeIsSchemeMode(){ return state.deckType==='overlord' && curDeck().overlordMode==='scheme'; }
+
+/* =========================================================================
+   DATA LOADING
+   ========================================================================= */
+// Filters + tags a raw set of sheet rows into real card objects, exactly the same way
+// regardless of which set they came from — reused for Set 1's own feed and for every
+// additionally imported set, so behavior stays identical either way.
+function processRawRows(rawRows, setName, sheetId){
+  const rows = rawRows.filter(r=>{
+    const t = (r.type||'').trim();
+    if(!t) return false;
+    // "C - Quest" cards are now used for the Champion's Quest-card slot — no longer
+    // excluded. "Q - Quest" is kept excluded defensively in case that convention is
+    // ever used for something unrelated.
+    if(t.startsWith('Q - ')) return false;
+    if(t.startsWith('Z - ')){
+      // Z - Custom is still junk/reference-card clutter in general, EXCEPT the two
+      // named placeholders standing in for the not-yet-created O - Stronghold /
+      // C - Resistance cards. The moment real cards of those types exist, the pool
+      // logic below prefers them automatically and these placeholders stop mattering.
+      const isPlaceholder = t==='Z - Custom' && (r.name==='Resistance' || r.name==='Stronghold');
+      if(!isPlaceholder) return false;
+    }
+    return true;
+  });
+
+  rows.forEach(r=>{
+    r.type = (r.type||'').trim();
+    r.aspect = (r.aspect||'').trim();
+    r.loyalty = (r.loyalty||'').trim();
+    r._doubleSided = String(r.is_double_sided).trim().toUpperCase()==='TRUE';
+    r._front = (r['front-image-url']||'').trim();
+    r._back = (r['back-image-url']||'').trim();
+    r._isScheme = r.type==='O - Scheme';
+    // These 4 are physically the same portrait-cut card as everything else, with
+    // content printed sideways — same treatment as schemes: rotated on screen for
+    // readability, printed at their native orientation (exports never rotate at all,
+    // so nothing extra is needed there).
+    r._isHorizontal = r._isScheme || HORIZONTAL_TYPES.has(r.type) ||
+      (r.type==='Z - Custom' && Object.values(EXTRA_CARD_PLACEHOLDER_NAME).includes(r.name)); // the Stronghold/Resistance placeholders are horizontal too
+    r._setName = setName;
+    r._sheetId = sheetId; // carried into deck exports so the game room app can resolve cards without any sheet id hardcoded in its own source
+  });
+  return rows;
+}
+
+// Merges multiple sets' processed card lists into one, keeping exactly one entry per
+// id. When the same id appears in more than one set, the card with the NEWER
+// last-updated value wins (a missing/invalid last-updated loses to any real one).
+function mergeCardSets(setCardLists){
+  const byId = new Map();
+  setCardLists.forEach(cards=>{
+    cards.forEach(card=>{
+      const existing = byId.get(card.id);
+      if(!existing){ byId.set(card.id, card); return; }
+      const existingDate = new Date(existing['last-updated']);
+      const newDate = new Date(card['last-updated']);
+      const existingValid = !isNaN(existingDate);
+      const newValid = !isNaN(newDate);
+      if(!existingValid || (newValid && newDate.getTime() >= existingDate.getTime())){
+        byId.set(card.id, card);
+      }
+    });
+  });
+  return [...byId.values()];
+}
+
+// Fetches one authorized set's data given its root folder id — the server checks this
+// signed-in user's live Drive permission on that folder before returning anything.
+async function fetchSetData(folderId){
+  const url = `${WEBAPP_URL}?scanSet=${encodeURIComponent(folderId)}&idToken=${encodeURIComponent(state.idToken)}`;
+  let result;
+  try{
+    const res = await fetch(url + '&_=' + Date.now());
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    result = await res.json();
+  }catch(fetchErr){
+    result = await new Promise((resolve,reject)=>{
+      const cbName = '__eooSetCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+  if(!result.ok) throw new Error(result.error || 'Unknown error scanning that folder.');
+  return result; // {ok:true, setName, rows}
+}
+
+// Asks the server who this ID token belongs to, and which sets (folder id + label)
+// that email currently has live Drive access to. This is the ONLY place the list of
+// available sets comes from — nothing about sets is ever stored client-side.
+async function fetchWhoAmI(idToken){
+  const url = `${WEBAPP_URL}?whoami=1&idToken=${encodeURIComponent(idToken)}`;
+  let result;
+  try{
+    const res = await fetch(url + '&_=' + Date.now());
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    result = await res.json();
+  }catch(fetchErr){
+    result = await new Promise((resolve,reject)=>{
+      const cbName = '__eooWhoCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+  if(!result.ok) throw new Error(result.error || 'Could not verify your sign-in.');
+  return result; // {ok:true, email, sets:[{folderId,label}]}
+}
+
+async function loadData(silent){
+  if(!silent) setSyncStatus('loading card data…');
+  showLoadingOverlay();
+  try{
+    const setCardLists = [];
+
+    for(const entry of state.authorizedSets){
+      try{
+        const result = await fetchSetData(entry.folderId);
+        if(!state.headers.length && result.rows.length){
+          state.headers = Object.keys(result.rows[0]);
+          state.hasImages = state.headers.includes('front-image-url');
+        }
+        setCardLists.push(processRawRows(result.rows, result.setName || entry.label, entry.folderId));
+      }catch(e){
+        console.error('Could not load set '+entry.folderId+':', e);
+        toast(`Could not load set "${entry.label}": ${e.message}`);
+      }
+    }
+
+    const rows = mergeCardSets(setCardLists);
+
+    state.cards = rows;
+    state.byId = new Map(rows.map(r=>[r.id, r]));
+    setSyncStatus('synced ' + new Date().toLocaleTimeString() + (state.hasImages?'':' — no art columns found yet'));
+    computeAndCacheAspects();
+    computeFieldDefs();
+    renderAll();
+    fetchGenericBacks(); // non-blocking — CSV export just falls back to blank backs if this fails
+  }catch(err){
+    console.error(err);
+    setSyncStatus('sync failed — check your connection ('+err.message+')');
+    toast('Could not load card data: '+err.message);
+  }
+  hideLoadingOverlay();
+}
+function setSyncStatus(s){ document.getElementById('sync-status').textContent = s; }
+function showLoadingOverlay(){ document.getElementById('loading-overlay').classList.add('active'); }
+function hideLoadingOverlay(){ document.getElementById('loading-overlay').classList.remove('active'); }
+
+async function fetchGenericBacks(){
+  try{
+    const res = await fetch(`${WEBAPP_URL}?genericBacks=1&_=${Date.now()}`);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    state.genericBacks = await res.json();
+  }catch(fetchErr){
+    try{
+      state.genericBacks = await new Promise((resolve,reject)=>{
+        const cbName = '__eooBacksCb_' + Math.random().toString(36).slice(2);
+        const script = document.createElement('script');
+        const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+        function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+        window[cbName] = (data)=>{ cleanup(); resolve(data); };
+        script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+        script.src = `${WEBAPP_URL}?genericBacks=1&callback=${cbName}&_=${Date.now()}`;
+        document.head.appendChild(script);
+      });
+    }catch(e){
+      console.error('Could not load generic card backs (CSV exports for single-sided cards will have a blank back column):', e);
+    }
+  }
+}
+
+/* =========================================================================
+   SIGN-IN — Google Identity Services gates the whole app. Nothing loads until
+   the server has verified an ID token and told us which sets that account may see.
+   ========================================================================= */
+const LS_LAST_EMAIL_KEY = 'eoo_last_signed_in_email'; // display-only, purely cosmetic (shown briefly before the button renders) — never used for access control
+function showSigninGate(){ document.getElementById('signin-gate').classList.remove('hidden'); }
+function hideSigninGate(){ document.getElementById('signin-gate').classList.add('hidden'); }
+function setSigninStatus(s){ document.getElementById('signinStatus').textContent = s; }
+function setSigninError(s){ document.getElementById('signinError').textContent = s; }
+
+function initGoogleSignIn(){
+  const remembered = localStorage.getItem(LS_LAST_EMAIL_KEY);
+  if(remembered) setSigninStatus(`Last signed in as ${remembered}`);
+  if(!window.google || !google.accounts || !google.accounts.id){
+    setSigninError('Could not load Google Sign-In. Check your connection and reload.');
+    return;
+  }
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: onGoogleSignIn,
+  });
+  google.accounts.id.renderButton(document.getElementById('googleSignInButton'), {
+    theme: 'outline', size: 'large', text: 'signin_with', width: 280,
+  });
+  google.accounts.id.prompt(); // offers One Tap for a returning, already-Google-signed-in user
+}
+
+async function onGoogleSignIn(response){
+  setSigninError('');
+  setSigninStatus('Checking your access…');
+  try{
+    const who = await fetchWhoAmI(response.credential);
+    if(!who.sets.length){
+      setSigninStatus('');
+      setSigninError(`Signed in as ${who.email}, but that account doesn't have access to any card sets yet. Ask whoever administers the sets to share a set's Drive folder with this account.`);
+      return;
+    }
+    state.idToken = response.credential;
+    state.userEmail = who.email;
+    state.authorizedSets = who.sets;
+    localStorage.setItem(LS_LAST_EMAIL_KEY, who.email);
+    document.getElementById('signinAccountLine').textContent = who.email;
+    hideSigninGate();
+    loadData(false);
+  }catch(e){
+    setSigninStatus('');
+    setSigninError('Sign-in failed: ' + e.message);
+  }
+}
+
+function signOut(){
+  state.idToken = '';
+  state.userEmail = '';
+  state.authorizedSets = [];
+  state.cards = [];
+  state.byId = new Map();
+  if(window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
+  setSigninStatus('');
+  setSigninError('');
+  showSigninGate();
+}
+document.getElementById('signinAccountLine').addEventListener('click', ()=>{
+  if(confirm('Sign out of the deckbuilder?')) signOut();
+});
+
+/* =========================================================================
+   HELP
+   ========================================================================= */
+let helpArticlesPromise = null;
+function fetchHelpArticles(){
+  if(!helpArticlesPromise){
+    helpArticlesPromise = (async()=>{
+      try{
+        const res = await fetch(`${WEBAPP_URL}?help=1&_=${Date.now()}`);
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        return await res.json();
+      }catch(fetchErr){
+        return await new Promise((resolve,reject)=>{
+          const cbName = '__eooHelpCb_' + Math.random().toString(36).slice(2);
+          const script = document.createElement('script');
+          const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+          function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+          window[cbName] = (data)=>{ cleanup(); resolve(data); };
+          script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+          script.src = `${WEBAPP_URL}?help=1&callback=${cbName}&_=${Date.now()}`;
+          document.head.appendChild(script);
+        });
+      }
+    })();
+    helpArticlesPromise.catch(()=>{ helpArticlesPromise = null; }); // let a later call retry instead of staying stuck on a failed fetch
+  }
+  return helpArticlesPromise;
+}
+
+async function openHelpModal(preferredTitle){
+  document.getElementById('helpModal').classList.remove('hidden');
+  const listEl = document.getElementById('helpArticleList');
+  const contentEl = document.getElementById('helpArticleContent');
+  listEl.innerHTML = '<p style="padding:10px 14px;color:var(--text-soft);font-size:12.5px;">Loading…</p>';
+  contentEl.innerHTML = '';
+  try{
+    const articles = await fetchHelpArticles();
+    if(!articles.length){
+      listEl.innerHTML = '<p style="padding:10px 14px;color:var(--text-soft);font-size:12.5px;">No help articles found yet.</p>';
+      return;
+    }
+    listEl.innerHTML = articles.map((a,i)=>`<div class="help-article-title" data-idx="${i}">${escapeHtml(a.title)}</div>`).join('');
+    listEl.querySelectorAll('.help-article-title').forEach(el=>{
+      el.addEventListener('click', ()=> showHelpArticle(articles, Number(el.dataset.idx)));
+    });
+    let idx = 0;
+    if(preferredTitle){
+      const found = articles.findIndex(a=>a.title.trim().toLowerCase()===preferredTitle.trim().toLowerCase());
+      if(found!==-1) idx = found;
+    }
+    showHelpArticle(articles, idx);
+  }catch(e){
+    listEl.innerHTML = `<p style="padding:10px 14px;color:var(--danger);font-size:12.5px;">Could not load help articles: ${escapeHtml(e.message)}</p>`;
+  }
+}
+function showHelpArticle(articles, idx){
+  document.querySelectorAll('.help-article-title').forEach((el,i)=> el.classList.toggle('active', i===idx));
+  const a = articles[idx];
+  document.getElementById('helpArticleContent').innerHTML =
+    `<h3>${escapeHtml(a.title)}</h3><div>${escapeHtml(a.content).replace(/\n/g,'<br>')}</div>`;
+}
+document.getElementById('btnHelp').addEventListener('click', ()=>openHelpModal()); // must NOT pass openHelpModal directly — that would pass the click Event itself as preferredTitle
+
+/* =========================================================================
+   CARD SETS — import/remove additional sets by folder id
+   ========================================================================= */
+function allSetNames(){
+  // The filter UI needs the names actually attached to loaded cards (the server's
+  // own setName for each folder), not just the authorized labels, so derive it from
+  // whatever _setName values are currently loaded.
+  return [...new Set(state.cards.map(c=>c._setName))];
+}
+function renderSetFilterGroup(){
+  const el = document.getElementById('setFilterGroup');
+  const names = allSetNames();
+  if(names.length<=1){ el.style.display='none'; el.innerHTML=''; return; } // nothing to filter with just the built-in set
+  el.style.display='block';
+  el.innerHTML = names.map(n=>`
+    <label class="toggle-row" style="margin-bottom:4px;">
+      <input type="checkbox" data-set="${escapeHtml(n)}" ${curFilters().hiddenSets.has(n)?'':'checked'}>
+      <span>${escapeHtml(n)}</span>
+    </label>`).join('');
+  el.querySelectorAll('input[data-set]').forEach(cb=>{
+    cb.addEventListener('change', (e)=>{
+      const n = e.target.dataset.set;
+      if(e.target.checked) curFilters().hiddenSets.delete(n);
+      else curFilters().hiddenSets.add(n);
+      renderAll();
+    });
+  });
+}
+// Read-only: which sets you can see is decided entirely by the server, from live
+// Drive folder-sharing permissions on your signed-in Google account. There is
+// nothing to import, connect, or forget here anymore — ask whoever administers
+// the sets to share (or unshare) a set's Drive folder with your account.
+function renderSetsList(){
+  const el = document.getElementById('setsList');
+  if(!state.authorizedSets.length){
+    el.innerHTML = `<div class="row-item" style="color:var(--text-soft);">You don't have access to any card sets yet. Ask whoever administers the sets to share a set's Drive folder with ${escapeHtml(state.userEmail||'your Google account')}.</div>`;
+    return;
+  }
+  el.innerHTML = state.authorizedSets.map(s=>
+    `<div class="row-item"><span>${escapeHtml(s.label)}</span></div>`
+  ).join('');
+}
+function openSetsModal(){
+  renderSetsList();
+  document.getElementById('setsModal').classList.remove('hidden');
+}
+document.getElementById('btnManageSets').addEventListener('click', openSetsModal);
+
+/* Neutral cards are identified by their aspect value itself (e.g. "OLNeutral"/"CHNeutral"
+   in the live data) rather than by process-of-elimination against leader cards. */
+function isNeutral(card){ return /neutral/i.test(card.aspect||''); }
+
+let _realAspects = {overlord:new Set(), champion:new Set()};
+function computeAndCacheAspects(){
+  _realAspects.overlord = new Set(state.cards.filter(c=>c.type.startsWith('O - ') && c.aspect && !isNeutral(c)).map(c=>c.aspect));
+  _realAspects.champion = new Set(state.cards.filter(c=>c.type.startsWith('C - ') && c.aspect && !isNeutral(c)).map(c=>c.aspect));
+}
+function leaderTypeName(deckType){ return deckType==='overlord' ? 'O - Overlord' : 'C - Champion'; }
+function prefixFor(deckType){ return deckType==='overlord' ? 'O - ' : 'C - '; }
+function bonusCardTypeName(deckType){ return deckType==='overlord' ? 'O - Domination' : 'C - Quest'; }
+function extraCardTypeName(deckType){ return deckType==='overlord' ? 'O - Stronghold' : 'C - Resistance'; }
+const EXTRA_CARD_PLACEHOLDER_NAME = { overlord:'Stronghold', champion:'Resistance' };
+const HORIZONTAL_TYPES = new Set(['O - Domination','C - Quest','O - Stronghold','C - Resistance']);
+
+// Real O - Stronghold / C - Resistance cards, once any exist, are always preferred over
+// the Z - Custom placeholder standing in for them today — checked fresh each load, no
+// manual switch-over needed.
+function extraCardPool(deckType){
+  const real = state.cards.filter(c=>c.type===extraCardTypeName(deckType));
+  if(real.length) return real;
+  const placeholderName = EXTRA_CARD_PLACEHOLDER_NAME[deckType];
+  return state.cards.filter(c=>c.type==='Z - Custom' && c.name===placeholderName);
+}
+
+/* =========================================================================
+   SEALED DECK GENERATOR
+   ========================================================================= */
+const RARITY_WEIGHTS = { legendary:1, rare:8, uncommon:26, common:65 };
+function rarityTier(card){
+  const r = String(card.rarity||'').trim().toLowerCase();
+  return RARITY_WEIGHTS.hasOwnProperty(r) ? r : 'common'; // unspecified rarity counts as common
+}
+// Per-card weight within a specific pool, renormalized so tiers absent from the pool
+// simply don't consume any probability mass (the remaining tiers' percentages scale up
+// to fill the gap) rather than that mass being wasted or crashing on an empty tier.
+function cardWeightWithin(card, pool){
+  const tier = rarityTier(card);
+  const countInTier = pool.filter(c=>rarityTier(c)===tier).length;
+  return countInTier ? RARITY_WEIGHTS[tier]/countInTier : 0;
+}
+// Precomputes tier counts once (O(n)) rather than recomputing per-card via
+// cardWeightWithin (which is itself O(n), making naive repeated use O(n²)) — the hot
+// paths below (weightedRandomPick, pickPairWithCostSum) use this instead.
+function makeWeightFn(pool){
+  const tierCounts = {};
+  pool.forEach(c=>{ const t=rarityTier(c); tierCounts[t]=(tierCounts[t]||0)+1; });
+  return (card) => { const t=rarityTier(card); return tierCounts[t] ? RARITY_WEIGHTS[t]/tierCounts[t] : 0; };
+}
+function weightedRandomPick(pool){
+  if(!pool.length) return null;
+  const weightOf = makeWeightFn(pool);
+  const total = pool.reduce((s,c)=>s+weightOf(c), 0);
+  if(total<=0) return pool[Math.floor(Math.random()*pool.length)];
+  let r = Math.random()*total;
+  for(const c of pool){
+    r -= weightOf(c);
+    if(r<=1e-9) return c;
+  }
+  return pool[pool.length-1];
+}
+// Draws n cards, WITH replacement by default (repeats allowed — matches "choose N random
+// cards" with no distinctness stated), or without when the slot conventionally wants
+// unique picks (schemes).
+function weightedRandomPickMany(pool, n, withoutReplacement){
+  const picks=[];
+  let remaining = withoutReplacement ? [...pool] : pool;
+  for(let i=0;i<n;i++){
+    if(!remaining.length) break;
+    const c = weightedRandomPick(remaining);
+    if(!c) break;
+    picks.push(c);
+    if(withoutReplacement) remaining = remaining.filter(x=>x.id!==c.id);
+  }
+  return picks;
+}
+// Draws n cards one at a time, re-checking the cap after each — so a card that's already
+// at the cap (whether from earlier in this SAME draw or from something added before it,
+// like the guaranteed lieutenant pair) is excluded from the remaining draws, without
+// otherwise restricting the pool.
+function weightedRandomPickCapped(pool, n, slot, cap){
+  const picks = [];
+  for(let i=0;i<n;i++){
+    const eligible = pool.filter(c => (slot.deckCards.get(c.id)||0) < cap);
+    if(!eligible.length) break;
+    const c = weightedRandomPick(eligible);
+    if(!c) break;
+    picks.push(c);
+    sealedIncrementDeckCard(slot, c.id);
+  }
+  return picks;
+}
+function sealedCostOf(card){
+  const n = Number(card['card-cost']);
+  return isNaN(n) ? null : n;
+}
+// Picks 2 cards whose costs sum to one of validSums, rarity-weighted over all valid
+// pairs (repeats of the same card allowed). Falls back to 2 unconstrained weighted
+// picks if the pool has no such pair at all, rather than failing outright.
+function pickPairWithCostSum(pool, validSums){
+  const withCost = pool.filter(c=>sealedCostOf(c)!==null);
+  const weightOf = makeWeightFn(withCost);
+  const pairs = [];
+  for(const a of withCost) for(const b of withCost){
+    if(validSums.includes(sealedCostOf(a)+sealedCostOf(b))) pairs.push([a,b]);
+  }
+  if(pairs.length){
+    const pairWeight = (p) => weightOf(p[0]) * weightOf(p[1]);
+    const total = pairs.reduce((s,p)=>s+pairWeight(p),0);
+    let r = Math.random()*total;
+    for(const p of pairs){ r -= pairWeight(p); if(r<=1e-9) return p; }
+    return pairs[pairs.length-1];
+  }
+  console.warn('Sealed deck: no lieutenant/ally pair summing to '+validSums.join(' or ')+' found — falling back to 2 unconstrained picks.');
+  return weightedRandomPickMany(pool, 2);
+}
+// Mirrors isTypeEligible's main-deck branch, but independent of activeIsSchemeMode()/
+// the current UI toggle state — generation shouldn't care which sub-tab happens to be
+// showing when the button is clicked.
+function isMainDeckEligibleType(card, deckType){
+  const prefix = prefixFor(deckType);
+  if(!card.type.startsWith(prefix)) return false;
+  if(card.type===leaderTypeName(deckType)) return false;
+  if(card.type===prefix+'Scheme') return false;
+  if(card.type===bonusCardTypeName(deckType)) return false;
+  if(card.type===extraCardTypeName(deckType)) return false;
+  if(card.type==='Z - Custom') return false;
+  return true;
+}
+function sealedIncrementDeckCard(slot, id){
+  const cur = slot.deckCards.get(id)||0;
+  slot.deckCards.set(id, cur+1);
+  if(!slot.deckOrder.includes(id)) slot.deckOrder.push(id);
+}
+// A card drawn while ignoring aspect rules (steps 6-7) might be a scheme — those route
+// to the scheme deck instead of the main deck, silently skipping an exact duplicate
+// (schemeIds is a set everywhere else in the app; kept consistent here too) rather than
+// adding the same scheme twice.
+// A card drawn while ignoring aspect rules (steps 6-7) might be a scheme — those route
+// to the scheme deck instead of the main deck. Duplicates here are fine (only the
+// INITIAL 5 schemes in step 4 must be distinct from each other).
+function sealedRouteCard(slot, card){
+  if(card.type==='O - Scheme') slot.schemeIds.push(card.id);
+  else sealedIncrementDeckCard(slot, card.id);
+}
+
+function generateSealedDeck(setName){
+  const deckType = state.deckType;
+  const isOverlord = deckType==='overlord';
+  const slot = freshDeckSlot();
+  state.decks[deckType] = slot; // curDeck()/getLeader()/isAspectLegal below all read through this
+
+  const bySet = (c) => c._setName === setName;
+
+  // 1. Leader
+  const leader = weightedRandomPick(state.cards.filter(c=>c.type===leaderTypeName(deckType) && bySet(c)));
+  if(leader) slot.leaderId = leader.id;
+
+  // 2. Domination/Quest, excluding the one matching the leader's own aspect
+  let bonusPool = state.cards.filter(c=>c.type===bonusCardTypeName(deckType) && bySet(c));
+  if(leader) bonusPool = bonusPool.filter(c=>c.aspect!==leader.aspect);
+  const bonusCard = weightedRandomPick(bonusPool);
+  if(bonusCard){ slot.bonusCardId = bonusCard.id; slot.bonusAspect = bonusCard.aspect||''; }
+
+  const aspectLegalPool = (pool) => leader ? pool.filter(isAspectLegal) : [];
+
+  // 2.5. Stronghold/Resistance — no aspect concept for these, plain weighted pick.
+  // extraCardPool() already prefers a real card the moment one exists, falling back to
+  // the Z-Custom placeholder otherwise, same as everywhere else in the app. The
+  // Z-Custom placeholders aren't tagged with any real set, so they're always allowed
+  // through regardless of which set was chosen — otherwise picking a set with no real
+  // Stronghold/Resistance cards yet would leave this slot empty for no good reason.
+  const extraCard = weightedRandomPick(extraCardPool(deckType).filter(c=>bySet(c) || c.type==='Z - Custom'));
+  if(extraCard) slot.extraCardId = extraCard.id;
+
+  // 3. Two lieutenants/allies costing 9 or 10 combined, respecting aspect
+  const laType = isOverlord ? 'O - Lieutenant' : 'C - Ally';
+  const laPoolLegal = aspectLegalPool(state.cards.filter(c=>c.type===laType && bySet(c)));
+  pickPairWithCostSum(laPoolLegal, [9,10]).forEach(c=> sealedIncrementDeckCard(slot, c.id));
+
+  // 4. Five DISTINCT schemes, aspect-respecting (Overlord only) — withoutReplacement
+  // guarantees no duplicates among these 5 specifically; duplicates from steps 6-7 are fine.
+  if(isOverlord){
+    const schemePoolLegal = aspectLegalPool(state.cards.filter(c=>c.type==='O - Scheme' && bySet(c)));
+    weightedRandomPickMany(schemePoolLegal, 5, true).forEach(c=> slot.schemeIds.push(c.id));
+  }
+
+  const mainPoolFull = state.cards.filter(c=>isMainDeckEligibleType(c, deckType) && bySet(c));
+
+  // 5. 28 cards, aspect-respecting, capped at 3 copies of any one card BY THE END OF
+  // THIS STEP (counting whatever the lieutenant pair above already contributed) — the
+  // cap stops applying once this step finishes; later steps can push past it freely.
+  weightedRandomPickCapped(aspectLegalPool(mainPoolFull), 28, slot, 3);
+
+  // 6-7: aspect ignored from here on; Overlord draws can also land on schemes
+  const ignoreAspectPool = isOverlord ? mainPoolFull.concat(state.cards.filter(c=>c.type==='O - Scheme' && bySet(c))) : mainPoolFull;
+  weightedRandomPickMany(ignoreAspectPool, 9).forEach(c=> sealedRouteCard(slot, c));
+  const rareOrLegendPool = ignoreAspectPool.filter(c=> ['rare','legendary'].includes(rarityTier(c)));
+  weightedRandomPickMany(rareOrLegendPool, 3).forEach(c=> sealedRouteCard(slot, c));
+
+  // 8. Champion only: 5 common cards, aspect ignored
+  if(!isOverlord){
+    const commonPool = mainPoolFull.filter(c=>rarityTier(c)==='common');
+    weightedRandomPickMany(commonPool, 5).forEach(c=> sealedIncrementDeckCard(slot, c.id));
+  }
+
+  renderAll();
+  toast(`Sealed deck generated from "${setName}": ${deckTotalCount()} main-deck card(s)${isOverlord?`, ${slot.schemeIds.length} scheme(s)`:''}.`);
+}
+
+/* =========================================================================
+   DYNAMIC SCHEMA — filter/detail fields are derived from whatever columns the
+   sheet actually has, so adding/removing a (non-structural) column just works.
+   ========================================================================= */
+function prettifyLabel(key){
+  if(LABEL_OVERRIDES[key]) return LABEL_OVERRIDES[key];
+  return key.split(/[-_]+/).filter(Boolean).map(w=> w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+}
+function isRawNameKey(key){ return key.replace(/,+$/,'').trim().toLowerCase()==='raw_name'; }
+
+function computeFieldDefs(){
+  const defs = [];
+  state.headers.forEach(key=>{
+    if(!key || NEVER_FIELDS.has(key) || isRawNameKey(key)) return;
+    let nonEmpty=0, numeric=0, slashy=0;
+    state.cards.forEach(c=>{
+      const v = c[key];
+      if(v===undefined||v===null||v==='') return;
+      nonEmpty++;
+      if(!isNaN(Number(v))) numeric++;
+      if(typeof v==='string' && v.includes('/')) slashy++;
+    });
+    if(nonEmpty===0) return;
+    let kind;
+    if(numeric===nonEmpty) kind='range';
+    else if(slashy/nonEmpty > 0.2) kind='multi-split';
+    else kind='multi';
+    defs.push({key, label:prettifyLabel(key), kind});
+  });
+  const priority = ['type','aspect','loyalty'];
+  defs.sort((a,b)=>{
+    const pa=priority.indexOf(a.key), pb=priority.indexOf(b.key);
+    if(pa===-1 && pb===-1) return 0;
+    return (pa===-1?99:pa)-(pb===-1?99:pb);
+  });
+  state.fieldDefs = defs;
+}
+
+function getFieldValues(c, fieldDef){
+  const raw = c[fieldDef.key];
+  if(raw===undefined||raw===null||raw==='') return [];
+  if(fieldDef.kind==='multi-split') return String(raw).split('/').map(s=>s.trim()).filter(Boolean);
+  const v = String(raw).trim();
+  return v ? [v] : [];
+}
+
+function isStatPresent(card, key){
+  const v = card[key];
+  if(v===''||v===null||v===undefined) return false;
+  if(ZERO_AS_ABSENT.has(key) && Number(v)===0) return false;
+  return true;
+}
+
+/* =========================================================================
+   DECK LEGALITY
+   ========================================================================= */
+function getLeader(){ return curDeck().leaderId ? state.byId.get(curDeck().leaderId) : null; }
+function getBonusCard(){ return curDeck().bonusCardId ? state.byId.get(curDeck().bonusCardId) : null; }
+function getExtraCard(){ return curDeck().extraCardId ? state.byId.get(curDeck().extraCardId) : null; }
+
+// True if this card has been edited (per its last-updated stamp) since this deck was
+// exported or imported — the baseline for the yellow "changed since" warning.
+function cardChangedSinceExport(card){
+  const baseline = curDeck().sourceExportedAt;
+  if(!baseline || !card) return false;
+  const lu = card['last-updated'];
+  if(!lu) return false;
+  const d = new Date(lu);
+  return !isNaN(d) && d.getTime() > new Date(baseline).getTime();
+}
+
+// A card referenced by a deck (leader, bonus, extra, deck list, or schemes) can go
+// missing from the live feed entirely — deleted via applyPendingDeletions(). Rather
+// than showing a bare UUID, this looks up its last-known identity from CardHistory
+// (deletions are archived there before removal), with a small cache since the same
+// missing id is typically referenced from several places in a render pass.
+const removedCardCache = new Map(); // id -> snapshot row | 'loading' | 'not-found'
+function getRemovedCardInfo(id){
+  if(removedCardCache.has(id)) return removedCardCache.get(id);
+  removedCardCache.set(id, 'loading');
+  fetchCardHistory(id).then(rows=>{
+    if(!rows.length){ removedCardCache.set(id, 'not-found'); renderAll(); return; }
+    rows.sort((a,b)=> new Date(b['archived-at']) - new Date(a['archived-at']));
+    removedCardCache.set(id, rows[0]); // most recent snapshot = last known state
+    renderAll();
+  }).catch(()=>{ removedCardCache.set(id, 'not-found'); renderAll(); });
+  return 'loading';
+}
+// Type membership for whichever pool is currently active — this is a hard rule with
+// no leader dependency at all (a Champion card can never go in an Overlord deck,
+// leader chosen or not).
+function isTypeEligible(card){
+  if(!card) return false;
+  if(activeIsSchemeMode()) return card.type==='O - Scheme';
+  const prefix = prefixFor(state.deckType);
+  if(!card.type.startsWith(prefix)) return false;
+  if(card.type===leaderTypeName(state.deckType)) return false;
+  if(card.type===prefix+'Scheme') return false;
+  if(card.type===bonusCardTypeName(state.deckType)) return false;
+  if(card.type===extraCardTypeName(state.deckType)) return false;
+  if(card.type==='Z - Custom') return false; // the placeholder is only ever picked via the dedicated slot, never the general pool
+  return true;
+}
+
+// Aspect/loyalty eligibility — identical rule for the 50-card deck and the 5-scheme
+// deck (confirmed): neutral always legal; loyal cards only match the leader's own
+// aspect; everything else needs leader's aspect OR the chosen Domination/Quest Aspect.
+// Meaningless without a leader chosen yet, so callers should only consult this once
+// getLeader() is non-null.
+function isAspectLegal(card){
+  const leader = getLeader();
+  if(!leader) return false;
+  if(isNeutral(card)) return true;
+  if(card.loyalty==='Loyal') return card.aspect===leader.aspect;
+  return card.aspect===leader.aspect || (curDeck().bonusAspect && card.aspect===curDeck().bonusAspect);
+}
+
+// Full legality for whichever pool is active. Deliberately permissive before a leader
+// is chosen — type membership is the only hard rule at that point, since there's no
+// aspect to check against yet — then tightens to also require aspect legality once a
+// leader is picked. This single function backs both what's addable and what gets
+// flagged as illegal in an existing deck.
+function isLegalForCurrentPool(card){
+  if(!isTypeEligible(card)) return false;
+  if(!getLeader()) return true;
+  return isAspectLegal(card);
+}
+
+function deckTotalCount(){ let n=0; for(const v of curDeck().deckCards.values()) n+=v; return n; }
+
+/* =========================================================================
+   POOL — visibility-based (no leader = unrestricted type-eligible pool; leader chosen =
+   pool narrows to legal aspects immediately, rather than graying out illegal cards).
+   ========================================================================= */
+// Aspect-illegal cards stay in the pool (grayed out, sorted last, still fully
+// examinable and addable) rather than being hidden — only TYPE eligibility is a hard
+// filter here. isLegalForCurrentPool (type + aspect) still drives what counts as
+// "illegal" for graying/sorting/the red highlight/the Remove-illegal-cards button.
+function poolForCurrentMode(){
+  return state.cards.filter(isTypeEligible);
+}
+
+/* =========================================================================
+   FILTERS
+   ========================================================================= */
+function cardMatchesFilters(c, exceptKey){
+  if(curFilters().deckViewOnly){
+    const inDeck = activeIsSchemeMode() ? curDeck().schemeIds.includes(c.id) : curDeck().deckCards.has(c.id);
+    if(!inDeck) return false;
+  }
+  if(curFilters().hiddenSets && curFilters().hiddenSets.has(c._setName)) return false;
+  const s = curFilters().search.trim().toLowerCase();
+  if(s && !( (c.name||'').toLowerCase().includes(s) || (c.ability||'').toLowerCase().includes(s) )) return false;
+  for(const [key,set] of Object.entries(curFilters().multi)){
+    if(key===exceptKey || !set.size) continue;
+    const fd = state.fieldDefs.find(f=>f.key===key);
+    const vals = fd ? getFieldValues(c,fd) : [];
+    if(!vals.some(v=>set.has(v))) return false;
+  }
+  for(const [key,r] of Object.entries(curFilters().range)){
+    if(key===exceptKey) continue;
+    if(!isStatPresent(c,key)) return false;
+    const val = Number(c[key]);
+    if(r.min!==null && r.min!==undefined && val<r.min) return false;
+    if(r.max!==null && r.max!==undefined && val>r.max) return false;
+  }
+  return true;
+}
+
+function renderFilters(){
+  const wrap = document.getElementById('filterGroups');
+  wrap.innerHTML='';
+  const visiblePool = poolForCurrentMode();
+
+  // Keep the search box in sync with the active tab's own filter state — it's a plain
+  // input, not re-rendered from scratch like the chip groups below, so this needs to
+  // happen explicitly on every render (including right after switching Overlord/Champion).
+  const searchBox = document.getElementById('searchBox');
+  if(document.activeElement !== searchBox) searchBox.value = curFilters().search; // don't fight the user's cursor while they're actively typing
+  document.getElementById('deckViewCheckbox').checked = curFilters().deckViewOnly;
+  renderSetFilterGroup();
+
+  state.fieldDefs.forEach(f=>{
+    // Faceted pruning: a field's group (and each of its chip values) only appears if
+    // at least one card would still match given every OTHER currently-active filter.
+    const candidates = visiblePool.filter(c=>cardMatchesFilters(c, f.key));
+    if(!candidates.length) return;
+
+    const det = document.createElement('details');
+    det.className='filter-group';
+    det.open = state.openFilterGroups.has(f.key);
+    det.addEventListener('toggle', ()=>{ det.open ? state.openFilterGroups.add(f.key) : state.openFilterGroups.delete(f.key); });
+    const sum = document.createElement('summary');
+    sum.textContent = f.label;
+    det.appendChild(sum);
+
+    if(f.kind==='multi' || f.kind==='multi-split'){
+      const valueSet = new Set();
+      candidates.forEach(c=> getFieldValues(c,f).forEach(v=>valueSet.add(v)));
+      const values = [...valueSet].sort();
+      if(!values.length) return;
+      const row = document.createElement('div');
+      row.className='filter-chip-row';
+      values.forEach(v=>{
+        const chip=document.createElement('div');
+        chip.className='filter-chip';
+        chip.textContent=v;
+        chip.classList.toggle('on', (curFilters().multi[f.key]||new Set()).has(v));
+        chip.onclick=()=>{
+          if(!curFilters().multi[f.key]) curFilters().multi[f.key]=new Set();
+          const s = curFilters().multi[f.key];
+          s.has(v) ? s.delete(v) : s.add(v);
+          renderFilters(); renderLibrary();
+        };
+        row.appendChild(chip);
+      });
+      det.appendChild(row);
+      wrap.appendChild(det);
+    } else if(f.kind==='range'){
+      if(!candidates.some(c=>isStatPresent(c,f.key))) return;
+      const row=document.createElement('div');
+      row.className='range-row';
+      const cur = curFilters().range[f.key]||{};
+      row.innerHTML = `<input type="number" placeholder="min" value="${cur.min??''}">
+                        <span>–</span>
+                        <input type="number" placeholder="max" value="${cur.max??''}">`;
+      const [minI,maxI] = row.querySelectorAll('input');
+      const applyLive=()=>{
+        const min = minI.value===''?null:Number(minI.value);
+        const max = maxI.value===''?null:Number(maxI.value);
+        if(min===null && max===null) delete curFilters().range[f.key];
+        else curFilters().range[f.key] = {min,max};
+      };
+      minI.oninput=()=>{ applyLive(); renderLibrary(); };
+      maxI.oninput=()=>{ applyLive(); renderLibrary(); };
+      minI.onchange=()=>{ applyLive(); renderFilters(); renderLibrary(); };
+      maxI.onchange=()=>{ applyLive(); renderFilters(); renderLibrary(); };
+      det.appendChild(row);
+      wrap.appendChild(det);
+    }
+  });
+}
+
+/* =========================================================================
+   SORT
+   ========================================================================= */
+function renderSortOptions(){
+  const sel = document.getElementById('sortSelect');
+  const prev = state.sortField;
+  const opts = [{key:'name',label:'Name'}, ...state.fieldDefs.map(f=>({key:f.key,label:f.label}))];
+  sel.innerHTML = opts.map(o=>`<option value="${o.key}" ${o.key===prev?'selected':''}>${escapeHtml(o.label)}</option>`).join('');
+}
+function sortPool(pool){
+  const field = state.sortField || 'name';
+  const fd = state.fieldDefs.find(f=>f.key===field);
+  const numeric = fd && fd.kind==='range';
+  const cmp = (a,b) => {
+    let av = field==='name' ? (a.name||'') : a[field];
+    let bv = field==='name' ? (b.name||'') : b[field];
+    if(numeric){
+      av = (av===''||av===undefined||av===null) ? -Infinity : Number(av);
+      bv = (bv===''||bv===undefined||bv===null) ? -Infinity : Number(bv);
+      return av-bv;
+    }
+    return String(av||'').localeCompare(String(bv||''));
+  };
+  return [...pool].sort((a,b)=>{
+    const aLegal = isLegalForCurrentPool(a), bLegal = isLegalForCurrentPool(b);
+    if(aLegal !== bLegal) return aLegal ? -1 : 1; // illegal cards always sort after legal ones, regardless of sort field
+    return cmp(a,b);
+  });
+}
+
+/* =========================================================================
+   RENDER: TOP CONTROLS / DECK CONTROLS
+   ========================================================================= */
+function renderTabs(){
+  document.querySelectorAll('#deckTypeTabs .tab').forEach(t=>{
+    t.classList.toggle('active', t.dataset.type===state.deckType);
+  });
+}
+
+function renderDeckControls(){
+  document.getElementById('deckNameInput').value = curDeck().name || '';
+  document.getElementById('overlordModeToggle').style.display = state.deckType==='overlord' ? 'flex' : 'none';
+  document.querySelectorAll('#overlordModeToggle .tab').forEach(t=>{
+    t.classList.toggle('active', t.dataset.mode===curDeck().overlordMode);
+  });
+
+  const leader = getLeader();
+  renderPickChip('deck-leader-slot', leader, 'Click to choose a leader', curDeck().leaderId, ()=>{
+    curDeck().leaderId = null;
+    renderAll();
+  });
+
+  const isOverlord = state.deckType==='overlord';
+  const bonusCard = getBonusCard();
+  renderPickChip('deck-bonus-slot', bonusCard, isOverlord ? 'Click to choose a Domination card' : 'Click to choose a Quest card', curDeck().bonusCardId, ()=>{
+    curDeck().bonusCardId = null;
+    curDeck().bonusAspect = ''; // derived — clears along with the card that determined it
+    renderAll();
+  });
+
+  const extraCard = getExtraCard();
+  renderPickChip('deck-extra-slot', extraCard, isOverlord ? 'Click to choose a Stronghold' : 'Click to choose a Resistance', curDeck().extraCardId, ()=>{
+    curDeck().extraCardId = null;
+    renderAll();
+  });
+
+  document.getElementById('aspectLabel').textContent = isOverlord ? 'Domination Aspect' : 'Quest Aspect';
+  document.getElementById('aspectValue').textContent = curDeck().bonusAspect || '— choose a ' + (isOverlord?'Domination':'Quest') + ' card —';
+
+  const isScheme = activeIsSchemeMode();
+  document.getElementById('deckPanelTitle').textContent = isScheme ? 'Scheme Deck' : 'Your Deck';
+  const count = isScheme ? curDeck().schemeIds.length : deckTotalCount();
+  const limit = isScheme ? SCHEME_DECK_SIZE : DECK_LIMIT;
+  const cl = document.getElementById('deckCountLabel');
+  cl.textContent = `${count} / ${limit}`;
+  cl.className = count>limit ? 'bad' : '';
+
+  let illegalCount=0;
+  if(isScheme){
+    curDeck().schemeIds.forEach(id=>{ const c=state.byId.get(id); if(!c || !isLegalForCurrentPool(c)) illegalCount++; });
+  } else {
+    for(const id of curDeck().deckCards.keys()){ const c=state.byId.get(id); if(!c || !isLegalForCurrentPool(c)) illegalCount++; }
+  }
+  const btn = document.getElementById('btnClearIllegal');
+  btn.style.display = illegalCount>0 ? 'inline-flex' : 'none';
+  if(illegalCount>0) btn.textContent = `Remove ${illegalCount} illegal card${illegalCount>1?'s':''}`;
+
+  renderDeckRulesChecklist();
+  renderDeckStats();
+}
+
+// Non-blocking status against the documented deckbuilding rules (50+ main-deck cards,
+// max 3 copies of any one card, exactly 5 schemes, max 1 copy of any one scheme) —
+// informational only, same permissive philosophy as everything else in this app.
+function renderDeckRulesChecklist(){
+  const el = document.getElementById('deckRulesChecklist');
+  const isOverlord = state.deckType==='overlord';
+  const rules = [];
+
+  const mainCount = deckTotalCount();
+  rules.push([mainCount>=DECK_LIMIT, mainCount>=DECK_LIMIT ? `${mainCount} cards (meets the ${DECK_LIMIT}-card minimum)` : `${mainCount} / ${DECK_LIMIT} cards — under the minimum`]);
+
+  const overCopyIds = [...curDeck().deckCards.entries()].filter(([,n])=>n>3).map(([id])=>id);
+  rules.push([overCopyIds.length===0, overCopyIds.length===0 ? 'No card exceeds 3 copies' : `${overCopyIds.length} card(s) have more than 3 copies`]);
+
+  if(isOverlord){
+    const schemeCount = curDeck().schemeIds.length;
+    rules.push([schemeCount===SCHEME_DECK_SIZE, `${schemeCount} / ${SCHEME_DECK_SIZE} schemes` + (schemeCount===SCHEME_DECK_SIZE?' — exact':'')]);
+
+    const schemeCounts = {};
+    curDeck().schemeIds.forEach(id=> schemeCounts[id]=(schemeCounts[id]||0)+1);
+    const dupSchemes = Object.values(schemeCounts).filter(n=>n>1).length;
+    rules.push([dupSchemes===0, dupSchemes===0 ? 'No duplicate schemes' : `${dupSchemes} scheme(s) appear more than once`]);
+  }
+
+  el.innerHTML = rules.map(([ok,label])=> `<div class="${ok?'rule-ok':'rule-warn'}">${ok?'✓':'⚠'} ${escapeHtml(label)}</div>`).join('');
+}
+
+// Shared by both stats panels (deck contents vs. currently-filtered view) — takes
+// [id, count] pairs so either caller can decide how "count" is determined.
+function computeCardStats(idCountPairs){
+  const aspectCounts = {}, typeCounts = {}, iconCounts = {};
+  const skillTotals = { 'inherent-arcane':0, 'inherent-diplomacy':0, 'inherent-stealth':0, 'attack':0, 'block':0 };
+  let totalCost = 0, costedCount = 0, totalCards = 0;
+  idCountPairs.forEach(([id,n])=>{
+    if(n<=0) return;
+    const c = state.byId.get(id); if(!c) return;
+    totalCards += n;
+    const aspect = c.aspect || 'Neutral';
+    aspectCounts[aspect] = (aspectCounts[aspect]||0) + n;
+    typeCounts[c.type] = (typeCounts[c.type]||0) + n;
+    const cost = Number(c['card-cost']);
+    if(!isNaN(cost)){ totalCost += cost*n; costedCount += n; }
+    // Sums aren't affected by the app's usual "0 means not present" convention for
+    // these columns (unlike an average, a sum of zeros just contributes nothing).
+    Object.keys(skillTotals).forEach(key=>{
+      const v = Number(c[key]);
+      if(!isNaN(v)) skillTotals[key] += v*n;
+    });
+    // bonus-icons-scripted is "/"-delimited and can repeat (e.g. "Arcane / Arcane" is
+    // 2 icons on one card) — each token counts once per copy in the weighted set.
+    const iconsRaw = String(c['bonus-icons-scripted']||'').trim();
+    if(iconsRaw){
+      iconsRaw.split('/').map(s=>s.trim()).filter(Boolean).forEach(icon=>{
+        iconCounts[icon] = (iconCounts[icon]||0) + n;
+      });
+    }
+  });
+  const avgCost = costedCount ? (totalCost/costedCount).toFixed(2) : null;
+  return { aspectCounts, typeCounts, iconCounts, skillTotals, avgCost, totalCards };
+}
+
+function statBarGroupHtml(title, counts){
+  const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  if(!entries.length) return `<div class="stat-group"><div class="stat-group-title">${escapeHtml(title)}</div><div class="stat-empty">—</div></div>`;
+  const max = Math.max(1, ...entries.map(e=>e[1]));
+  const rows = entries.map(([label,val])=>`
+    <div class="stat-bar-row">
+      <div class="stat-bar-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+      <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${(val/max*100).toFixed(1)}%;"></div></div>
+      <div class="stat-bar-value">${val}</div>
+    </div>`).join('');
+  return `<div class="stat-group"><div class="stat-group-title">${escapeHtml(title)}</div>${rows}</div>`;
+}
+
+function renderStatsPanelHtml(stats){
+  if(!stats.totalCards) return '<div class="stat-empty-msg">Nothing here yet.</div>';
+  const skillCounts = {
+    'Arcane': stats.skillTotals['inherent-arcane'],
+    'Diplomacy': stats.skillTotals['inherent-diplomacy'],
+    'Stealth': stats.skillTotals['inherent-stealth'],
+    'Attack': stats.skillTotals['attack'],
+    'Block': stats.skillTotals['block'],
+  };
+  return `
+    <div class="stat-summary">${stats.totalCards} card${stats.totalCards!==1?'s':''}${stats.avgCost!==null?` · avg cost <b>${stats.avgCost}</b>`:''}</div>
+    ${statBarGroupHtml('Aspects', stats.aspectCounts)}
+    ${statBarGroupHtml('Types', stats.typeCounts)}
+    ${statBarGroupHtml('Stats', skillCounts)}
+    ${statBarGroupHtml('Bonus Icons', stats.iconCounts)}
+  `;
+}
+
+function renderDeckStats(){
+  const body = document.getElementById('deckStatsBody');
+  const ids = activeIsSchemeMode() ? curDeck().schemeIds : [...curDeck().deckCards.keys()];
+  const countOf = (id) => activeIsSchemeMode() ? curDeck().schemeIds.filter(x=>x===id).length : (curDeck().deckCards.get(id)||0);
+  const uniqueIds = [...new Set(ids)];
+  body.innerHTML = renderStatsPanelHtml(computeCardStats(uniqueIds.map(id=>[id, countOf(id)])));
+}
+
+// Stats for whatever's CURRENTLY VISIBLE in the library after filters. When Deck
+// View is on, the visible pool is already restricted to deck contents, so counts
+// are weighted by actual deck quantity (matching Deck Stats' own convention).
+// When Deck View is off, each visible card counts once — this is describing the
+// browsable library subset, not deck composition.
+function renderCurrentViewStats(){
+  const body = document.getElementById('viewStatsBody');
+  if(!body) return;
+  const visibleCards = poolForCurrentMode().filter(c=>cardMatchesFilters(c));
+  const weightOf = (c) => {
+    if(!curFilters().deckViewOnly) return 1;
+    return activeIsSchemeMode() ? curDeck().schemeIds.filter(x=>x===c.id).length : (curDeck().deckCards.get(c.id)||0);
+  };
+  body.innerHTML = renderStatsPanelHtml(computeCardStats(visibleCards.map(c=>[c.id, weightOf(c)])));
+}
+
+function renderPickChip(elId, card, placeholderText, selectedId, onRemove){
+  const el = document.getElementById(elId);
+  if(!card && selectedId){
+    // A card WAS chosen, but no longer exists in the live feed — distinct from
+    // "nothing chosen" (which would show the plain placeholder instead).
+    const info = getRemovedCardInfo(selectedId);
+    const label = info==='loading' ? 'Loading…' : (info==='not-found' ? `(unknown card ${selectedId})` : (info.name || selectedId));
+    el.innerHTML = `<span class="removed-badge" data-act="removedinfo" title="Removed from the game — click for details">&#9888;</span><span>${escapeHtml(label)}</span><span class="chip-remove" data-act="remove" title="Remove">✕</span>`;
+    el.querySelector('[data-act=removedinfo]').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      toast(info && info!=='loading' && info!=='not-found' ? `"${info.name}" was removed from the game (last known type: ${info.type||'unknown'}).` : 'This card was removed from the game — no further record found.');
+    });
+    if(onRemove) el.querySelector('[data-act=remove]').addEventListener('click', (e)=>{ e.stopPropagation(); onRemove(); });
+    return;
+  }
+  const imgHtml = card ? cardImageHtml(card, '', 150) : '';
+  const changed = card && cardChangedSinceExport(card);
+  el.innerHTML = card
+    ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-remove" data-act="remove" title="Remove">✕</span>`
+    : `<span class="placeholder">${escapeHtml(placeholderText)}</span>`;
+  if(card && card._isHorizontal) layoutSchemeFrame(el.querySelector('.landscape-frame'));
+  if(card) wireHoverPreview(el, card);
+  if(changed) el.querySelector('[data-act=changed]').addEventListener('click', (e)=>{ e.stopPropagation(); openHistoryModal(card); });
+  if(card && onRemove){
+    el.querySelector('[data-act=remove]').addEventListener('click', (e)=>{
+      e.stopPropagation(); // don't also trigger the chip's own click-to-open-picker handler
+      onRemove();
+    });
+  }
+}
+
+/* =========================================================================
+   RENDER: LIBRARY GRID
+   ========================================================================= */
+function renderLibrary(){
+  const grid = document.getElementById('library-grid');
+  let pool = poolForCurrentMode().filter(c=>cardMatchesFilters(c));
+  pool = sortPool(pool);
+  state.visibleCardsOrder = pool.map(c=>c.id);
+  document.getElementById('library-count').textContent = `${pool.length} card${pool.length!==1?'s':''}`;
+
+  grid.innerHTML='';
+  if(!state.cards.length){
+    grid.innerHTML = `<div style="grid-column:1/-1;padding:40px 20px;text-align:center;color:var(--text-soft);">
+      No card sets are loaded yet. Click <b>Sets</b> in the top bar to enable Set 1 or import another set.
+    </div>`;
+    renderCurrentViewStats();
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  pool.forEach((c)=>{
+    const tile = document.createElement('div');
+    const legal = isLegalForCurrentPool(c);
+    tile.className = 'card-tile' + (c._isHorizontal?' scheme-card':'') + (!legal?' illegal':'');
+    if(!legal) tile.title = 'Not legal for this deck — wrong aspect for your leader/domination aspect.';
+    tile.draggable = true;
+    tile.dataset.id = c.id;
+    if(state.selection.has(c.id)) tile.classList.add('selected');
+
+    if(displayImageUrl(c)){
+      tile.innerHTML = `${cardImageHtml(c, `loading="lazy" alt="${escapeHtml(c.name)}"`, gridImageFetchWidth())}
+                         <div class="name-bar">${escapeHtml(c.name)}</div>`;
+    } else {
+      tile.innerHTML = `<div class="fallback-face" style="background:${colorForAspect(c.aspect)}22;">
+                           <div class="fname">${escapeHtml(c.name)}</div>
+                           <div class="ftype">${escapeHtml(c.type)} ${c.aspect?'· '+escapeHtml(c.aspect):''}</div>
+                           <div class="fability">${escapeHtml((c.ability||'').slice(0,160))}</div>
+                         </div>
+                         <div class="name-bar">${escapeHtml(c.name)}</div>`;
+    }
+
+    const countIn = activeIsSchemeMode() ? curDeck().schemeIds.filter(x=>x===c.id).length : (curDeck().deckCards.get(c.id)||0);
+    if(countIn>0){
+      const badge=document.createElement('div');
+      badge.className='count-badge';
+      badge.textContent = '×'+countIn; // numeric for both modes now — schemes are no longer capped at one
+      tile.appendChild(badge);
+    }
+    if(isRecentlyUpdated(c)){
+      const dot=document.createElement('div');
+      dot.className='updated-dot';
+      dot.textContent='Updated';
+      tile.appendChild(dot);
+    }
+
+    const actions = document.createElement('div'); actions.className='tile-actions';
+    actions.appendChild(mkBtn('+', ()=>addCardsToDeck([c.id])));
+    if(countIn>0) actions.appendChild(mkBtn('−', ()=>{ activeIsSchemeMode() ? removeScheme(c.id) : removeOneCopy(c.id); }));
+    if(c._doubleSided && c._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(c.id); renderLibrary(); }));
+    actions.appendChild(mkBtn('…', ()=>openPreview(c)));
+    tile.appendChild(actions);
+
+    tile.addEventListener('click', (e)=>onTileClick(e, c.id));
+    tile.addEventListener('dragstart', (e)=>onTileDragStart(e, c.id));
+    wireHoverPreview(tile, c);
+    frag.appendChild(tile);
+  });
+  grid.appendChild(frag);
+  layoutAllSchemeFrames(grid);
+  renderCurrentViewStats();
+}
+
+function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+// Google's image CDN accepts a =w{pixels} size suffix on lh3.googleusercontent.com
+// links, so we can request an appropriately-sized render instead of always pulling the
+// full source resolution — dramatically cuts load time for on-screen thumbnails, and
+// (for the PDF export) file size, without touching the source files at all.
+function sizedUrl(url, w){ return url ? url + '=w' + w : ''; }
+
+/* =========================================================================
+   CARD SCALE — user-adjustable grid tile size, persisted per-browser
+   ========================================================================= */
+function gridImageFetchWidth(){
+  // keeps roughly the same ratio the app already used at the old fixed 170px tile
+  // size (320/170 ≈ 1.88) — so a smaller chosen card size also fetches a smaller
+  // image (faster), and a larger one fetches a crisper one, rather than always
+  // pulling the same fixed resolution regardless of how big the tile actually is.
+  return Math.round(state.cardScale * 1.88);
+}
+function applyCardScale(px){
+  state.cardScale = px;
+  document.documentElement.style.setProperty('--card-min-width', px+'px');
+  document.getElementById('cardScaleSlider').value = px;
+}
+function initCardScale(){
+  const stored = Number(localStorage.getItem(LS_CARD_SCALE_KEY));
+  const px = (stored && stored>=CARD_SCALE_MIN && stored<=CARD_SCALE_MAX) ? stored : CARD_SCALE_DEFAULT;
+  applyCardScale(px);
+}
+let cardScaleDebounceTimer = null;
+document.getElementById('cardScaleSlider').addEventListener('input', (e)=>{
+  const px = Number(e.target.value);
+  applyCardScale(px); // instant CSS resize — no need to wait for the debounce below
+  clearTimeout(cardScaleDebounceTimer);
+  cardScaleDebounceTimer = setTimeout(()=>{
+    localStorage.setItem(LS_CARD_SCALE_KEY, String(px));
+    renderLibrary(); // re-fetches images at the new size-appropriate resolution
+  }, 400);
+});
+
+
+// Scheme cards need their art rotated within a landscape frame (see CSS); everything
+// else is a plain <img>. Used everywhere a card image renders so the fix lives in one place.
+// Which side of a card is currently displayed — only ever true for cards flagged
+// double-sided (currently just leaders, but driven by the data flag rather than
+// hardcoded, so any future double-sided card picks this up automatically).
+function isShowingBack(card){ return !!(card && card._doubleSided && card._back && state.flippedCards.has(card.id)); }
+function toggleCardFlip(cardId){
+  state.flippedCards.has(cardId) ? state.flippedCards.delete(cardId) : state.flippedCards.add(cardId);
+}
+function displayImageUrl(card){ return card ? (isShowingBack(card) ? card._back : card._front) : ''; }
+
+function cardImageHtml(card, extraAttrs, width){
+  const url = displayImageUrl(card);
+  if(!url) return '';
+  const attrs = extraAttrs||'';
+  const src = escapeHtml(sizedUrl(url, width||320));
+  if(card._isHorizontal) return `<div class="landscape-frame"><img class="rotate-90-fill" src="${src}" ${attrs}></div>`;
+  return `<img src="${src}" ${attrs}>`;
+}
+
+/* CSS aspect-ratio + rotated-absolute-positioning is fragile across browsers for making
+   a rotated image exactly fill a differently-shaped box, and was overflowing its frame.
+   Instead: measure the frame's actual rendered pixels and set the pre-rotation image's
+   width/height explicitly (swapped) so a -90° rotation lands on an exact pixel match,
+   every time, regardless of browser quirks. */
+function layoutSchemeFrame(frame){
+  const img = frame.querySelector('img');
+  if(!img) return;
+  const w = frame.clientWidth, h = frame.clientHeight;
+  if(!w || !h) return;
+  img.style.width = h + 'px';
+  img.style.height = w + 'px';
+}
+function layoutAllSchemeFrames(root){
+  (root||document).querySelectorAll('.landscape-frame, .hp-frame.scheme, #preview-img-frame.scheme').forEach(layoutSchemeFrame);
+}
+window.addEventListener('resize', ()=>{ clearTimeout(window.__eooResizeT); window.__eooResizeT=setTimeout(()=>layoutAllSchemeFrames(document), 120); });
+
+function mkBtn(label, onClick){
+  const b=document.createElement('div');
+  b.className='tile-btn'; b.textContent=label;
+  b.addEventListener('click',(e)=>{ e.stopPropagation(); onClick(); });
+  b.addEventListener('mousedown',(e)=>e.stopPropagation());
+  return b;
+}
+
+/* selection: click / shift-click / ctrl-click */
+function onTileClick(e, id){
+  const order = state.visibleCardsOrder;
+  const idx = order.indexOf(id);
+  if(e.shiftKey && state.lastClickIndex!==null){
+    const [a,b] = [state.lastClickIndex, idx].sort((x,y)=>x-y);
+    state.selection = new Set(order.slice(a,b+1));
+  } else if(e.ctrlKey || e.metaKey){
+    state.selection.has(id) ? state.selection.delete(id) : state.selection.add(id);
+    state.lastClickIndex = idx;
+  } else {
+    state.selection = new Set([id]);
+    state.lastClickIndex = idx;
+  }
+  renderLibrary();
+}
+
+function onTileDragStart(e, id){
+  let ids;
+  if(state.selection.has(id) && state.selection.size>1){ ids=[...state.selection]; }
+  else {
+    ids=[id];
+    state.selection=new Set([id]);
+    // Deferred: mutating the grid's DOM synchronously inside dragstart can remove the
+    // node mid-drag and cancel the operation in some browsers (this was the cause of
+    // "only works once 2+ cards are selected" — the >1 branch above never re-renders).
+    setTimeout(renderLibrary, 0);
+  }
+  e.dataTransfer.setData('text/plain', JSON.stringify(ids));
+  e.dataTransfer.effectAllowed='copy';
+}
+
+/* =========================================================================
+   HOVER PREVIEW
+   ========================================================================= */
+let hoverTimer=null;
+// Safe to call repeatedly on the SAME persistent element (unlike grid tiles, which are
+// freshly created each render, chip elements like the leader slot persist — only their
+// innerHTML changes — so this must replace any previously-wired listener rather than
+// stacking a new one on top each time).
+function wireHoverPreview(el, card){
+  if(el._hoverEnterHandler) el.removeEventListener('mouseenter', el._hoverEnterHandler);
+  if(el._hoverLeaveHandler) el.removeEventListener('mouseleave', el._hoverLeaveHandler);
+  el._hoverEnterHandler = () => {
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(()=>showHoverPreview(el, card), 450);
+  };
+  el._hoverLeaveHandler = () => { clearTimeout(hoverTimer); hideHoverPreview(); };
+  el.addEventListener('mouseenter', el._hoverEnterHandler);
+  el.addEventListener('mouseleave', el._hoverLeaveHandler);
+}
+function showHoverPreview(el, card){
+  const url = displayImageUrl(card);
+  if(!card || !url) return;
+  const hp = document.getElementById('hover-preview');
+  const imgEl = document.getElementById('hoverPreviewImg');
+  const frameEl = document.getElementById('hoverPreviewFrame');
+  imgEl.removeAttribute('src'); // clear immediately — otherwise the previous card's bitmap stays visible until the new one finishes loading
+  imgEl.src = sizedUrl(url, HOVER_FETCH_WIDTH);
+  frameEl.classList.toggle('scheme', !!card._isHorizontal);
+  hp.classList.toggle('scheme', !!card._isHorizontal);
+  if(!card._isHorizontal){ imgEl.style.width=''; imgEl.style.height=''; } // clear any stale sizing from a prior rotated preview
+  document.getElementById('hoverPreviewName').textContent = card.name;
+  const rect = el.getBoundingClientRect();
+  const boxWidth = card._isHorizontal ? HOVER_PREVIEW_SCHEME_WIDTH : HOVER_PREVIEW_WIDTH;
+  const boxHeight = (card._isHorizontal ? boxWidth*5/7 : boxWidth*7/5) + 40; // + ~name/padding overhead
+  let left = rect.right + 12;
+  if(left + boxWidth + 16 > window.innerWidth) left = rect.left - boxWidth - 16;
+  let top = Math.max(8, Math.min(rect.top, window.innerHeight-boxHeight-8));
+  hp.style.left = left+'px'; hp.style.top = top+'px';
+  hp.style.display = 'block';
+  if(card._isHorizontal) layoutSchemeFrame(frameEl);
+}
+function hideHoverPreview(){ document.getElementById('hover-preview').style.display='none'; }
+
+/* =========================================================================
+   DECK PANEL
+   ========================================================================= */
+function renderDeckPanel(){
+  const zone = document.getElementById('deck-drop-zone');
+  zone.innerHTML='';
+
+  if(activeIsSchemeMode()){
+    if(!curDeck().schemeIds.length){
+      zone.innerHTML = `<div id="deck-empty-hint">Drag schemes here, or use the + button on a card. Choose exactly 5.</div>`;
+    }
+    const schemeCounts = {}, schemeOrder = [];
+    curDeck().schemeIds.forEach(id=>{
+      if(!(id in schemeCounts)){ schemeCounts[id]=0; schemeOrder.push(id); }
+      schemeCounts[id]++;
+    });
+    schemeOrder.forEach(id=>{
+      zone.appendChild(buildDeckRow(id, state.byId.get(id), {qty:schemeCounts[id], showStepper:true}));
+    });
+  } else {
+    if(!curDeck().deckOrder.length){
+      zone.innerHTML = `<div id="deck-empty-hint">Drag cards here, or use the + button on a card.</div>`;
+    }
+    curDeck().deckOrder.forEach(id=>{
+      const n = curDeck().deckCards.get(id)||0;
+      if(n<=0) return;
+      zone.appendChild(buildDeckRow(id, state.byId.get(id), {qty:n, showStepper:true}));
+    });
+  }
+  layoutAllSchemeFrames(zone);
+}
+
+function buildDeckRow(id, card, {qty, showStepper}){
+  const row = document.createElement('div');
+  row.className = 'deck-stack' + (card && card._isHorizontal ? ' scheme-row' : '');
+  row.draggable = true;
+  row.dataset.id = id;
+  const copyLimit = (card && card._isScheme) ? 1 : MAX_COPIES; // schemes: documented 1-copy max; flagged visually, never blocked
+  const overLimit = showStepper && qty>copyLimit;
+  const illegal = !card || !isLegalForCurrentPool(card);
+  if(overLimit || illegal) row.classList.add('over-limit');
+  if(illegal) row.title = 'Not legal for this deck — wrong type, or wrong aspect for your leader/domination aspect.';
+
+  const img = card && displayImageUrl(card) ? `<img src="${escapeHtml(sizedUrl(displayImageUrl(card),150))}">` : '';
+  let name, removedBadgeHtml = '';
+  if(card){
+    name = escapeHtml(card.name);
+  } else {
+    const info = getRemovedCardInfo(id);
+    if(info==='loading') name = 'Loading…';
+    else if(info==='not-found') name = `(unknown card ${escapeHtml(id)})`;
+    else name = escapeHtml(info.name || id);
+    if(info!=='loading') removedBadgeHtml = '<div class="removed-badge" title="Removed from the game — click for details">&#9888; Removed</div>';
+  }
+  const changed = card && cardChangedSinceExport(card);
+  row.innerHTML = `${img}<div class="dsname">${name}</div>${removedBadgeHtml}${changed?'<div class="changed-badge" title="Changed since this deck was exported — click to see what changed">&#9888;</div>':''}`;
+  if(changed) row.querySelector('.changed-badge').addEventListener('click', (e)=>{ e.stopPropagation(); openHistoryModal(card); });
+  if(removedBadgeHtml) row.querySelector('.removed-badge').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const info = removedCardCache.get(id);
+    toast(info && info!=='not-found' ? `"${info.name}" was removed from the game (last known type: ${info.type||'unknown'}).` : 'This card was removed from the game — no further record found.');
+  });
+
+  const actions = document.createElement('div'); actions.className='tile-actions';
+  if(showStepper){
+    const stepper = document.createElement('div'); stepper.className='stepper';
+    stepper.appendChild(mkBtn('−', ()=>removeOneCopy(id)));
+    const countEl = document.createElement('span');
+    countEl.className = 'dscount' + (overLimit?' over':'');
+    countEl.textContent = '×'+qty;
+    stepper.appendChild(countEl);
+    stepper.appendChild(mkBtn('+', ()=>addCardsToDeck([id])));
+    actions.appendChild(stepper);
+  }
+  if(card && card._doubleSided && card._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(id); renderDeckPanel(); }));
+  actions.appendChild(mkBtn('…', ()=> card && openPreview(card)));
+  actions.appendChild(mkBtn('×', ()=> showStepper ? removeAllCopies(id) : removeScheme(id)));
+  row.appendChild(actions);
+
+  wireRowDrag(row, id);
+  wireHoverPreview(row, card);
+  return row;
+}
+
+/* Shared insertion-line indicator: shows the gap a reordered card will land in,
+   rather than highlighting the row underneath it (which reads as "replace this card"
+   instead of "insert between these cards"). */
+let reorderIndicatorEl = null;
+function ensureReorderIndicator(){
+  if(!reorderIndicatorEl){
+    reorderIndicatorEl = document.createElement('div');
+    reorderIndicatorEl.className = 'reorder-indicator';
+  }
+  return reorderIndicatorEl;
+}
+function showReorderIndicatorAt(zone, beforeEl){
+  const ind = ensureReorderIndicator();
+  if(ind.parentNode) ind.parentNode.removeChild(ind);
+  if(beforeEl) zone.insertBefore(ind, beforeEl);
+  else zone.appendChild(ind);
+}
+function hideReorderIndicator(){
+  if(reorderIndicatorEl && reorderIndicatorEl.parentNode) reorderIndicatorEl.parentNode.removeChild(reorderIndicatorEl);
+}
+document.addEventListener('dragend', hideReorderIndicator);
+
+function wireRowDrag(row, id){
+  row.addEventListener('dragstart', (e)=>{
+    e.stopPropagation();
+    e.dataTransfer.setData('text/plain', JSON.stringify({reorder:true, id}));
+    e.dataTransfer.effectAllowed='move';
+  });
+  row.addEventListener('dragover', (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    const rect = row.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height/2;
+    showReorderIndicatorAt(row.parentNode, before ? row : row.nextElementSibling);
+  });
+  row.addEventListener('drop', (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    hideReorderIndicator();
+    let payload;
+    try{ payload = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ return; }
+    if(payload && payload.reorder){
+      if(payload.id===id) return;
+      const orderArr = activeIsSchemeMode() ? curDeck().schemeIds : curDeck().deckOrder;
+      const rect = row.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height/2;
+      const filtered = orderArr.filter(x=>x!==payload.id);
+      const idx = filtered.indexOf(id);
+      const insertAt = before ? idx : idx+1;
+      filtered.splice(insertAt<0?filtered.length:insertAt, 0, payload.id);
+      if(activeIsSchemeMode()) curDeck().schemeIds = filtered; else curDeck().deckOrder = filtered;
+      renderAll();
+    } else if(Array.isArray(payload)){
+      addCardsToDeck(payload);
+    }
+  });
+}
+
+function removeOneCopy(id){
+  if(activeIsSchemeMode()){ removeScheme(id); return; }
+  const cur = curDeck().deckCards.get(id)||0;
+  const nn = cur-1;
+  if(nn<=0){ curDeck().deckCards.delete(id); curDeck().deckOrder = curDeck().deckOrder.filter(x=>x!==id); }
+  else curDeck().deckCards.set(id,nn);
+  renderAll();
+}
+function removeAllCopies(id){
+  if(activeIsSchemeMode()){
+    curDeck().schemeIds = curDeck().schemeIds.filter(x=>x!==id);
+    renderAll();
+    return;
+  }
+  curDeck().deckCards.delete(id);
+  curDeck().deckOrder = curDeck().deckOrder.filter(x=>x!==id);
+  renderAll();
+}
+function removeScheme(id){
+  // Removes only ONE occurrence — schemeIds can now contain duplicates (sealed-deck
+  // generation may add a scheme that's already present), so removing every matching
+  // entry via a plain filter would silently delete all of them from one click.
+  const idx = curDeck().schemeIds.indexOf(id);
+  if(idx!==-1) curDeck().schemeIds.splice(idx,1);
+  renderAll();
+}
+
+function addCardsToDeck(ids){
+  if(activeIsSchemeMode()){
+    let added=0, skipped=0;
+    ids.forEach(id=>{
+      const c = state.byId.get(id);
+      if(!c || !isTypeEligible(c)) { skipped++; return; } // aspect-illegal cards ARE addable now — only wrong type is a hard block
+      curDeck().schemeIds.push(id); added++; // duplicates now allowed freely, same as main-deck cards — the rules checklist flags >1 copy, it never blocks it
+    });
+    toast(`Added ${added} scheme${added!==1?'s':''}${skipped?`, skipped ${skipped}`:''}.`);
+  } else {
+    let added=0, skipped=0;
+    ids.forEach(id=>{
+      const c = state.byId.get(id);
+      if(!c || !isTypeEligible(c)) { skipped++; return; } // aspect-illegal cards ARE addable now — only wrong type is a hard block
+      const cur = curDeck().deckCards.get(id)||0;
+      curDeck().deckCards.set(id, cur+1);
+      if(!curDeck().deckOrder.includes(id)) curDeck().deckOrder.push(id);
+      added++;
+    });
+    toast(`Added ${added} card${added!==1?'s':''}${skipped?`, skipped ${skipped} (wrong card type for this deck)`:''}.`);
+  }
+  renderAll();
+}
+
+/* =========================================================================
+   PREVIEW MODAL (schema-driven, respects 0-as-absent)
+   ========================================================================= */
+function openPreview(c){
+  const imgEl = document.getElementById('preview-img');
+  const frameEl = document.getElementById('preview-img-frame');
+  const url = displayImageUrl(c);
+  imgEl.removeAttribute('src'); // clear immediately so the previous card's bitmap never lingers mid-load
+  frameEl.classList.toggle('scheme', !!c._isHorizontal);
+  if(!c._isHorizontal){ imgEl.style.width=''; imgEl.style.height=''; }
+  frameEl.style.display = url ? 'block':'none';
+  if(url) imgEl.src = sizedUrl(url, 560); // trimmed from 660 for faster loading — still comfortably crisp at this modal's display size
+  const dl = document.getElementById('preview-text');
+  const rows = [['Name',c.name],['Type',c.type]];
+  if(c.aspect) rows.push(['Aspect',c.aspect]);
+  if(c.loyalty) rows.push(['Loyalty',c.loyalty]);
+  if(c.ability) rows.push(['Ability',c.ability]);
+  state.fieldDefs.forEach(f=>{
+    if(['type','aspect','loyalty'].includes(f.key)) return;
+    if(!isStatPresent(c,f.key)) return;
+    rows.push([f.label, getFieldValues(c,f).join(' / ')]);
+  });
+  dl.innerHTML = rows.map(([k,v])=>`<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join('');
+
+  const flipBtn = document.getElementById('btnFlipCard');
+  if(c._doubleSided && c._back){
+    flipBtn.style.display = 'inline-flex';
+    flipBtn.textContent = isShowingBack(c) ? 'Show Front' : 'Show Back';
+    flipBtn.onclick = () => { toggleCardFlip(c.id); openPreview(c); };
+  } else {
+    flipBtn.style.display = 'none';
+  }
+
+  const lu = c['last-updated'];
+  document.getElementById('previewLastUpdated').textContent = lu ? ('Last updated: ' + formatDateLabel(lu)) : '';
+  const histBtn = document.getElementById('btnViewHistory');
+  histBtn.style.display = lu ? 'inline-flex' : 'none'; // only cards that have ever been through an update have history
+  histBtn.onclick = () => openHistoryModal(c);
+
+  document.getElementById('preview-modal').classList.remove('hidden');
+  if(c._isHorizontal) layoutSchemeFrame(frameEl); // must run after the modal is visible, or clientWidth reads 0
+}
+
+/* =========================================================================
+   VERSION HISTORY + DIFF
+   ========================================================================= */
+async function fetchCardHistory(cardId){
+  const url = `${WEBAPP_URL}?cardHistory=${encodeURIComponent(cardId)}`;
+  try{
+    const res = await fetch(url + '&_=' + Date.now());
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    return await res.json();
+  }catch(fetchErr){
+    // Same fetch-then-JSONP fallback as the main card feed — this endpoint is
+    // subject to the same occasional cross-origin quirks.
+    return await new Promise((resolve,reject)=>{
+      const cbName = '__eooHistCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${WEBAPP_URL}?cardHistory=${encodeURIComponent(cardId)}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+}
+
+async function openHistoryModal(card){
+  const body = document.getElementById('historyModalBody');
+  body.innerHTML = '<p style="color:var(--text-soft);">Loading…</p>';
+  document.getElementById('historyModal').classList.remove('hidden');
+  try{
+    const rows = await fetchCardHistory(card.id);
+    if(!rows.length){ body.innerHTML = '<p style="color:var(--text-soft);">No past versions for this card yet.</p>'; return; }
+    rows.sort((a,b)=> new Date(b['archived-at']) - new Date(a['archived-at']));
+    body.innerHTML = '';
+    rows.forEach(row=>{
+      const div = document.createElement('div');
+      div.className='row-item';
+      div.innerHTML = `<span>${escapeHtml(formatDateLabel(row['archived-at']))}</span><span class="btn btn-sm">View changes</span>`;
+      div.querySelector('.btn').addEventListener('click', ()=> openDiffModal(row, card));
+      body.appendChild(div);
+    });
+  }catch(e){
+    body.innerHTML = `<p style="color:var(--danger);">Could not load version history: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
+// Compares a past snapshot (raw sheet row) against today's live card, field by
+// field, ignoring structural/meta columns. Art is compared separately since it's
+// shown as images, not text.
+function computeCardDiff(oldRow, currentCard){
+  const skip = new Set(['id','is_double_sided','front-image-url','back-image-url','last-updated','archived-at']);
+  const keys = new Set([...Object.keys(oldRow), ...Object.keys(currentCard)]);
+  const diffs = [];
+  keys.forEach(k=>{
+    if(skip.has(k) || isRawNameKey(k) || k.startsWith('_')) return;
+    const oldVal = (oldRow[k]??'').toString().trim();
+    const curVal = (currentCard[k]??'').toString().trim();
+    if(oldVal !== curVal) diffs.push({ label: prettifyLabel(k), oldVal, curVal });
+  });
+  const oldFront = (oldRow['front-image-url']||'').trim();
+  const oldBack = (oldRow['back-image-url']||'').trim();
+  const artChanged = oldFront !== (currentCard._front||'') || oldBack !== (currentCard._back||'');
+  return { diffs, artChanged, oldFront };
+}
+
+function openDiffModal(oldRow, currentCard){
+  document.getElementById('diffModalTitle').textContent = `Changes since ${formatDateLabel(oldRow['archived-at'])}`;
+  const { diffs, artChanged, oldFront } = computeCardDiff(oldRow, currentCard);
+  let html = '';
+  if(artChanged){
+    html += `<div class="diff-art-row">
+      <div><div class="diff-art-label">Then</div>${oldFront?`<img src="${escapeHtml(sizedUrl(oldFront,300))}">`:'<div class="diff-art-empty">No image</div>'}</div>
+      <div><div class="diff-art-label">Now</div>${currentCard._front?`<img src="${escapeHtml(sizedUrl(currentCard._front,300))}">`:'<div class="diff-art-empty">No image</div>'}</div>
+    </div>`;
+  }
+  if(diffs.length){
+    html += '<table class="diff-table"><thead><tr><th>Field</th><th>Then</th><th>Now</th></tr></thead><tbody>' +
+      diffs.map(d=>`<tr><td>${escapeHtml(d.label)}</td><td class="diff-old">${escapeHtml(d.oldVal||'—')}</td><td class="diff-new">${escapeHtml(d.curVal||'—')}</td></tr>`).join('') +
+      '</tbody></table>';
+  } else if(artChanged){
+    html += '<p style="color:var(--text-soft);margin-top:10px;">Art updated — no other fields changed.</p>';
+  } else {
+    html += '<p style="color:var(--text-soft);">No changes detected in this version compared to today.</p>';
+  }
+  document.getElementById('diffModalBody').innerHTML = html;
+  document.getElementById('historyModal').classList.add('hidden');
+  document.getElementById('diffModal').classList.remove('hidden');
+}
+
+/* =========================================================================
+   MASTER RENDER
+   ========================================================================= */
+function renderAll(){
+  renderTabs();
+  renderDeckControls();
+  renderSortOptions();
+  renderFilters();
+  renderLibrary();
+  renderDeckPanel();
+}
+
+/* =========================================================================
+   EVENTS
+   ========================================================================= */
+const LS_LAST_DECKTYPE_KEY = 'eoo_last_decktype';
+document.getElementById('deckTypeTabs').addEventListener('click', (e)=>{
+  const t = e.target.closest('.tab'); if(!t) return;
+  if(t.dataset.type === state.deckType) return;
+  state.deckType = t.dataset.type;   // Overlord and Champion are separate decks, built in
+  state.selection = new Set();       // parallel — nothing about either one is reset here.
+  localStorage.setItem(LS_LAST_DECKTYPE_KEY, state.deckType);
+  renderAll();
+});
+
+document.getElementById('overlordModeToggle').addEventListener('click', (e)=>{
+  const t = e.target.closest('.tab'); if(!t) return;
+  curDeck().overlordMode = t.dataset.mode;
+  state.selection = new Set();
+  renderAll();
+});
+
+document.getElementById('deck-leader-slot').addEventListener('click', openLeaderModal);
+document.getElementById('deck-bonus-slot').addEventListener('click', openBonusCardModal);
+document.getElementById('deck-extra-slot').addEventListener('click', openExtraCardModal);
+// Generic single-card picker — backs the Leader, Domination/Quest, and
+// Stronghold/Resistance selections alike.
+function openCardPickerModal({title, pool, currentId, onPick}){
+  document.getElementById('cardPickerTitle').textContent = title;
+  const grid = document.getElementById('cardPickerGrid');
+  grid.innerHTML = pool.map(c=>{
+    const imgHtml = cardImageHtml(c, '', 320); // reuses the same rotation-aware rendering as everywhere else
+    return `
+    <div class="leader-pick-tile${c.id===currentId?' selected':''}" data-id="${c.id}">
+      ${imgHtml || `<div class="fallback-face" style="background:${colorForAspect(c.aspect)}33;"><div class="fname">${escapeHtml(c.name)}</div><div class="ftype">${escapeHtml(c.aspect)}</div></div>`}
+      <div class="lname">${escapeHtml(c.name)}</div>
+      <div style="display:flex;justify-content:center;gap:4px;padding:0 6px 8px 6px;">
+        ${(c._doubleSided && c._back) ? `<div class="btn btn-sm" data-act="flip">Flip</div>` : ''}
+        <div class="btn btn-sm" data-act="detail">Details</div>
+      </div>
+    </div>`;
+  }).join('');
+  grid.querySelectorAll('.leader-pick-tile').forEach(t=>{
+    const id = t.dataset.id;
+    t.querySelector('[data-act=detail]').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      openPreview(state.byId.get(id));
+    });
+    const flipBtn = t.querySelector('[data-act=flip]');
+    if(flipBtn) flipBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      toggleCardFlip(id);
+      openCardPickerModal({title, pool, currentId, onPick}); // rebuild in place so this same modal reflects the flip
+    });
+    t.addEventListener('click', ()=>{
+      onPick(id);
+      document.getElementById('cardPickerModal').classList.add('hidden');
+      renderAll();
+    });
+  });
+  document.getElementById('cardPickerModal').classList.remove('hidden');
+  layoutAllSchemeFrames(grid); // must run after the modal is visible, or clientWidth reads 0 and sizing silently no-ops
+}
+
+function openLeaderModal(){
+  openCardPickerModal({
+    title: 'Choose your leader',
+    pool: state.cards.filter(c=>c.type===leaderTypeName(state.deckType)),
+    currentId: curDeck().leaderId,
+    onPick: (id) => { curDeck().leaderId = id; },
+  });
+}
+
+function openBonusCardModal(){
+  const isOverlord = state.deckType==='overlord';
+  openCardPickerModal({
+    title: isOverlord ? 'Choose your Domination card' : 'Choose your Quest card',
+    pool: state.cards.filter(c=>c.type===bonusCardTypeName(state.deckType)),
+    currentId: curDeck().bonusCardId,
+    onPick: (id) => {
+      curDeck().bonusCardId = id;
+      const card = state.byId.get(id);
+      curDeck().bonusAspect = card ? (card.aspect||'') : ''; // derived, never chosen independently
+    },
+  });
+}
+
+function openExtraCardModal(){
+  const isOverlord = state.deckType==='overlord';
+  openCardPickerModal({
+    title: isOverlord ? 'Choose your Stronghold' : 'Choose your Resistance',
+    pool: extraCardPool(state.deckType),
+    currentId: curDeck().extraCardId,
+    onPick: (id) => { curDeck().extraCardId = id; },
+  });
+}
+
+
+document.getElementById('sortSelect').addEventListener('change', (e)=>{
+  state.sortField = e.target.value;
+  renderLibrary();
+});
+
+document.getElementById('btnClearIllegal').addEventListener('click', ()=>{
+  const snapshot = activeIsSchemeMode()
+    ? { schemeIds: [...curDeck().schemeIds] }
+    : { deckCards: new Map(curDeck().deckCards), deckOrder: [...curDeck().deckOrder] };
+  let removedCount = 0;
+  if(activeIsSchemeMode()){
+    const before = curDeck().schemeIds.length;
+    curDeck().schemeIds = curDeck().schemeIds.filter(id=>{ const c=state.byId.get(id); return c && isLegalForCurrentPool(c); });
+    removedCount = before - curDeck().schemeIds.length;
+  } else {
+    for(const id of [...curDeck().deckCards.keys()]){
+      const c = state.byId.get(id);
+      if(!c || !isLegalForCurrentPool(c)){ removedCount += curDeck().deckCards.get(id); curDeck().deckCards.delete(id); curDeck().deckOrder = curDeck().deckOrder.filter(x=>x!==id); }
+    }
+  }
+  renderAll();
+  toast(`Removed ${removedCount} illegal card${removedCount!==1?'s':''}.`, 'Undo', ()=>{
+    if(activeIsSchemeMode()) curDeck().schemeIds = snapshot.schemeIds;
+    else { curDeck().deckCards = snapshot.deckCards; curDeck().deckOrder = snapshot.deckOrder; }
+    renderAll();
+  });
+});
+
+document.getElementById('searchBox').addEventListener('input', (e)=>{
+  curFilters().search = e.target.value;
+  renderFilters(); renderLibrary();
+});
+document.getElementById('deckViewCheckbox').addEventListener('change', (e)=>{
+  curFilters().deckViewOnly = e.target.checked;
+  renderAll();
+});
+document.getElementById('btnClearFilters').addEventListener('click', ()=>{
+  state.filtersByType[state.deckType] = {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()};
+  document.getElementById('searchBox').value='';
+  renderAll();
+});
+
+document.querySelectorAll('[data-close]').forEach(b=>{
+  b.addEventListener('click', ()=> document.getElementById(b.dataset.close).classList.add('hidden'));
+});
+
+document.getElementById('btnThemeToggle').addEventListener('click', ()=>{
+  const cur = document.documentElement.getAttribute('data-theme') || 'light';
+  applyTheme(cur==='dark' ? 'light' : 'dark');
+});
+
+document.getElementById('deckNameInput').addEventListener('input', (e)=>{ curDeck().name = e.target.value; });
+
+document.getElementById('btnNewDeck').addEventListener('click', ()=>{
+  if(!confirm('Start a new deck? Unsaved changes will be lost.')) return;
+  state.decks[state.deckType] = freshDeckSlot();
+  renderAll();
+});
+document.getElementById('btnSealedDeck').addEventListener('click', ()=>{
+  if(!confirm('Generate a sealed deck? This replaces your current '+(state.deckType==='overlord'?'Overlord':'Champion')+' deck — unsaved changes will be lost.')) return;
+  openSealedSetPicker();
+});
+function openSealedSetPicker(){
+  const listEl = document.getElementById('sealedSetList');
+  listEl.innerHTML = allSetNames().map(n=>`<div class="row-item" data-set="${escapeHtml(n)}">${escapeHtml(n)}</div>`).join('');
+  listEl.querySelectorAll('[data-set]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      document.getElementById('sealedSetModal').classList.add('hidden');
+      generateSealedDeck(el.dataset.set);
+      openHelpModal('Sealed Deck Construction');
+    });
+  });
+  document.getElementById('sealedSetModal').classList.remove('hidden');
+}
+
+/* deck drop zone: only fires for drops NOT on a specific row (row handlers stopPropagation) */
+const dropZone = document.getElementById('deck-drop-zone');
+dropZone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropZone.classList.add('dragover'); showReorderIndicatorAt(dropZone, null); });
+dropZone.addEventListener('dragleave', ()=> dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e)=>{
+  e.preventDefault(); dropZone.classList.remove('dragover'); hideReorderIndicator();
+  let payload;
+  try{ payload = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ return; }
+  if(payload && payload.reorder){
+    const orderArr = activeIsSchemeMode() ? curDeck().schemeIds : curDeck().deckOrder;
+    const filtered = orderArr.filter(x=>x!==payload.id);
+    filtered.push(payload.id);
+    if(activeIsSchemeMode()) curDeck().schemeIds = filtered; else curDeck().deckOrder = filtered;
+    renderAll();
+  } else if(Array.isArray(payload)){
+    addCardsToDeck(payload);
+  }
+});
+
+document.getElementById('btnResync').addEventListener('click', ()=> loadData(false));
+
+/* =========================================================================
+   PLAYTEST ROOM LINK + BOARD (.pcio) DOWNLOAD
+   ========================================================================= */
+// This opens the template page with the "Blank Game" button front and center,
+// rather than trying to create a room directly. That button's actual room
+// creation happens through playingcards.io's own backend (looks Firebase-backed,
+// not a plain link or documented API) — nothing externally callable to hook into
+// safely, so one extra click here is the honest, durable tradeoff.
+const PLAYTEST_ROOM_URL = 'https://playingcards.io/@playingcardsio/standard-52-card-deck-game';
+(function wirePlaytestRoomLink(){
+  const el = document.getElementById('btnPlaytestRoom');
+  el.href = PLAYTEST_ROOM_URL;
+})();
+
+async function fetchLatestPcioInfo(){
+  const url = `${WEBAPP_URL}?latestPcio=1`;
+  try{
+    const res = await fetch(url + '&_=' + Date.now());
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    return await res.json();
+  }catch(fetchErr){
+    return await new Promise((resolve,reject)=>{
+      const cbName = '__eooPcioCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${WEBAPP_URL}?latestPcio=1&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+}
+
+document.getElementById('btnDownloadPcio').addEventListener('click', async ()=>{
+  toast('Looking for the board file…');
+  try{
+    const info = await fetchLatestPcioInfo();
+    if(!info.found){ toast('No .pcio file found in the assets folder.'); return; }
+    window.open(info.downloadUrl, '_blank');
+  }catch(e){
+    toast('Could not find the board file: '+e.message);
+  }
+});
+
+
+/* =========================================================================
+   SAVE / LOAD DECKS (localStorage)
+   ========================================================================= */
+function getSavedDecks(){ try{ return JSON.parse(localStorage.getItem(LS_DECKS_KEY)||'{}'); }catch(e){ return {}; } }
+function setSavedDecks(obj){ localStorage.setItem(LS_DECKS_KEY, JSON.stringify(obj)); }
+
+document.getElementById('btnSaveDeck').addEventListener('click', ()=>{
+  const name = document.getElementById('deckNameInput').value.trim();
+  if(!name){ toast('Give your deck a name first.'); return; }
+  const decks = getSavedDecks();
+  decks[name] = {
+    deckType: state.deckType, overlordMode: curDeck().overlordMode,
+    leaderId: curDeck().leaderId, bonusCardId: curDeck().bonusCardId, extraCardId: curDeck().extraCardId,
+    bonusAspect: curDeck().bonusAspect, sourceExportedAt: curDeck().sourceExportedAt,
+    deckCards: [...curDeck().deckCards.entries()], deckOrder: curDeck().deckOrder, schemeIds: curDeck().schemeIds,
+  };
+  setSavedDecks(decks);
+  toast(`Saved "${name}".`);
+});
+
+function refreshLoadModal(){
+  const decks = getSavedDecks();
+  const body = document.getElementById('loadModalBody');
+  const names = Object.keys(decks);
+  body.innerHTML = names.length ? names.map(n=>`
+      <div class="row-item">
+        <span>${escapeHtml(n)} <span style="font-size:12px;color:var(--text-soft);">(${escapeHtml(decks[n].deckType)})</span></span>
+        <span>
+          <span class="btn btn-sm" data-load="${escapeHtml(n)}">Load</span>
+          <span class="btn btn-sm" data-dup="${escapeHtml(n)}">Duplicate</span>
+          <span class="btn btn-sm" data-rename="${escapeHtml(n)}">Rename</span>
+          <span class="btn btn-sm" data-del="${escapeHtml(n)}">Delete</span>
+        </span>
+      </div>`).join('') : '<p style="color:var(--text-soft);font-size:13px;">No saved decks yet.</p>';
+
+  body.querySelectorAll('[data-load]').forEach(b=>b.onclick=()=>{
+    const d = decks[b.dataset.load];
+    state.deckType = d.deckType; curDeck().overlordMode = d.overlordMode||'main';
+    curDeck().leaderId=d.leaderId; curDeck().bonusAspect=d.bonusAspect||'';
+    curDeck().bonusCardId=d.bonusCardId||null; curDeck().extraCardId=d.extraCardId||null;
+    curDeck().sourceExportedAt = d.sourceExportedAt||null;
+    curDeck().deckCards = new Map(d.deckCards||[]);
+    curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
+    curDeck().schemeIds = d.schemeIds||[];
+    curDeck().name = b.dataset.load;
+    document.getElementById('loadModal').classList.add('hidden');
+    renderAll();
+  });
+  body.querySelectorAll('[data-dup]').forEach(b=>b.onclick=()=>{
+    const src = b.dataset.dup;
+    let newName = src + ' (copy)', i=2;
+    while(decks[newName]) newName = `${src} (copy ${i++})`;
+    const decks2 = getSavedDecks();
+    decks2[newName] = JSON.parse(JSON.stringify(decks2[src]));
+    setSavedDecks(decks2);
+    refreshLoadModal();
+    toast(`Duplicated as "${newName}".`);
+  });
+  body.querySelectorAll('[data-rename]').forEach(b=>b.onclick=()=>{
+    const oldName = b.dataset.rename;
+    const newName = prompt('Rename deck:', oldName);
+    if(!newName || newName===oldName) return;
+    const decks2 = getSavedDecks();
+    if(decks2[newName]){ toast('A deck with that name already exists.'); return; }
+    decks2[newName] = decks2[oldName];
+    delete decks2[oldName];
+    setSavedDecks(decks2);
+    if(curDeck().name===oldName) curDeck().name = newName; // keep the currently-open deck's displayed name in sync, if it's the one being renamed
+    refreshLoadModal();
+    renderAll();
+  });
+  body.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{
+    const decks2 = getSavedDecks(); delete decks2[b.dataset.del]; setSavedDecks(decks2);
+    refreshLoadModal();
+  });
+}
+document.getElementById('btnLoadDeck').addEventListener('click', ()=>{
+  refreshLoadModal();
+  document.getElementById('loadModal').classList.remove('hidden');
+});
+
+/* ---- Import from file (.json exact, .txt best-effort by name) ---- */
+document.getElementById('btnImportFile').addEventListener('click', ()=> document.getElementById('importFileInput').click());
+document.getElementById('importFileInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try{
+      if(file.name.toLowerCase().endsWith('.json')) importDeckFromJson(JSON.parse(reader.result));
+      else importDeckFromText(String(reader.result));
+      document.getElementById('loadModal').classList.add('hidden');
+    }catch(err){ toast('Import failed: '+err.message); }
+  };
+  reader.readAsText(file);
+  e.target.value='';
+});
+
+function importDeckFromJson(d){
+  if(!d || !d.deckType) throw new Error('not a recognized deck file');
+  state.deckType = d.deckType; curDeck().overlordMode='main';
+  curDeck().leaderId = d.leaderId || null;
+  curDeck().bonusCardId = d.bonusCardId || null;
+  curDeck().extraCardId = d.extraCardId || null;
+  curDeck().bonusAspect = d.bonusAspect || '';
+  curDeck().schemeIds = d.schemeIds || [];
+  curDeck().deckCards = new Map(Object.entries(d.deckCards||{}));
+  curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
+  curDeck().name = d.name || '';
+  curDeck().sourceExportedAt = d.exportedAt || null;
+  renderAll();
+  toast('Deck imported.');
+}
+
+function importDeckFromText(text){
+  const lines = text.split('\n').map(l=>l.trim());
+  let section = null;
+  let leaderName = null, bonusCardName = null, extraCardName = null, bonusAspectVal = '', exportedAtVal = null;
+  const schemeNames=[], deckLines=[];
+  lines.forEach(line=>{
+    if(!line) return;
+    if(line.startsWith('#')){
+      const m = line.match(/^#\s*exported:\s*(.+)$/i);
+      if(m) exportedAtVal = m[1].trim();
+      return;
+    }
+    if(/^leader:/i.test(line)){ leaderName = line.split(':').slice(1).join(':').trim(); return; }
+    if(/^(domination|quest):/i.test(line)){ bonusCardName = line.split(':').slice(1).join(':').trim(); return; }
+    if(/^(stronghold|resistance):/i.test(line)){ extraCardName = line.split(':').slice(1).join(':').trim(); return; }
+    if(/aspect:/i.test(line)){ bonusAspectVal = line.split(':').slice(1).join(':').trim(); return; }
+    if(/^schemes:/i.test(line)){ section='schemes'; return; }
+    if(/^deck:/i.test(line)){ section='deck'; return; }
+    const m = line.match(/^(\d+)x?\s+(.+)$/i);
+    if(!m) return;
+    if(section==='schemes') schemeNames.push(m[2].trim());
+    else deckLines.push({name:m[2].trim(), count:Number(m[1])});
+  });
+
+  const byName = new Map();
+  state.cards.forEach(c=>{ if(!byName.has(c.name)) byName.set(c.name, c); });
+
+  const unmatched=[];
+  const leaderCard = leaderName ? state.cards.find(c=>c.name===leaderName && (c.type==='O - Overlord'||c.type==='C - Champion')) : null;
+  if(leaderName && !leaderCard) unmatched.push(leaderName);
+
+  state.deckType = leaderCard ? (leaderCard.type==='O - Overlord'?'overlord':'champion') : state.deckType;
+  curDeck().overlordMode = 'main';
+  curDeck().leaderId = leaderCard ? leaderCard.id : null;
+
+  const bonusCard = bonusCardName ? byName.get(bonusCardName) : null;
+  if(bonusCardName && !bonusCard) unmatched.push(bonusCardName);
+  curDeck().bonusCardId = bonusCard ? bonusCard.id : null;
+  // Prefer the derived value from the matched card, same as everywhere else this is
+  // set — the explicit "Aspect:" line is only a fallback, e.g. for older exported
+  // files from before this card-driven derivation existed.
+  curDeck().bonusAspect = bonusCard ? (bonusCard.aspect||'') : bonusAspectVal;
+
+  const extraCard = extraCardName ? byName.get(extraCardName) : null;
+  if(extraCardName && !extraCard) unmatched.push(extraCardName);
+  curDeck().extraCardId = extraCard ? extraCard.id : null;
+
+  curDeck().schemeIds = [];
+  schemeNames.forEach(n=>{ const c=byName.get(n); c ? curDeck().schemeIds.push(c.id) : unmatched.push(n); });
+
+  curDeck().deckCards = new Map(); curDeck().deckOrder = [];
+  deckLines.forEach(({name,count})=>{
+    const c = byName.get(name);
+    if(c){ curDeck().deckCards.set(c.id, count); curDeck().deckOrder.push(c.id); } else unmatched.push(name);
+  });
+
+  curDeck().name = '';
+  curDeck().sourceExportedAt = exportedAtVal;
+  renderAll();
+  toast(unmatched.length ? `Imported with ${unmatched.length} unmatched line(s): ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}` : 'Deck imported.');
+}
+
+/* =========================================================================
+   EXPORT
+   ========================================================================= */
+document.getElementById('btnExport').addEventListener('click', ()=>{
+  const printCount = buildPrintList().length;
+  const pages = Math.ceil(printCount / 9); // 3x3 grid per Letter page
+  document.getElementById('pdfPageEstimate').textContent = printCount
+    ? `~${pages} page${pages!==1?'s':''} (${printCount} card image${printCount!==1?'s':''})`
+    : 'Nothing to export yet.';
+  document.getElementById('exportModal').classList.remove('hidden');
+});
+
+function deckFileBase(){ return (document.getElementById('deckNameInput').value.trim()||'deck').replace(/[^a-z0-9-_]+/gi,'_'); }
+function downloadBlob(content, filename, type){
+  const blob = new Blob([content], {type});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+
+// Overlord export order: leader -> 5 schemes (your order) -> 50-card deck (your order).
+// Champion: leader -> deck (no schemes).
+// Leader -> Domination/Quest -> Stronghold/Resistance -> Schemes (Overlord only) -> the
+// 50-card deck. None of the leader-like cards count toward the 50.
+function buildPrintList(){
+  const list=[];
+  const pushCard = (card) => {
+    if(!card) return;
+    list.push({card, side:'front'});
+    if(card._doubleSided) list.push({card, side:'back'});
+  };
+  pushCard(getLeader());
+  pushCard(getBonusCard());
+  pushCard(getExtraCard());
+  if(state.deckType==='overlord'){
+    curDeck().schemeIds.forEach(id=> pushCard(state.byId.get(id)));
+  }
+  curDeck().deckOrder.forEach(id=>{
+    const n = curDeck().deckCards.get(id)||0;
+    const c=state.byId.get(id); if(!c) return;
+    for(let i=0;i<n;i++) pushCard(c);
+  });
+  return list;
+}
+
+const PDF_JPEG_QUALITY = 0.8; // genuine, controllable compression — this was the actual missing lever: previously we just embedded whatever raw bytes Google served (often PNG-ish for painted art, much larger than an equivalent JPEG at a quality difference nobody would notice in print)
+async function urlToDataUrl(url){
+  const res = await fetch(url, {mode:'cors'});
+  if(!res.ok) throw new Error('fetch failed');
+  const blob = await res.blob();
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width; canvas.height = bitmap.height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,canvas.width,canvas.height); // JPEG has no alpha — without this, any transparency in the source turns black
+  ctx.drawImage(bitmap, 0, 0);
+  return canvas.toDataURL('image/jpeg', PDF_JPEG_QUALITY);
+}
+
+document.getElementById('optExportPdf').addEventListener('click', async ()=>{
+  warnAboutMissingCards();
+  const prog = document.getElementById('export-progress');
+  prog.style.display='block';
+  const list = buildPrintList();
+  if(!list.length){ toast('Nothing to export yet.'); return; }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:'pt', format:'letter'});
+  const PAGE_W=612, PAGE_H=792;
+  const CARD_W_FULL=180, CARD_H_FULL=252; // nominal 2.5in x 3.5in
+  const IMG_SCALE=0.97; // 3% smaller than nominal, for easier sleeving
+  // The grid cell itself is sized at the shrunk dimensions (not the nominal size with the
+  // image centered inside it) so adjacent cells — and their cut lines — sit edge-to-edge
+  // with zero gap between them. That way a single straight cut serves both neighboring
+  // cards, instead of leaving a blank sliver that needs trimming away separately.
+  const CARD_W=CARD_W_FULL*IMG_SCALE, CARD_H=CARD_H_FULL*IMG_SCALE;
+  const COLS=3, ROWS=3;
+  const MARGIN_X=(PAGE_W-CARD_W*COLS)/2, MARGIN_Y=(PAGE_H-CARD_H*ROWS)/2;
+
+  let failCount=0;
+  for(let i=0;i<list.length;i++){
+    prog.textContent = `Rendering card ${i+1} / ${list.length}...`;
+    const cellIdx = i % (COLS*ROWS);
+    if(cellIdx===0 && i!==0) doc.addPage();
+    const col = cellIdx % COLS, row = Math.floor(cellIdx/COLS);
+    const x = MARGIN_X + col*CARD_W, y = MARGIN_Y + row*CARD_H;
+
+    const {card, side} = list[i];
+    // 900px wide comfortably clears 300 DPI at this card's ~2.4in physical width — good
+    // print quality without pulling the full source resolution, which is print-production
+    // scale (and was the main driver of the old PDF's large file size).
+    const url = side==='front' ? sizedUrl(card._front, 900) : sizedUrl(card._back, 900);
+
+    doc.setDrawColor(180,183,190); doc.rect(x,y,CARD_W,CARD_H);
+
+    let dataUrl=null;
+    if(url){
+      try{ dataUrl = await urlToDataUrl(url); }catch(e){ failCount++; dataUrl=null; }
+    }
+    if(dataUrl){
+      doc.addImage(dataUrl, 'JPEG', x, y, CARD_W, CARD_H);
+    } else {
+      doc.setFontSize(10);
+      doc.text(doc.splitTextToSize(card.name + (side==='back'?' (back)':''), CARD_W-16), x+8, y+20);
+    }
+  }
+  prog.textContent = failCount ? `Done, with ${failCount} image(s) that failed to embed (drawn as text instead).` : 'Done!';
+  doc.save(deckFileBase() + '_print_and_play.pdf');
+});
+
+// A double-sided card (currently just leaders) keeps its own real back. Every other
+// card falls back to the shared generic back for its side — only relevant for
+// exports; nothing else in the app needs to show these generic backs at all.
+// Cards this deck references (leader, bonus, extra, schemes, deck) that no longer
+// exist in the live feed — used to warn before an export silently omits them.
+function missingReferencedCardIds(){
+  const missing = [];
+  const check = (id) => { if(id && !state.byId.has(id)) missing.push(id); };
+  check(curDeck().leaderId);
+  check(curDeck().bonusCardId);
+  check(curDeck().extraCardId);
+  curDeck().schemeIds.forEach(check);
+  for(const id of curDeck().deckCards.keys()) check(id);
+  return missing;
+}
+function warnAboutMissingCards(){
+  const missing = missingReferencedCardIds();
+  if(!missing.length) return;
+  const names = missing.map(id=>{
+    const info = removedCardCache.get(id);
+    return (info && info!=='loading' && info!=='not-found') ? info.name : id;
+  });
+  toast(`Heads up: ${missing.length} card${missing.length>1?'s':''} in this deck ${missing.length>1?'were':'was'} removed from the game and will NOT appear in this export: ${names.slice(0,3).join(', ')}${names.length>3?'…':''}`);
+}
+
+function backUrlForExport(card){
+  if(card._doubleSided && card._back) return card._back;
+  if(card.type === 'O - Scheme') return state.genericBacks.schemeBackUrl || '';
+  if(card.type.startsWith('O -')) return state.genericBacks.overlordBackUrl || '';
+  if(card.type.startsWith('C -')) return state.genericBacks.championBackUrl || '';
+  return '';
+}
+function csvForCardList(cardList){
+  const rows = [['name','front','back']];
+  cardList.forEach(card=> rows.push([card.name, card._front||'', backUrlForExport(card)]));
+  return rows.map(r=> r.map(f=>`"${String(f).replace(/"/g,'""')}"`).join(',')).join('\n');
+}
+function expandedDeckList(){
+  // one entry per physical copy, in the deck's stacked order
+  const list = [];
+  curDeck().deckOrder.forEach(id=>{
+    const n = curDeck().deckCards.get(id)||0;
+    const c = state.byId.get(id); if(!c) return;
+    for(let i=0;i<n;i++) list.push(c);
+  });
+  return list;
+}
+
+document.getElementById('optExportCsv').addEventListener('click', ()=>{
+  warnAboutMissingCards();
+  const leader = getLeader();
+  if(!leader){ toast('Choose a leader first.'); return; }
+  const setupCards = [leader, getBonusCard(), getExtraCard()].filter(Boolean);
+
+  if(state.deckType==='overlord'){
+    // Two separate files: the Overlord deck (leader, Domination, Stronghold, then the
+    // 50-card deck) and the scheme deck (just the 5 schemes) — matching how you'd
+    // actually build these as two distinct decks on playingcards.io.
+    downloadBlob(csvForCardList([...setupCards, ...expandedDeckList()]), deckFileBase()+'_overlord_playingcardsio.csv', 'text/csv');
+    const schemeList = curDeck().schemeIds.map(id=>state.byId.get(id)).filter(Boolean);
+    setTimeout(()=>{
+      downloadBlob(csvForCardList(schemeList), deckFileBase()+'_schemes_playingcardsio.csv', 'text/csv');
+    }, 200); // small stagger so browsers don't treat the second download as blocked/suspicious
+  } else {
+    downloadBlob(csvForCardList([...setupCards, ...expandedDeckList()]), deckFileBase()+'_playingcardsio.csv', 'text/csv');
+  }
+});
+
+function buildDecklistTextLines(exportedAtIso){
+  const leader = getLeader();
+  const bonusCard = getBonusCard();
+  const extraCard = getExtraCard();
+  const isOverlord = state.deckType==='overlord';
+  const lines = [];
+  lines.push(`# ${document.getElementById('deckNameInput').value.trim() || 'Untitled Deck'}`);
+  lines.push(`# Deck type: ${state.deckType}`);
+  if(exportedAtIso) lines.push(`# Exported: ${exportedAtIso}`);
+  if(leader) lines.push(`Leader: ${leader.name}`);
+  if(bonusCard) lines.push(`${isOverlord?'Domination':'Quest'}: ${bonusCard.name}`);
+  if(extraCard) lines.push(`${isOverlord?'Stronghold':'Resistance'}: ${extraCard.name}`);
+  if(curDeck().bonusAspect) lines.push(`${isOverlord?'Domination':'Quest'} Aspect: ${curDeck().bonusAspect}`);
+  lines.push('');
+  if(isOverlord && curDeck().schemeIds.length){
+    lines.push('Schemes:');
+    curDeck().schemeIds.forEach(id=>{ const c=state.byId.get(id); if(c) lines.push(`1x ${c.name}`); });
+    lines.push('');
+  }
+  lines.push('Deck:');
+  curDeck().deckOrder.forEach(id=>{
+    const n = curDeck().deckCards.get(id)||0; const c=state.byId.get(id);
+    if(c && n>0) lines.push(`${n}x ${c.name}`);
+  });
+  return lines;
+}
+
+document.getElementById('optExportTxt').addEventListener('click', ()=>{
+  const now = new Date().toISOString();
+  curDeck().sourceExportedAt = now; // exporting now bookmarks "current" as the new changed-since baseline
+  downloadBlob(buildDecklistTextLines(now).join('\n'), deckFileBase()+'.txt', 'text/plain');
+  renderAll(); // clears any stale "changed since export" badges, since this IS the new export
+});
+
+document.getElementById('optExportClipboard').addEventListener('click', async ()=>{
+  const text = buildDecklistTextLines(null).join('\n'); // no timestamp — this isn't a formal export checkpoint
+  try{
+    await navigator.clipboard.writeText(text);
+    toast('Decklist copied to clipboard.');
+  }catch(e){
+    toast('Could not copy to clipboard: '+e.message);
+  }
+});
+
+// Every distinct sheet actually referenced by this deck's cards — carried in the
+// JSON export so the game room app can resolve card art/names without any sheet
+// id hardcoded in its own source. A deck mixing Set 1 and Set 2 cards yields 2 entries.
+function computeSourceSheets(){
+  const ids = [];
+  if(curDeck().leaderId) ids.push(curDeck().leaderId);
+  if(curDeck().bonusCardId) ids.push(curDeck().bonusCardId);
+  if(curDeck().extraCardId) ids.push(curDeck().extraCardId);
+  curDeck().schemeIds.forEach(id=>ids.push(id));
+  curDeck().deckOrder.forEach(id=>ids.push(id));
+  const seen = new Map(); // sheetId -> setName
+  ids.forEach(id=>{
+    const c = state.byId.get(id);
+    if(c && c._sheetId && !seen.has(c._sheetId)) seen.set(c._sheetId, c._setName);
+  });
+  return [...seen.entries()].map(([sheetId, setName])=>({sheetId, setName}));
+}
+
+document.getElementById('optExportJson').addEventListener('click', ()=>{
+  const now = new Date().toISOString();
+  curDeck().sourceExportedAt = now;
+  const data = {
+    formatVersion:2, // v2 adds sourceSheets
+    name: document.getElementById('deckNameInput').value.trim()||'Untitled Deck',
+    deckType: state.deckType,
+    exportedAt: now,
+    leaderId: curDeck().leaderId,
+    leaderName: getLeader()?getLeader().name:null,
+    bonusCardId: curDeck().bonusCardId,
+    bonusCardName: getBonusCard()?getBonusCard().name:null,
+    extraCardId: curDeck().extraCardId,
+    extraCardName: getExtraCard()?getExtraCard().name:null,
+    bonusAspect: curDeck().bonusAspect,
+    schemeIds: curDeck().schemeIds,
+    deckOrder: curDeck().deckOrder,
+    deckCards: Object.fromEntries(curDeck().deckCards),
+    sourceSheets: computeSourceSheets(),
+  };
+  downloadBlob(JSON.stringify(data,null,2), deckFileBase()+'.json', 'application/json');
+  renderAll();
+});
+
+/* =========================================================================
+   TOAST
+   ========================================================================= */
+let _toastTimer=null;
+function toast(msg, actionLabel, actionFn){
+  const t=document.getElementById('toast');
+  t.innerHTML = escapeHtml(msg) + (actionLabel ? ` <span class="btn btn-sm" id="toastAction" style="margin-left:8px;">${escapeHtml(actionLabel)}</span>` : '');
+  t.style.display='block';
+  clearTimeout(_toastTimer);
+  if(actionLabel && actionFn){
+    document.getElementById('toastAction').addEventListener('click', ()=>{
+      actionFn();
+      t.style.display='none';
+      clearTimeout(_toastTimer);
+    });
+    _toastTimer=setTimeout(()=> t.style.display='none', 8000); // longer window when there's an action to actually click
+  } else {
+    _toastTimer=setTimeout(()=> t.style.display='none', 3200);
+  }
+}
+
+/* =========================================================================
+   "RECENTLY UPDATED" TRACKING — compares each card's last-updated stamp
+   against when THIS browser last had the app open, not a fixed time window.
+   ========================================================================= */
+let priorVisitTimestamp = null; // ms epoch of the visit before this one; null on a brand-new browser
+function initVisitTracking(){
+  const stored = localStorage.getItem(LS_LAST_VISIT_KEY);
+  priorVisitTimestamp = stored ? Number(stored) : null; // first-ever visit: nothing gets flagged as "new"
+  localStorage.setItem(LS_LAST_VISIT_KEY, String(Date.now()));
+}
+function isRecentlyUpdated(card){
+  if(priorVisitTimestamp===null) return false;
+  const lu = card['last-updated'];
+  if(!lu) return false;
+  const d = new Date(lu);
+  return !isNaN(d) && d.getTime() > priorVisitTimestamp;
+}
+function formatDateLabel(iso){
+  if(!iso) return 'Unknown date';
+  const d = new Date(iso);
+  if(isNaN(d)) return String(iso);
+  return d.toLocaleString(undefined, {year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+}
+
+/* =========================================================================
+   INIT
+   ========================================================================= */
+/* =========================================================================
+   SCROLL TO TOP
+   ========================================================================= */
+document.getElementById('library-wrap').addEventListener('scroll', (e)=>{
+  document.getElementById('btnScrollTop').classList.toggle('visible', e.target.scrollTop > 400);
+});
+document.getElementById('btnScrollTop').addEventListener('click', ()=>{
+  document.getElementById('library-wrap').scrollTo({top:0, behavior:'smooth'});
+});
+
+/* =========================================================================
+   KEYBOARD SHORTCUTS
+   ========================================================================= */
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape'){
+    const openModals = document.querySelectorAll('.modal-overlay:not(.hidden)');
+    if(openModals.length){ openModals.forEach(m=>m.classList.add('hidden')); return; }
+  }
+  if(e.key === '/'){
+    const activeTag = (document.activeElement && document.activeElement.tagName || '').toLowerCase();
+    if(activeTag==='input' || activeTag==='textarea' || (document.activeElement && document.activeElement.isContentEditable)) return;
+    e.preventDefault();
+    document.getElementById('searchBox').focus();
+  }
+});
+
+const rememberedDeckType = localStorage.getItem(LS_LAST_DECKTYPE_KEY);
+if(rememberedDeckType==='overlord' || rememberedDeckType==='champion') state.deckType = rememberedDeckType;
+initCardScale();
+initVisitTracking();
+document.documentElement.style.setProperty('--hover-preview-width', HOVER_PREVIEW_WIDTH+'px');
+document.documentElement.style.setProperty('--hover-preview-scheme-width', HOVER_PREVIEW_SCHEME_WIDTH+'px');
+// The app itself stays inert until sign-in succeeds — no card data, no sets, nothing
+// is fetched until the server has verified an ID token and told us what that account
+// may see. initGoogleSignIn() renders the button; onGoogleSignIn() is what calls loadData().
+initGoogleSignIn();
+fetchHelpArticles().catch(()=>{}); // warm the cache early so opening Help later feels instant
+</script>
+</body>
+</html>
