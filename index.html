@@ -226,6 +226,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .stat-bar-fill{height:100%;background:var(--accent);border-radius:3px;min-width:2px;}
 .stat-bar-value{width:26px;flex:none;text-align:left;font-weight:600;color:var(--text);}
 #deck-drop-zone{
+  position:relative; /* containing block for the absolutely-positioned .reorder-indicator */
   min-height:120px;padding:6px;flex:1;
   display:flex;flex-direction:column;gap:5px;overflow-y:auto;
   border:1px dashed var(--border);border-radius:var(--radius);
@@ -238,17 +239,26 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .deck-stack.over-limit{border-color:var(--danger);background:var(--danger-bg);}
 .deck-stack.dragover-row{background:var(--accent-soft);border-color:var(--accent);}
-/* pointer-events:none is load-bearing: without it, once the indicator is inserted
-   between two rows it sits exactly under the cursor and becomes the dragover event's
-   own target. It has no drag listener of its own, so that event bubbles straight to
-   the drop-zone's handler instead of the row's, which relocates the indicator to the
-   end of the list — pulling it out from under the cursor, which puts the cursor back
-   over the row, whose handler re-inserts the indicator right back where it started —
-   and repeats every animation frame. That feedback loop is the flicker; making the
-   indicator transparent to pointer/drag events removes it from target resolution
-   entirely, so dragover always resolves to the row or zone beneath it, never the
-   indicator itself. */
-.reorder-indicator{height:3px;background:var(--accent);border-radius:2px;flex:none;pointer-events:none;}
+/* position:absolute (rather than being inserted into #deck-drop-zone's own flex flow
+   as a sibling of the rows) is load-bearing, and pointer-events:none still matters too
+   — together they're what stop the flicker:
+   Originally the indicator was a real flex child, inserted directly between two row
+   elements. That shifts every row below it down by the indicator's own height (plus
+   the zone's flex `gap`) the instant it appears. If the mouse was hovering near a row
+   boundary, that shift moves the row out from under a stationary cursor — landing the
+   cursor over the zone's own background instead (the fresh gap left behind) — which
+   fires the zone-level dragover handler, which relocates the indicator to the end of
+   the list. That pulls the indicator (and the layout shift) away, so the row springs
+   back under the cursor, re-firing the ROW's dragover handler, re-inserting the
+   indicator right back where it started — and repeats every animation frame. Taking
+   the indicator out of the flex flow entirely (position:absolute against
+   #deck-drop-zone, positioned via top in JS instead of DOM order) means showing or
+   moving it never changes any row's position, so the element under a stationary
+   cursor never changes underneath it — nothing left to oscillate. pointer-events:none
+   is kept as a second layer of protection: even positioned this way the indicator
+   could otherwise still steal the dragover event if it ever ends up rendered exactly
+   under the cursor, and it has no drag listener of its own to handle that. */
+.reorder-indicator{position:absolute;left:6px;right:6px;height:3px;background:var(--accent);border-radius:2px;pointer-events:none;display:none;}
 .deck-stack img{width:28px;height:39px;object-fit:cover;border-radius:3px;flex:none;}
 .deck-stack.scheme-row img{width:auto;height:28px;aspect-ratio:5/7;object-fit:cover;transform:rotate(-90deg);}
 .deck-stack .dsname{flex:1;font-size:12.5px;line-height:1.2;}
@@ -2182,9 +2192,26 @@ function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;
 
 // Google's image CDN accepts a =w{pixels} size suffix on lh3.googleusercontent.com
 // links, so we can request an appropriately-sized render instead of always pulling the
-// full source resolution — dramatically cuts load time for on-screen thumbnails, and
-// (for the PDF export) file size, without touching the source files at all.
-function sizedUrl(url, w){ return url ? url + '=w' + w : ''; }
+// full source resolution — dramatically cuts load time (and, for the PDF export, file
+// size) for a card sourced from a PDF, where that "render" is the only way to get a
+// viewable image out of it at all in the first place. But for a card whose art is
+// already a standalone PNG/JPEG, asking for one more exact pixel width forces Google's
+// CDN to dynamically resize it on request instead of just serving the file as-is —
+// real, easy-to-notice latency (especially on hover, where the preview needs a
+// different width than whatever the grid thumbnail already asked for) bought for very
+// little, since these aren't a page pulled out of some huge multi-card PDF. Code.gs's
+// artUrl() tags every URL it hands back with a "#img-src" or "#pdf-src" fragment
+// (inert — never sent to the browser's actual request, just text this function reads
+// off the string) saying which case it is, so only a URL NOT tagged as a plain image
+// (a PDF, or anything untagged/legacy from before this existed) gets sized down; an
+// image URL is returned as-is, fragment stripped, requesting the file at its own
+// native size.
+function sizedUrl(url, w){
+  if(!url) return '';
+  const isImage = url.includes('#img-src');
+  const base = url.split('#')[0];
+  return isImage ? base : (base + '=w' + w);
+}
 
 /* =========================================================================
    CARD SCALE — user-adjustable grid tile size, persisted per-browser
@@ -2436,23 +2463,43 @@ function buildDeckRow(id, card, {qty, showStepper}){
 
 /* Shared insertion-line indicator: shows the gap a reordered card will land in,
    rather than highlighting the row underneath it (which reads as "replace this card"
-   instead of "insert between these cards"). */
+   instead of "insert between these cards"). Positioned with `top` (see the CSS
+   comment on .reorder-indicator for why) rather than by where it sits in the DOM, so
+   showing/moving it never shifts any row and can never cause the flicker that used to
+   come from doing that. It stays permanently attached to the zone once created —
+   toggling `display` is all showReorderIndicatorAt/hideReorderIndicator ever do — since
+   there's nothing left to gain from detaching it, and it removes a DOM
+   insert/remove cycle on every single dragover event on top of that. */
 let reorderIndicatorEl = null;
-function ensureReorderIndicator(){
+function ensureReorderIndicator(zone){
   if(!reorderIndicatorEl){
     reorderIndicatorEl = document.createElement('div');
     reorderIndicatorEl.className = 'reorder-indicator';
   }
+  if(reorderIndicatorEl.parentNode !== zone) zone.appendChild(reorderIndicatorEl);
   return reorderIndicatorEl;
 }
 function showReorderIndicatorAt(zone, beforeEl){
-  const ind = ensureReorderIndicator();
-  if(ind.parentNode) ind.parentNode.removeChild(ind);
-  if(beforeEl) zone.insertBefore(ind, beforeEl);
-  else zone.appendChild(ind);
+  const ind = ensureReorderIndicator(zone);
+  const zoneRect = zone.getBoundingClientRect();
+  let top;
+  if(beforeEl){
+    const r = beforeEl.getBoundingClientRect();
+    top = (r.top - zoneRect.top) + zone.scrollTop - 4; // sit in the gap just above beforeEl
+  } else {
+    const rows = zone.querySelectorAll(':scope > .deck-stack');
+    if(rows.length){
+      const r = rows[rows.length - 1].getBoundingClientRect();
+      top = (r.bottom - zoneRect.top) + zone.scrollTop + 1; // just below the last row
+    } else {
+      top = 0; // empty deck — nothing to be "below", land at the top
+    }
+  }
+  ind.style.top = top + 'px';
+  ind.style.display = 'block';
 }
 function hideReorderIndicator(){
-  if(reorderIndicatorEl && reorderIndicatorEl.parentNode) reorderIndicatorEl.parentNode.removeChild(reorderIndicatorEl);
+  if(reorderIndicatorEl) reorderIndicatorEl.style.display = 'none';
 }
 document.addEventListener('dragend', hideReorderIndicator);
 
@@ -3236,9 +3283,14 @@ function backUrlForExport(card){
   if(card.type.startsWith('C -')) return state.genericBacks.championBackUrl || '';
   return '';
 }
+// Strips the internal "#img-src"/"#pdf-src" marker fragment (see sizedUrl()) before
+// a URL leaves the app in an export — playingcards.io would ignore it harmlessly
+// either way (fragments are never sent over the network), but there's no reason to
+// hand external, user-facing data an implementation detail it has no use for.
+function stripArtUrlMarker(url){ return url ? url.split('#')[0] : url; }
 function csvForCardList(cardList){
   const rows = [['name','front','back']];
-  cardList.forEach(card=> rows.push([card.name, card._front||'', backUrlForExport(card)]));
+  cardList.forEach(card=> rows.push([card.name, stripArtUrlMarker(card._front), stripArtUrlMarker(backUrlForExport(card))]));
   return rows.map(r=> r.map(f=>`"${String(f).replace(/"/g,'""')}"`).join(',')).join('\n');
 }
 function expandedDeckList(){
