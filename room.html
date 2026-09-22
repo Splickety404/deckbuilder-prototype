@@ -71,6 +71,22 @@ input[type="range"]{accent-color:var(--accent);}
   margin:2px auto 0;
 }
 
+/* ---------- Import overlay ---------- */
+/* Shown while a dropped-in deck file's card sets are being fetched — each set
+   is a real network round-trip through the gated card-library endpoint (see
+   fetchSheetCards), including the per-set Drive-access check server-side, so
+   this can visibly take a moment, especially the first time a set is touched
+   this session (later imports referencing an already-fetched set skip straight
+   past it — see knownSheetIds). */
+#importOverlay{position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;
+  background:rgba(20,22,27,.72);}
+#importOverlay.hidden{display:none;}
+.import-overlay-box{display:flex;flex-direction:column;align-items:center;gap:14px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+  padding:26px 34px;box-shadow:var(--shadow);animation:bouncePopIn .3s var(--bounce);}
+.import-overlay-box .signin-spinner{width:32px;height:32px;border-width:4px;margin:0;}
+#importOverlayText{font-size:13px;color:var(--text-soft);text-align:center;max-width:260px;}
+
 /* ---------- Setup screen ---------- */
 #setup-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:50;}
 #setup-screen.hidden{display:none;}
@@ -157,7 +173,7 @@ input[type="range"]{accent-color:var(--accent);}
    via the transform) so it grows outward evenly as its text gets longer,
    rather than being pinned to a fixed 140px box; sits slightly HIGH, overlapping
    up onto the bottom of the top card itself, rather than hanging fully below it. */
-.piece .piece-label.stack-handle{cursor:grab;min-width:26px;min-height:14px;transition:filter .15s var(--bounce),background .1s,color .1s;
+.piece .piece-label.stack-handle{cursor:move;min-width:26px;min-height:14px;transition:filter .15s var(--bounce),background .1s,color .1s;
   left:70px;right:auto;bottom:auto;top:180px;width:max-content;max-width:260px;transform:translateX(-50%);}
 .piece .piece-label.stack-handle:hover{filter:brightness(1.15);}
 
@@ -529,6 +545,13 @@ input[type="range"]{accent-color:var(--accent);}
 </div>
 
 <div id="toast"></div>
+
+<div id="importOverlay" class="hidden">
+  <div class="import-overlay-box">
+    <div class="signin-spinner"></div>
+    <div id="importOverlayText">Importing deck…</div>
+  </div>
+</div>
 
 <div id="radialMenu" class="hidden"></div>
 <div id="imageScalePopover" class="hidden"></div>
@@ -1213,6 +1236,13 @@ function shuffle(arr){
   for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
   return arr;
 }
+function showImportOverlay(text){
+  document.getElementById('importOverlayText').textContent = text;
+  document.getElementById('importOverlay').classList.remove('hidden');
+}
+function hideImportOverlay(){
+  document.getElementById('importOverlay').classList.add('hidden');
+}
 async function importDeckJson(deckJson, dropX, dropY){
   if(!deckJson || !deckJson.deckType) throw new Error('Not a recognized deck file.');
   if(!deckJson.sourceSheets || !deckJson.sourceSheets.length){
@@ -1220,15 +1250,25 @@ async function importDeckJson(deckJson, dropX, dropY){
   }
   const setsToFetch = deckJson.sourceSheets.filter(s=>s && s.sheetId && !knownSheetIds.has(s.sheetId));
   if(setsToFetch.length){
-    // Loading card data means a real network round-trip per set (with fallbacks
-    // if the primary route fails — see fetchSheetCards), so it's the one part of
-    // an import that can visibly take a moment. ensureSheetsLoaded's own catch
-    // already reports a per-set failure if one comes up along the way.
-    toast(`Loading ${setsToFetch.length} card set${setsToFetch.length>1?'s':''}…`);
+    // Loading card data means a real network round-trip per set — including the
+    // per-set Drive-access check happening server-side (see fetchSheetCards ->
+    // Code.gs's getCardsBySheetId) — so this is the one part of an import that
+    // can visibly take a moment, especially the first time a set is touched
+    // this session. The spinner overlay stays up for exactly that stretch;
+    // ensureSheetsLoaded's own catch still reports a per-set failure via toast
+    // if one comes up along the way (a genuinely broken/unreachable sheet, as
+    // opposed to a merely-unauthorized one, which now resolves normally as
+    // "Classified" placeholders rather than failing at all).
+    const label = setsToFetch.length>1 ? `${setsToFetch.length} card sets` : (setsToFetch[0].setName || 'a card set');
+    showImportOverlay(`Checking your Google access for ${label}…`);
   } else {
-    toast('Importing deck…');
+    showImportOverlay('Importing deck…');
   }
-  await ensureSheetsLoaded(deckJson.sourceSheets);
+  try{
+    await ensureSheetsLoaded(deckJson.sourceSheets);
+  } finally {
+    hideImportOverlay();
+  }
 
   const cardIds = [];
   if(deckJson.leaderId) cardIds.push(deckJson.leaderId);
