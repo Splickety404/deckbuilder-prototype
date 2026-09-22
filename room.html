@@ -446,9 +446,16 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .splay-card img{width:100%;height:100%;object-fit:cover;display:block;}
 /* The "2nd card down" of a splayed pile is the one you drag to set the splay's
    direction and spacing (every deeper card just follows at a multiple of that
-   same distance) — highlighted with an accent outline and glow so it's obvious
-   at a glance which card does that job. */
-.splay-card.splay-adjust-target{outline:2px solid var(--accent);outline-offset:2px;box-shadow:0 0 0 5px var(--accent-soft),var(--shadow);}
+   same distance) — but only the one edge that's actually draggable (matching
+   the pile's current splay direction, see isOnSplayAdjustEdge) gets a visual
+   cue, via the separate .splay-edge-hint bar below, rather than outlining the
+   whole card the way an earlier version of this did. */
+.splay-card.splay-adjust-target{position:relative;}
+/* The actual draggable-edge cue for a splay-adjust-target card (see above) —
+   a thin accent bar sitting right on the one edge that extends/collapses the
+   fan, straddling the edge the same way the live grab zone does (see
+   isOnSplayAdjustEdge) so what's highlighted matches what's actually live. */
+.splay-edge-hint{position:absolute;background:var(--accent);box-shadow:0 0 6px var(--accent-soft);pointer-events:none;border-radius:2px;}
 /* Placeholder slot shown while a peeled/played card is hovering a splay,
    previewing exactly where it would land (see splayPreview / splayInsertIndex)
    — never interactive, just a visual "it goes here" cue. */
@@ -988,11 +995,17 @@ function doNote(text){
   postRoomEvent('NOTE', {text});
 }
 
-function setPieceCards(id, cardIds, faceStates){
+function setPieceCards(id, cardIds, faceStates, cardRotations){
   const p = state.pieces.get(id);
   if(!p) return;
   if(!cardIds.length){ state.pieces.delete(id); return; }
   p.cardIds = cardIds; p.faceStates = faceStates;
+  // Per-card rotation (see ROTATE_CARD) — a splayed pile's cards can each be
+  // rotated independently, so whenever a pile's card array is rebuilt this
+  // parallel array has to travel along with it, same as faceStates already
+  // does, or every card would silently reset to upright. Falls back to all-
+  // upright only when the caller genuinely has nothing to say about it.
+  p.cardRotations = cardRotations || cardIds.map(()=>0);
 }
 
 // The single place board state actually changes — used for both our own actions
@@ -1004,6 +1017,11 @@ function applyRoomEvent(type, payload){
       // player-uploaded custom piece instead — no cardIds/faceStates, its own w/h (any
       // scale the uploader picked) and naturalW/naturalH (for aspect-locked resizing later).
       state.pieces.set(payload.id, { id:payload.id, x:payload.x, y:payload.y, cardIds:payload.cardIds||[], faceStates:payload.faceStates||[],
+        // cardRotations is per-card rotation, independent of the piece-level
+        // `rotation` below — only ever visually meaningful for a SPLAYED
+        // multi-card pile (see renderBoard/rotatePiece); an unsplayed or
+        // single-card piece just rotates as a whole via `rotation` instead.
+        cardRotations: payload.cardRotations || (payload.cardIds||[]).map(()=>0),
         owner:payload.owner, splayed:false, splayDir:'right', splaySpacing:36, label:payload.label||'', rotation:payload.rotation||0, locked:payload.locked||false,
         kind:payload.kind||'cards', imageUrl:payload.imageUrl||null, w:payload.w||null, h:payload.h||null, naturalW:payload.naturalW||null, naturalH:payload.naturalH||null });
       if(payload.sourceSheets && payload.sourceSheets.length){
@@ -1033,13 +1051,13 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'MERGE_PIECES': {
-      setPieceCards(payload.intoId, payload.cardIds, payload.faceStates);
+      setPieceCards(payload.intoId, payload.cardIds, payload.faceStates, payload.cardRotations);
       state.pieces.delete(payload.removedId);
       break;
     }
     case 'SHUFFLE_PIECE':
     case 'FLIP_STACK': {
-      setPieceCards(payload.id, payload.cardIds, payload.faceStates);
+      setPieceCards(payload.id, payload.cardIds, payload.faceStates, payload.cardRotations);
       break;
     }
     case 'SET_SPLAY': {
@@ -1056,6 +1074,18 @@ function applyRoomEvent(type, payload){
       if(p) p.rotation = payload.rotation;
       break;
     }
+    // Rotates exactly ONE card within a pile in place — used instead of
+    // ROTATE_PIECE while hovering a specific card of a SPLAYED pile (see
+    // rotatePiece), so R only spins the card under the cursor rather than
+    // the whole stack.
+    case 'ROTATE_CARD': {
+      const p = state.pieces.get(payload.id);
+      if(p){
+        if(!p.cardRotations) p.cardRotations = p.cardIds.map(()=>0);
+        if(payload.cardIndex>=0 && payload.cardIndex<p.cardRotations.length) p.cardRotations[payload.cardIndex] = payload.rotation;
+      }
+      break;
+    }
     case 'SET_LABEL': {
       const p = state.pieces.get(payload.id);
       if(p) p.label = payload.label;
@@ -1063,11 +1093,11 @@ function applyRoomEvent(type, payload){
     }
     case 'SEARCH_REMOVE':
     case 'DRAW_TOP': {
-      setPieceCards(payload.id, payload.remainingCardIds, payload.remainingFaceStates);
+      setPieceCards(payload.id, payload.remainingCardIds, payload.remainingFaceStates, payload.remainingCardRotations);
       break;
     }
     case 'RESTORE_PIECE_CARDS': { // internal — used only to power undo
-      setPieceCards(payload.id, payload.cardIds, payload.faceStates);
+      setPieceCards(payload.id, payload.cardIds, payload.faceStates, payload.cardRotations);
       break;
     }
     case 'PLACE_TOKEN': {
@@ -1185,7 +1215,7 @@ function applyRoomEvent(type, payload){
     }
     case 'NOTE': break; // no board mutation — handled entirely via the toast/history text
   }
-  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE'].includes(type)) renderBoard();
+  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE'].includes(type)) renderBoard();
   // A playful "pop" the moment something new lands on the board — for every client,
   // local placer and remote viewers alike, since this runs from inside applyRoomEvent
   // itself rather than the call site. Only ever added to a piece/token/zone element
@@ -1216,6 +1246,7 @@ function describeEvent(type, payload, playerName){
     case 'FLIP_STACK': return `${playerName} flipped a stack over`;
     case 'SET_SPLAY': return `${playerName} ${payload.splayed?`splayed a pile (${payload.dir||'right'})`:'unsplayed a pile'}`;
     case 'ROTATE_PIECE': return `${playerName} rotated a pile to ${payload.rotation}°`;
+    case 'ROTATE_CARD': return `${playerName} rotated a card in a pile`;
     case 'SET_LABEL': return `${playerName} labeled a pile "${payload.label}"`;
     case 'PLACE_TOKEN': return `${playerName} placed a ${payload.type} token`;
     case 'MOVE_TOKEN': return `${playerName} moved a token`;
@@ -1714,7 +1745,21 @@ function renderBoard(){
     const el = document.createElement('div');
     el.className='piece' + (p.splayed?' splayed':'') + (state.selectedIds.has(p.id)?' selected':'') + (p.kind==='image'?' image-piece':'');
     el.style.left = p.x+'px'; el.style.top = p.y+'px';
-    el.style.transform = p.rotation ? `rotate(${p.rotation}deg)` : '';
+    // A SPLAYED multi-card pile doesn't rotate as a container at all — see
+    // effectivePieceRotation — since its individual cards rotate on their
+    // own instead (see the splayed-pile branch below and rotatePiece).
+    const containerRotation = effectivePieceRotation(p);
+    el.style.transform = containerRotation ? `rotate(${containerRotation}deg)` : '';
+    // --counter-rotate (read by .piece-label's own transform — see applyRotation's
+    // matching comment) normally just cancels the BOARD's rotation, inherited down
+    // from #boardRotate. A piece with its own rotation adds a second, per-piece
+    // spin on top of that (see the transform line just above) that the inherited
+    // value knows nothing about — so every label would still tip over sideways or
+    // upside-down whenever ITS card was rotated, even though the board itself
+    // wasn't. Overriding the custom property here, combining both rotations, is
+    // what keeps the label's TEXT upright and facing the viewer no matter which
+    // way this one piece has been spun.
+    el.style.setProperty('--counter-rotate', (-(state.viewRotation + containerRotation)) + 'deg');
     el.dataset.id = p.id;
     let topCardOffset = null; // non-null for any multi-card pile — flags that its (always-rendered) piece-label should double as the move-whole-stack handle
     if(p.kind==='image'){
@@ -1755,16 +1800,45 @@ function renderBoard(){
       const extent = (preview ? n : topIndex)*spacing;
       el.style.width = (PIECE_W + (horizontal?extent:0)) + 'px';
       el.style.height = (PIECE_H + (horizontal?0:extent)) + 'px';
-      const offsetFor = (depth)=>{
+      // A card's OWN rotation (see rotatePiece/ROTATE_CARD) rotates it around
+      // its own center, same CSS mechanism as everything else in this app —
+      // which means a 90°/270° card visually swaps its footprint (renders
+      // PIECE_H wide × PIECE_W tall instead of the other way around) without
+      // its declared box (still PIECE_W×PIECE_H) or this depth-based slot
+      // system changing at all. Left uncompensated, that swap would throw
+      // off exactly the thing a fan is supposed to guarantee: that each
+      // card's VISIBLE edge sits a consistent `spacing` past the next one
+      // in. The (PIECE_W-w)/2 term is exactly how far a rotated card's
+      // rendered edge drifts from its declared one — shifting the card's own
+      // position by that same amount cancels it back out, so the edge you
+      // actually SEE lands at the uniform depth*spacing slot regardless of
+      // that card's own rotation. The cross axis needs no such correction:
+      // centering the (possibly swapped) rendered box on the piece's own
+      // fixed cross-axis center (left/top 0 on that axis) already happens
+      // for free, the same way it always did.
+      const offsetFor = (depth, rotation)=>{
+        const swapped = ((rotation||0) % 180) !== 0;
         let left=0, top=0;
-        if(dir==='right') left = depth*spacing;
-        else if(dir==='left') left = -depth*spacing;
-        else if(dir==='down') top = depth*spacing;
-        else if(dir==='up') top = -depth*spacing;
+        if(dir==='right'){ const w = swapped?PIECE_H:PIECE_W; left = depth*spacing + (PIECE_W-w)/2; }
+        else if(dir==='left'){ const w = swapped?PIECE_H:PIECE_W; left = -depth*spacing - (PIECE_W-w)/2; }
+        else if(dir==='down'){ const h = swapped?PIECE_W:PIECE_H; top = depth*spacing + (PIECE_H-h)/2; }
+        else if(dir==='up'){ const h = swapped?PIECE_W:PIECE_H; top = -depth*spacing - (PIECE_H-h)/2; }
         return {left, top};
       };
-      let html = p.cardIds.map((cid,i)=>{
-        const {left, top} = offsetFor(depthFor(i));
+      // Split into "before" and "after" the tuck slot rather than one
+      // straight map, so the DOM order — which is what actually decides
+      // paint order for these overlapping absolutely-positioned cards — can
+      // put the preview card in between them: cards that end up ABOVE the
+      // held card in the fan (its "after" group, painted later) need to sit
+      // on top of it, and cards that end up BELOW it (its "before" group)
+      // need to sit behind it, exactly as if it had already been inserted.
+      // With no preview, everything just goes in the "before" bucket, in
+      // original order — same result as a plain unsplit map.
+      const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
+      const beforeCards = [], afterCards = [];
+      p.cardIds.forEach((cid,i)=>{
+        const rot = cardRotations[i]||0;
+        const {left, top} = offsetFor(depthFor(i), rot);
         // NOTE: deliberately NOT also class="piece-face" — .piece .piece-face{position:relative}
         // is a more specific selector than plain .splay-card{position:absolute}, so a card
         // carrying both classes loses its absolute positioning and falls into normal
@@ -1774,27 +1848,41 @@ function renderBoard(){
         // the anchor card ends up thousands of pixels off-screen" bug. .splay-card already
         // declares its own width/height/border/background identical to .piece-face, so it
         // never needed that class in the first place.
-        const cls = 'splay-card' + (i===adjustIndex ? ' splay-adjust-target' : '');
-        return `<div class="${cls}" data-i="${i}" style="left:${left}px;top:${top}px;">${cardFaceHtml(cid, p.faceStates[i])}</div>`;
-      }).join('');
+        const isAdjust = i===adjustIndex;
+        const cls = 'splay-card' + (isAdjust ? ' splay-adjust-target' : '');
+        const hint = isAdjust ? splayEdgeHintHtml(dir) : '';
+        const rotStyle = rot ? `transform:rotate(${rot}deg);` : '';
+        const cardHtml = `<div class="${cls}" data-i="${i}" style="left:${left}px;top:${top}px;${rotStyle}">${cardFaceHtml(cid, p.faceStates[i])}${hint}</div>`;
+        if(preview && i>=preview.insertIndex) afterCards.push(cardHtml); else beforeCards.push(cardHtml);
+      });
+      let html = beforeCards.join('');
       if(preview){
-        const {left, top} = offsetFor(n-preview.insertIndex);
+        const previewRot = preview.cardId ? (preview.rotation||0) : 0;
+        const {left, top} = offsetFor(n-preview.insertIndex, previewRot);
         // When the preview carries an actual card (a single dragged card —
         // see setSplayPreview/driveWholePieceDrag), show that card's own face
-        // sitting right in its would-land slot instead of a blank
-        // placeholder — the dragged piece itself is skipped from its own
-        // normal rendering while this is showing (see the top of
-        // renderBoard). A multi-card whole-pile drag has no single face to
-        // show, so it still falls back to the plain dashed placeholder.
+        // — at its own current rotation, so nothing visually jumps the
+        // instant it's actually dropped — sitting right in its would-land
+        // slot instead of a blank placeholder — the dragged piece itself is
+        // skipped from its own normal rendering while this is showing (see
+        // the top of renderBoard). A multi-card whole-pile drag has no
+        // single face to show, so it still falls back to the plain dashed
+        // placeholder.
         const cls = 'splay-card splay-gap' + (preview.cardId ? ' splay-gap-real' : '');
+        const rotStyle = previewRot ? `transform:rotate(${previewRot}deg);` : '';
         const inner = preview.cardId ? cardFaceHtml(preview.cardId, preview.faceUp) : '';
-        html += `<div class="${cls}" style="left:${left}px;top:${top}px;">${inner}</div>`;
+        html += `<div class="${cls}" style="left:${left}px;top:${top}px;${rotStyle}">${inner}</div>`;
       }
+      html += afterCards.join('');
       el.innerHTML = html + `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`;
       topCardOffset = {left:0, top:0}; // the top card is always the anchor now
       [...el.querySelectorAll('.splay-card:not(.splay-gap)')].forEach(cardEl=>{
         const i = Number(cardEl.dataset.i);
         wireHoverPreview(cardEl, ()=>({card:cardsById.get(p.cardIds[i]), faceUp:p.faceStates[i]}));
+        // Tracks which card of THIS splay is under the mouse (see
+        // hoveredCardIndex/rotatePiece) so R rotates just that one card
+        // instead of the whole pile.
+        wireCardHoverIndex(cardEl, i);
         if(i===adjustIndex){
           cardEl.title = 'Drag the highlighted edge to set spacing; drag anywhere else on this card to peel it off';
           wireSplayAdjustDrag(cardEl, p, i); // this one card sets the fan for the whole pile — see above
@@ -1835,7 +1923,7 @@ function renderBoard(){
     world.appendChild(el);
     if(hoveredPieceId===p.id) showHotkeyHint(el); // re-anchor the hint to the freshly-rebuilt element
   });
-  if(hoveredPieceId && !state.pieces.has(hoveredPieceId)){ hoveredPieceId = null; hideHotkeyHint(); }
+  if(hoveredPieceId && !state.pieces.has(hoveredPieceId)){ hoveredPieceId = null; hoveredCardIndex = null; hideHotkeyHint(); }
   renderTokens();
   renderPlayerCounters();
 }
@@ -2107,15 +2195,18 @@ function beginPeelAsPiece(p, cardIndex, clientX, clientY){
   if(!p || cardIndex<0 || cardIndex>=p.cardIds.length) return null;
   const cardId = p.cardIds[cardIndex];
   const faceUp = p.faceStates[cardIndex];
+  const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
+  const cardRotation = cardRotations[cardIndex] || 0; // carries over as the new standalone piece's own rotation
   const remainingCardIds = p.cardIds.filter((_,i)=>i!==cardIndex);
   const remainingFaceStates = p.faceStates.filter((_,i)=>i!==cardIndex);
-  const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates];
+  const remainingCardRotations = cardRotations.filter((_,i)=>i!==cardIndex);
+  const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates], originalCardRotations = [...cardRotations];
   const sourceId = p.id;
-  doAction('DRAW_TOP', { id:sourceId, remainingCardIds, remainingFaceStates, destination:'board' });
+  doAction('DRAW_TOP', { id:sourceId, remainingCardIds, remainingFaceStates, remainingCardRotations, destination:'board' });
   const world = clientToWorld(clientX, clientY);
   const x = snapCoord(world.x - PIECE_W/2), y = snapCoord(world.y - PIECE_H/2);
   const newId = newPieceId();
-  doAction('PLACE_PIECE', { id:newId, x, y, cardIds:[cardId], faceStates:[faceUp], owner:state.playerId });
+  doAction('PLACE_PIECE', { id:newId, x, y, cardIds:[cardId], faceStates:[faceUp], cardRotations:[cardRotation], rotation:cardRotation, owner:state.playerId });
   const newPiece = state.pieces.get(newId);
   if(!newPiece) return null;
   return {
@@ -2123,7 +2214,7 @@ function beginPeelAsPiece(p, cardIndex, clientX, clientY){
     pickupClientX:clientX, pickupClientY:clientY,
     sourceRestore: ()=>{
       doAction('REMOVE_PIECE', {id:newId});
-      doAction('RESTORE_PIECE_CARDS', {id:sourceId, cardIds:originalCardIds, faceStates:originalFaceStates});
+      doAction('RESTORE_PIECE_CARDS', {id:sourceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations});
     },
   };
 }
@@ -2210,7 +2301,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
     // ghost/silhouette around.
     clearMergeHighlight();
     const insertIndex = splayInsertIndex(splayTarget, world.x, world.y);
-    setSplayPreview(splayTarget.id, insertIndex, {sourceId:p.id, cardId:p.cardIds[0], faceUp:p.faceStates[0]});
+    setSplayPreview(splayTarget.id, insertIndex, {sourceId:p.id, cardId:p.cardIds[0], faceUp:p.faceStates[0], rotation:p.rotation||0});
     if(ctx.ghost){ removeDragGhost(ctx.ghost); ctx.ghost=null; }
     ctx.el = null;
     ctx.tucked = true;
@@ -2423,20 +2514,21 @@ function findOverlapTarget(draggedPiece, clientX, clientY){
 // DRAW_TOP/MERGE_PIECES use: 0 = new bottom card, cardIds.length = new top
 // card). renderBoard()'s splayed-pile branch reads it to open a preview gap;
 // it's never itself a source of truth for real state.
-// cardInfo, when given, is {sourceId, cardId, faceUp} for a single dragged
-// card — sourceId is the piece currently being dragged (skipped from its own
-// normal rendering, see renderBoard) and cardId/faceUp are what's drawn for
-// real in the preview slot inside the target's fan (see renderBoard's
-// splayed-pile branch). Omit it (or pass null/undefined) for the old blank
-// dashed-placeholder preview, still used for a multi-card whole-pile drag
-// where there's no single face to show.
+// cardInfo, when given, is {sourceId, cardId, faceUp, rotation} for a single
+// dragged card — sourceId is the piece currently being dragged (skipped from
+// its own normal rendering, see renderBoard) and cardId/faceUp/rotation are
+// what's drawn for real, at its own current rotation, in the preview slot
+// inside the target's fan (see renderBoard's splayed-pile branch). Omit it
+// (or pass null/undefined) for the old blank dashed-placeholder preview,
+// still used for a multi-card whole-pile drag where there's no single face
+// to show.
 let splayPreview = null;
 function setSplayPreview(targetId, insertIndex, cardInfo){
   const next = cardInfo
-    ? {targetId, insertIndex, sourceId:cardInfo.sourceId, cardId:cardInfo.cardId, faceUp:cardInfo.faceUp}
-    : {targetId, insertIndex, sourceId:null, cardId:null, faceUp:null};
+    ? {targetId, insertIndex, sourceId:cardInfo.sourceId, cardId:cardInfo.cardId, faceUp:cardInfo.faceUp, rotation:cardInfo.rotation||0}
+    : {targetId, insertIndex, sourceId:null, cardId:null, faceUp:null, rotation:0};
   if(splayPreview && splayPreview.targetId===next.targetId && splayPreview.insertIndex===next.insertIndex
-     && splayPreview.sourceId===next.sourceId && splayPreview.cardId===next.cardId) return false;
+     && splayPreview.sourceId===next.sourceId && splayPreview.cardId===next.cardId && splayPreview.rotation===next.rotation) return false;
   splayPreview = next;
   renderBoard();
   return true;
@@ -2515,9 +2607,23 @@ function flipTopCard(pieceId){
   setUndo(()=> doAction('FLIP_TOP', {id:pieceId, faceUp:oldFace}));
 }
 // Rotates the WHOLE pile in place (a "tap", independent of the shared board-view
-// rotation) — cycles 0→90→180→270→0 forward, or the reverse with dir=-1.
+// rotation) — cycles 0→90→180→270→0 forward, or the reverse with dir=-1. A
+// SPLAYED multi-card pile is the one exception: there, R rotates only the
+// ONE card currently under the cursor (see hoveredCardIndex/wireCardHoverIndex)
+// rather than spinning every fanned-out card together — an unsplayed pile (or
+// a single card, or an image) has no individual cards to pick between, so it
+// keeps rotating as one whole unit exactly as before.
 function rotatePiece(pieceId, dir){
   const p = state.pieces.get(pieceId); if(!p) return;
+  if(p.splayed && p.cardIds.length>1 && hoveredCardIndex!=null && hoveredCardIndex<p.cardIds.length){
+    const idx = hoveredCardIndex;
+    const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
+    const old = cardRotations[idx]||0;
+    const next = (old + (dir||1)*90 + 360) % 360;
+    doAction('ROTATE_CARD', {id:pieceId, cardIndex:idx, rotation:next});
+    setUndo(()=> doAction('ROTATE_CARD', {id:pieceId, cardIndex:idx, rotation:old}));
+    return;
+  }
   const old = p.rotation||0;
   const next = (old + (dir||1)*90 + 360) % 360;
   doAction('ROTATE_PIECE', {id:pieceId, rotation:next});
@@ -2545,6 +2651,15 @@ function toggleZoneLock(zoneId){
    keys are discoverable without cluttering the radial menu.
    ========================================================================= */
 let hoveredPieceId = null;
+// Which card (array index) of a SPLAYED pile the mouse is currently over —
+// null whenever that's not a meaningful question (nothing splayed is
+// hovered right now). Only R (see rotatePiece) reads this; F/D still act on
+// the pile as a whole regardless of which card is under the cursor.
+let hoveredCardIndex = null;
+function wireCardHoverIndex(cardEl, i){
+  cardEl.addEventListener('mouseenter', ()=>{ hoveredCardIndex = i; });
+  cardEl.addEventListener('mouseleave', ()=>{ if(hoveredCardIndex===i) hoveredCardIndex = null; });
+}
 function isTextEntryFocused(){
   const a = document.activeElement;
   if(!a) return false;
@@ -2564,11 +2679,12 @@ function wireHotkeyHint(el, pieceId){
 function showHotkeyHint(el){
   const hint = document.getElementById('hotkeyHint');
   const p = state.pieces.get(el.dataset.id);
+  const rotateLabel = (p && p.splayed && p.cardIds.length>1) ? 'Rotate card' : 'Rotate';
   hint.innerHTML = (p && p.kind==='image')
     ? `<div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> Rotate</div>` // an image piece has no card faces to flip or draw from
     : `
     <div class="hk-item"><kbd>F</kbd> Flip</div>
-    <div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> Rotate</div>
+    <div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> ${rotateLabel}</div>
     <div class="hk-item"><kbd>D</kbd> Draw</div>
   `;
   const rect = el.getBoundingClientRect();
@@ -2614,24 +2730,31 @@ function mergePieceOntoTarget(sourceId, targetId, insertIndex){
   if(!source || !target || source.id===target.id) return;
   const sourceClone = JSON.parse(JSON.stringify(source));
   const targetOldCardIds = [...target.cardIds], targetOldFaceStates = [...target.faceStates];
+  const targetOldCardRotations = [...(target.cardRotations || target.cardIds.map(()=>0))];
   const idx = insertIndex==null ? target.cardIds.length : insertIndex;
-  // Each card keeps its own face — nothing here forces a match.
+  // Each card keeps its own face — nothing here forces a match. Same for
+  // rotation: a multi-card source carries its OWN per-card rotations in;
+  // a single card (the common case now that peeling/hand-play always land
+  // here as a real piece — see beginPeelAsPiece/driveWholePieceDrag) has no
+  // cardRotations of its own yet, so its piece-level `rotation` is used instead.
   const cardIds = [...target.cardIds.slice(0,idx), ...source.cardIds, ...target.cardIds.slice(idx)];
   const faceStates = [...target.faceStates.slice(0,idx), ...source.faceStates, ...target.faceStates.slice(idx)];
-  doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, removedId: source.id });
+  const sourceRotations = source.cardRotations || source.cardIds.map(()=> source.rotation||0);
+  const cardRotations = [...targetOldCardRotations.slice(0,idx), ...sourceRotations, ...targetOldCardRotations.slice(idx)];
+  doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: source.id });
   setUndo(()=>{
-    doAction('RESTORE_PIECE_CARDS', {id:target.id, cardIds:targetOldCardIds, faceStates:targetOldFaceStates});
+    doAction('RESTORE_PIECE_CARDS', {id:target.id, cardIds:targetOldCardIds, faceStates:targetOldFaceStates, cardRotations:targetOldCardRotations});
     doAction('PLACE_PIECE', sourceClone);
   });
 }
 
 function shufflePiece(pieceId){
   const p = state.pieces.get(pieceId); if(!p) return;
-  const oldCardIds = [...p.cardIds], oldFaceStates = [...p.faceStates];
-  const pairs = p.cardIds.map((id,i)=>[id, p.faceStates[i]]); // shuffle cardId+faceState together — a card's orientation travels with it
-  shuffle(pairs);
-  doAction('SHUFFLE_PIECE', { id:pieceId, cardIds:pairs.map(x=>x[0]), faceStates:pairs.map(x=>x[1]) });
-  setUndo(()=> doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:oldCardIds, faceStates:oldFaceStates}));
+  const oldCardIds = [...p.cardIds], oldFaceStates = [...p.faceStates], oldCardRotations = [...(p.cardRotations||p.cardIds.map(()=>0))];
+  const triples = p.cardIds.map((id,i)=>[id, p.faceStates[i], oldCardRotations[i]]); // shuffle id+face+rotation together — each card's own orientation travels with it
+  shuffle(triples);
+  doAction('SHUFFLE_PIECE', { id:pieceId, cardIds:triples.map(x=>x[0]), faceStates:triples.map(x=>x[1]), cardRotations:triples.map(x=>x[2]) });
+  setUndo(()=> doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:oldCardIds, faceStates:oldFaceStates, cardRotations:oldCardRotations}));
 }
 // Flips the ENTIRE stack over, the way you'd flip a physical packet of cards
 // face-down onto the table: the order reverses (bottom card becomes top) AND
@@ -2640,11 +2763,12 @@ function shufflePiece(pieceId){
 // rather than each card flipping independently in place (that's Flip / F).
 function flipStack(pieceId){
   const p = state.pieces.get(pieceId); if(!p || !p.cardIds.length) return;
-  const oldCardIds = [...p.cardIds], oldFaceStates = [...p.faceStates];
+  const oldCardIds = [...p.cardIds], oldFaceStates = [...p.faceStates], oldCardRotations = [...(p.cardRotations||p.cardIds.map(()=>0))];
   const newCardIds = [...p.cardIds].reverse();
   const newFaceStates = [...p.faceStates].reverse().map(f=>!f);
-  doAction('FLIP_STACK', { id:pieceId, cardIds:newCardIds, faceStates:newFaceStates });
-  setUndo(()=> doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:oldCardIds, faceStates:oldFaceStates}));
+  const newCardRotations = [...oldCardRotations].reverse();
+  doAction('FLIP_STACK', { id:pieceId, cardIds:newCardIds, faceStates:newFaceStates, cardRotations:newCardRotations });
+  setUndo(()=> doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:oldCardIds, faceStates:oldFaceStates, cardRotations:oldCardRotations}));
 }
 
 // Commits a splay change (direction/spacing/on-off) as a real synced+undoable
@@ -2684,25 +2808,43 @@ const SPLAY_UNSPLAY_THRESHOLD = SPLAY_MIN + 4;
 // board-space size made it easier to grab when zoomed in and harder when
 // zoomed out, which felt backwards).
 const SPLAY_EDGE_ZONE = 20;
+// The rotation actually applied to a piece's own CONTAINER element (see
+// renderBoard) — ordinarily just p.rotation, but a SPLAYED multi-card pile
+// rotates its individual cards independently instead (see rotatePiece /
+// ROTATE_CARD), so the container itself never rotates in that case, no
+// matter what p.rotation happens to still hold from before it was splayed.
+function effectivePieceRotation(p){
+  return (p.splayed && p.cardIds && p.cardIds.length>1) ? 0 : (p.rotation||0);
+}
 // Undoes both the board's own rotation (state.viewRotation, via clientToWorld)
-// and this particular piece's own rotation (p.rotation — always a multiple of
-// 90°, same as the board's, so this is exact, never skewed) to get a point in
-// the piece's own unrotated local box: (0,0) at its top-left corner, (PIECE_W,
-// PIECE_H) at its bottom-right — i.e. genuinely "which part of THIS card, as
-// drawn before any rotation was applied, is the cursor over."
+// and this particular piece's own CONTAINER rotation (effectivePieceRotation —
+// always a multiple of 90°, same as the board's, so this is exact, never
+// skewed) to get a point in the piece's own unrotated local box: (0,0) at its
+// top-left corner, (PIECE_W, PIECE_H) at its bottom-right — i.e. genuinely
+// "which part of THIS card, as drawn before any rotation was applied, is the
+// cursor over."
 function localOffsetInPiece(p, clientX, clientY){
   const world = clientToWorld(clientX, clientY);
   const cx = p.x + PIECE_W/2, cy = p.y + PIECE_H/2;
-  const rel = rotateVector(world.x-cx, world.y-cy, p.rotation||0);
+  const rel = rotateVector(world.x-cx, world.y-cy, effectivePieceRotation(p));
   return { x: rel.x + PIECE_W/2, y: rel.y + PIECE_H/2 };
 }
 // Which edge (if any) of an UNSPLAYED multi-card pile a mousedown landed in —
-// null means it landed in the middle, an ordinary peel-drag zone. A corner
-// (close to two edges at once) resolves to whichever margin is smaller.
+// null means it landed in the middle, an ordinary peel-drag zone. The live
+// zone straddles the edge LINE itself (Math.abs of the signed distance to
+// it), extending SPLAY_EDGE_ZONE both into the card and slightly off it —
+// grabbing right on, or just off, the physical edge is the natural gesture,
+// not just a strip somewhere inside the card face. A corner (close to two
+// edges at once) resolves to whichever margin is smaller.
 function stackEdgeAt(p, clientX, clientY){
   const local = localOffsetInPiece(p, clientX, clientY);
   const zone = SPLAY_EDGE_ZONE / state.view.scale; // screen px -> board-space px at the current zoom
-  const margins = [['left',local.x], ['right',PIECE_W-local.x], ['up',local.y], ['down',PIECE_H-local.y]];
+  const margins = [
+    ['left', Math.abs(local.x)],
+    ['right', Math.abs(PIECE_W-local.x)],
+    ['up', Math.abs(local.y)],
+    ['down', Math.abs(PIECE_H-local.y)],
+  ];
   let best=null, bestVal=Infinity;
   margins.forEach(([dir,val])=>{ if(val<=zone && val<bestVal){ best=dir; bestVal=val; } });
   return best;
@@ -2711,6 +2853,43 @@ function stackEdgeAt(p, clientX, clientY){
 // edges get the horizontal resize cursor, up/down edges the vertical one,
 // matching the axis that edge's splay actually fans out along.
 function cursorForSplayEdge(dir){ return (dir==='left'||dir==='right') ? 'ew-resize' : 'ns-resize'; }
+// The spacing value that puts the 2nd card's own OUTER (far-from-anchor)
+// edge — the exact edge isOnSplayAdjustEdge/stackEdgeAt check for a grab —
+// precisely under the cursor's CURRENT position, computed fresh each tick
+// from where the cursor actually is right now rather than a delta piled up
+// since the drag started. That's what keeps the grabbed edge glued to the
+// cursor throughout the drag (a pure delta only tracks relative motion, so
+// unless the grab happened to land exactly on the edge line, the edge would
+// forever sit offset from the cursor by however far off-edge the grab was),
+// and it's also why a splay never "jumps" the instant a drag begins — the
+// very first tick already reflects the exact spacing implied by the actual
+// grab point, instead of snapping to whatever a fresh delta-from-zero would
+// give. Used both to begin a brand new splay (wireStackInteraction, where
+// the "2nd card" is really just the sliver of it about to peek out from
+// under the still-single anchor) and to adjust an existing one
+// (wireSplayAdjustDrag) — geometrically identical in both cases.
+function splaySpacingForCursor(p, dir, clientX, clientY){
+  const local = localOffsetInPiece(p, clientX, clientY);
+  let raw;
+  if(dir==='right') raw = local.x - PIECE_W;
+  else if(dir==='left') raw = -local.x;
+  else if(dir==='down') raw = local.y - PIECE_H;
+  else raw = -local.y; // 'up'
+  return Math.max(SPLAY_MIN, Math.min(splayMaxFor(dir), raw));
+}
+// The thin accent bar drawn on the adjust-target card's one draggable edge
+// (see isOnSplayAdjustEdge) — a fixed 6px thick, running the full length of
+// that edge, so only what's actually live gets a visual cue instead of the
+// whole card.
+function splayEdgeHintHtml(dir){
+  const T = 6;
+  let style;
+  if(dir==='left') style = `left:0;top:0;bottom:0;width:${T}px;`;
+  else if(dir==='right') style = `right:0;top:0;bottom:0;width:${T}px;`;
+  else if(dir==='up') style = `left:0;right:0;top:0;height:${T}px;`;
+  else style = `left:0;right:0;bottom:0;height:${T}px;`; // 'down'
+  return `<div class="splay-edge-hint" style="${style}"></div>`;
+}
 // An UNSPLAYED multi-card pile: grabbing the thin border strip around its own
 // edge (stackEdgeAt) begins a splay in that edge's direction right away —
 // dragging further out grows the spacing exactly like wireSplayAdjustDrag
@@ -2752,13 +2931,7 @@ function wireStackInteraction(el, p){
     },
     onMove: (dx, dy, ev)=>{
       if(mode==='edge'){
-        const d = screenDeltaToWorldDelta(dx, dy);
-        let mag;
-        if(edgeDir==='left') mag = -d.x;
-        else if(edgeDir==='right') mag = d.x;
-        else if(edgeDir==='up') mag = -d.y;
-        else mag = d.y; // 'down'
-        const spacing = Math.max(SPLAY_MIN, Math.min(splayMaxFor(edgeDir), mag));
+        const spacing = splaySpacingForCursor(p, edgeDir, ev.clientX, ev.clientY);
         previewSplay(p.id, true, edgeDir, spacing);
         return;
       }
@@ -2792,8 +2965,10 @@ function wireStackInteraction(el, p){
 // within SPLAY_EDGE_ZONE of the ONE edge matching the pile's CURRENT splay
 // direction — everywhere else on that same card (including its other three
 // edges) falls through to an ordinary peel, same as any other visible card
-// in the pile. Reuses localOffsetInPiece (the piece's own unrotated local
-// box) and just shifts by this one card's own known offset from the anchor.
+// in the pile. Same straddle-the-edge-line zone as stackEdgeAt (see its
+// comment) — right on, or just off, the physical edge — reusing
+// localOffsetInPiece and just shifting by this one card's own known offset
+// from the anchor.
 function isOnSplayAdjustEdge(p, clientX, clientY){
   const dir = p.splayDir || 'right';
   const spacing = p.splaySpacing || 36;
@@ -2805,10 +2980,10 @@ function isOnSplayAdjustEdge(p, clientX, clientY){
   else top = -spacing; // 'up'
   const cardLocal = { x: pieceLocal.x - left, y: pieceLocal.y - top };
   const zone = SPLAY_EDGE_ZONE / state.view.scale;
-  if(dir==='left') return cardLocal.x <= zone;
-  if(dir==='right') return (PIECE_W - cardLocal.x) <= zone;
-  if(dir==='up') return cardLocal.y <= zone;
-  return (PIECE_H - cardLocal.y) <= zone; // 'down'
+  if(dir==='left') return Math.abs(cardLocal.x) <= zone;
+  if(dir==='right') return Math.abs(PIECE_W - cardLocal.x) <= zone;
+  if(dir==='up') return Math.abs(cardLocal.y) <= zone;
+  return Math.abs(PIECE_H - cardLocal.y) <= zone; // 'down'
 }
 // The "2nd card down" of a splayed pile (depth 1 from the top): grabbing the
 // SAME edge that began the splay (matching p.splayDir, see
@@ -2842,14 +3017,8 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
     },
     onMove: (dx, dy, ev)=>{
       if(mode==='adjust'){
-        const d = screenDeltaToWorldDelta(dx, dy);
         const dir = old.dir; // locked — never recomputed from the drag vector
-        let mag;
-        if(dir==='left') mag = -d.x;
-        else if(dir==='right') mag = d.x;
-        else if(dir==='up') mag = -d.y;
-        else mag = d.y; // 'down'
-        const spacing = Math.max(SPLAY_MIN, Math.min(splayMaxFor(dir), mag));
+        const spacing = splaySpacingForCursor(p, dir, ev.clientX, ev.clientY);
         previewSplay(p.id, true, dir, spacing);
         return;
       }
@@ -2898,10 +3067,12 @@ function drawTopCard(pieceId, destination){
   const p = state.pieces.get(pieceId); if(!p || !p.cardIds.length) return;
   const idx = p.cardIds.length-1;
   const cardId = p.cardIds[idx];
+  const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
   const remainingCardIds = p.cardIds.slice(0, idx);
   const remainingFaceStates = p.faceStates.slice(0, idx);
-  const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates];
-  doAction('DRAW_TOP', { id:pieceId, remainingCardIds, remainingFaceStates, destination });
+  const remainingCardRotations = cardRotations.slice(0, idx);
+  const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates], originalCardRotations = [...cardRotations];
+  doAction('DRAW_TOP', { id:pieceId, remainingCardIds, remainingFaceStates, remainingCardRotations, destination });
   if(destination==='hand'){
     state.hand.push(cardId);
     renderHand();
@@ -2910,14 +3081,14 @@ function drawTopCard(pieceId, destination){
       state.hand.pop();
       renderHand();
       syncHandCount();
-      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates});
+      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations});
     });
   } else {
     const newId = newPieceId();
     doAction('PLACE_PIECE', { id:newId, x:p.x+30, y:p.y+30, cardIds:[cardId], faceStates:[false], owner:state.playerId });
     setUndo(()=>{
       doAction('REMOVE_PIECE', {id:newId});
-      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates});
+      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations});
     });
   }
 }
@@ -2953,12 +3124,14 @@ function confirmSearchRemove(destination){
   const checked = [...modal.querySelectorAll('input[type=checkbox]:checked')].map(cb=>Number(cb.dataset.idx));
   modal.classList.add('hidden');
   if(!checked.length) return;
-  const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates];
+  const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
+  const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates], originalCardRotations = [...cardRotations];
   const checkedSet = new Set(checked);
   const removedCardIds = checked.map(i=>p.cardIds[i]);
   const remainingCardIds = p.cardIds.filter((_,i)=>!checkedSet.has(i));
   const remainingFaceStates = p.faceStates.filter((_,i)=>!checkedSet.has(i));
-  doAction('SEARCH_REMOVE', { id:pieceId, remainingCardIds, remainingFaceStates, removedCount:removedCardIds.length });
+  const remainingCardRotations = cardRotations.filter((_,i)=>!checkedSet.has(i));
+  doAction('SEARCH_REMOVE', { id:pieceId, remainingCardIds, remainingFaceStates, remainingCardRotations, removedCount:removedCardIds.length });
   if(destination==='hand'){
     state.hand.push(...removedCardIds);
     renderHand();
@@ -2967,14 +3140,14 @@ function confirmSearchRemove(destination){
       state.hand.splice(state.hand.length-removedCardIds.length, removedCardIds.length);
       renderHand();
       syncHandCount();
-      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates});
+      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations});
     });
   } else {
     const newId = newPieceId();
     doAction('PLACE_PIECE', { id:newId, x:p.x+40, y:p.y+40, cardIds:removedCardIds, faceStates:removedCardIds.map(()=>true), owner:state.playerId });
     setUndo(()=>{
       doAction('REMOVE_PIECE', {id:newId});
-      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates});
+      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations});
     });
   }
 }
@@ -4085,7 +4258,9 @@ function playHandCardToBoard(pick, clientX, clientY){
       : (shouldInsertBelow(target, world.y) ? 0 : target.cardIds.length);
     const cardIds = [...target.cardIds.slice(0,insertIndex), pick.cardId, ...target.cardIds.slice(insertIndex)];
     const faceStates = [...target.faceStates.slice(0,insertIndex), true, ...target.faceStates.slice(insertIndex)];
-    doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, removedId: null });
+    const targetCardRotations = target.cardRotations || target.cardIds.map(()=>0);
+    const cardRotations = [...targetCardRotations.slice(0,insertIndex), 0, ...targetCardRotations.slice(insertIndex)]; // a hand card always plays in upright
+    doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: null });
     return;
   }
   const worldX = world.x - PIECE_W/2, worldY = world.y - PIECE_H/2;
