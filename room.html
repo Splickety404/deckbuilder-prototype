@@ -300,6 +300,20 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .radial-item:hover{background:var(--surface-2);border-color:var(--accent);transform:translate(-50%,-50%) scale(1.1);}
 .radial-item .radial-icon{font-size:18px;line-height:1;}
 .radial-item .radial-label{font-size:9.5px;font-weight:600;color:var(--text-soft);line-height:1.15;max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* A STACK-scoped action (Lock Stack, Remove Stack, etc. — see
+   openPieceRadialMenu) gets a permanent accent tint instead of the plain
+   neutral chip a single-card action uses, so the two groups read as visually
+   distinct at a glance, not just by their (also-grouped) position in the
+   ring — see .radial-divider below for how they're kept physically apart. */
+.radial-item.stack-action{background:var(--accent-soft);border-color:var(--accent);}
+.radial-item.stack-action .radial-label{color:var(--accent);}
+.radial-item.stack-action:hover{background:var(--accent-soft);transform:translate(-50%,-50%) scale(1.1);}
+/* A non-interactive placeholder slot in the ring (see openRadialMenu's
+   `{divider:true}` items) — just a small dot marking a deliberate gap, so
+   the card-action and stack-action clusters read as two separate groups
+   with visible breathing room between them, rather than one continuous
+   ring the eye has to parse by color alone. */
+.radial-divider{position:absolute;transform:translate(-50%,-50%);width:7px;height:7px;border-radius:50%;background:var(--border);pointer-events:none;animation:radialPop .3s var(--bounce) backwards;}
 @keyframes radialPop{
   0%{transform:translate(-50%,-50%) scale(.3);opacity:0;}
   70%{transform:translate(-50%,-50%) scale(1.12);opacity:1;}
@@ -444,18 +458,36 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    taller box) and on how many cards are in the pile. */
 .splay-card{position:absolute;width:140px;height:196px;border-radius:var(--radius-sm);border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden;background:var(--surface-2);}
 .splay-card img{width:100%;height:100%;object-fit:cover;display:block;}
-/* The "2nd card down" of a splayed pile is the one you drag to set the splay's
-   direction and spacing (every deeper card just follows at a multiple of that
-   same distance) — but only the one edge that's actually draggable (matching
-   the pile's current splay direction, see isOnSplayAdjustEdge) gets a visual
-   cue, via the separate .splay-edge-hint bar below, rather than outlining the
-   whole card the way an earlier version of this did. */
-.splay-card.splay-adjust-target{position:relative;}
+/* ANY card in a splayed pile except the anchor itself has a live outer edge
+   you can drag to set that card's own distance from the anchor — every other
+   card follows proportionally (see wireSplayAdjustDrag/isOnSplayAdjustEdge).
+   Rather than permanently decorating every one of those edges at once (noisy
+   with a deep pile), the accent cue below only shows up while actually
+   hovering that specific card — see the :hover rule below.
+   IMPORTANT: no position override here. .splay-card is already
+   position:absolute (see above), which already makes it a valid containing
+   block for its own absolutely-positioned .splay-edge-hint child — that's
+   all CSS positioning needs. An earlier version of this rule set
+   position:relative instead, on the theory that the hint needed a
+   "positioned ancestor" — true, but .splay-card already IS one. Forcing
+   position:relative instead pulls the card OUT of the piece's absolute
+   fan-layout scheme and back into normal HTML block flow, where multiple
+   such cards stack downward one after another before their own left/top
+   offsets even get applied — invisible with only one adjustable card in the
+   pile (a 2-card splay), but a very visible "cards land somewhere
+   completely different, and lower cards drift further down/diagonally with
+   every card added" bug the moment a 3rd card (a 2nd adjustable card) joined
+   the mix. */
+.splay-card.splay-adjust-target{cursor:inherit;}
 /* The actual draggable-edge cue for a splay-adjust-target card (see above) —
    a thin accent bar sitting right on the one edge that extends/collapses the
    fan, straddling the edge the same way the live grab zone does (see
-   isOnSplayAdjustEdge) so what's highlighted matches what's actually live. */
-.splay-edge-hint{position:absolute;background:var(--accent);box-shadow:0 0 6px var(--accent-soft);pointer-events:none;border-radius:2px;}
+   isOnSplayAdjustEdge) so what's highlighted matches what's actually live.
+   Hidden until that specific card is actually hovered (or dragged, which
+   keeps it hovered), so a deep splay doesn't show every card's edge lit up
+   at once — only the one you're about to interact with. */
+.splay-edge-hint{position:absolute;background:var(--accent);box-shadow:0 0 6px var(--accent-soft);pointer-events:none;border-radius:2px;opacity:0;transition:opacity 120ms ease;}
+.splay-card.splay-adjust-target:hover .splay-edge-hint{opacity:1;}
 /* Placeholder slot shown while a peeled/played card is hovering a splay,
    previewing exactly where it would land (see splayPreview / splayInsertIndex)
    — never interactive, just a visual "it goes here" cue. */
@@ -1043,7 +1075,12 @@ function applyRoomEvent(type, payload){
     }
     case 'FLIP_TOP': {
       const p = state.pieces.get(payload.id);
-      if(p && p.faceStates.length){ p.faceStates[p.faceStates.length-1] = payload.faceUp; }
+      if(p && p.faceStates.length){
+        // cardIndex is new (see flipTopCard) — absent on an older/replayed
+        // event, which always meant "the top card" anyway.
+        const idx = payload.cardIndex!=null ? payload.cardIndex : p.faceStates.length-1;
+        if(idx>=0 && idx<p.faceStates.length) p.faceStates[idx] = payload.faceUp;
+      }
       break;
     }
     case 'REMOVE_PIECE': {
@@ -1092,7 +1129,8 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'SEARCH_REMOVE':
-    case 'DRAW_TOP': {
+    case 'DRAW_TOP':
+    case 'REMOVE_CARD': { // REMOVE_CARD (see removeCard): a single card discarded outright, no hand/board destination
       setPieceCards(payload.id, payload.remainingCardIds, payload.remainingFaceStates, payload.remainingCardRotations);
       break;
     }
@@ -1215,7 +1253,7 @@ function applyRoomEvent(type, payload){
     }
     case 'NOTE': break; // no board mutation — handled entirely via the toast/history text
   }
-  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE'].includes(type)) renderBoard();
+  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE'].includes(type)) renderBoard();
   // A playful "pop" the moment something new lands on the board — for every client,
   // local placer and remote viewers alike, since this runs from inside applyRoomEvent
   // itself rather than the call site. Only ever added to a piece/token/zone element
@@ -1257,6 +1295,7 @@ function describeEvent(type, payload, playerName){
     case 'SEARCH_REMOVE': return `${playerName} searched a pile and took ${payload.removedCount} card(s)`;
     case 'RESTORE_PIECE_CARDS': return `${playerName} undid a change to a pile`;
     case 'DRAW_TOP': return `${playerName} took the top card of a pile`;
+    case 'REMOVE_CARD': return `${playerName} removed a card from a pile`;
     case 'DEFINE_TOKEN_TYPE': return `${playerName} defined a "${payload.name}" token type`;
     case 'PLACE_ZONE': return `${playerName} created a zone${payload.label?` "${payload.label}"`:''}`;
     case 'SET_ZONE_RECT': return `${playerName} resized/moved a zone`;
@@ -1851,9 +1890,12 @@ function renderBoard(){
         // the anchor card ends up thousands of pixels off-screen" bug. .splay-card already
         // declares its own width/height/border/background identical to .piece-face, so it
         // never needed that class in the first place.
-        const isAdjust = i!==topIndex; // every card but the anchor has a live, draggable outer edge
-        const cls = 'splay-card' + (isAdjust ? ' splay-adjust-target' : '');
-        const hint = isAdjust ? splayEdgeHintHtml(dir) : '';
+        // Every card — the anchor included — has at least one live,
+        // draggable edge now (see wireSplayAdjustDrag/isOnAnchorSplayEdge);
+        // the anchor just gets BOTH edges along the axis instead of the one
+        // every other card is limited to.
+        const cls = 'splay-card splay-adjust-target';
+        const hint = i===topIndex ? anchorSplayEdgeHintHtml(dir) : splayEdgeHintHtml(dir);
         const rotStyle = rot ? `transform:rotate(${rot}deg);` : '';
         const cardHtml = `<div class="${cls}" data-i="${i}" style="left:${left}px;top:${top}px;${rotStyle}">${cardFaceHtml(cid, p.faceStates[i])}${hint}</div>`;
         if(preview && i>=preview.insertIndex) afterCards.push(cardHtml); else beforeCards.push(cardHtml);
@@ -1886,12 +1928,10 @@ function renderBoard(){
         // hoveredCardIndex/rotatePiece) so R rotates just that one card
         // instead of the whole pile.
         wireCardHoverIndex(cardEl, i);
-        if(i===topIndex){
-          wirePeelInteraction(cardEl, p, i); // the anchor has no outer edge of its own to adjust — everything else is measured from it
-        } else {
-          cardEl.title = 'Drag the highlighted edge to set that card\'s spacing; drag anywhere else on this card to peel it off';
-          wireSplayAdjustDrag(cardEl, p, i); // this card's own edge sets its distance from the anchor — the rest of the fan follows proportionally, see above
-        }
+        cardEl.title = i===topIndex
+          ? 'Drag either highlighted edge to set spacing; drag anywhere else on this card to peel it off'
+          : 'Drag the highlighted edge to set that card\'s spacing; drag anywhere else on this card to peel it off';
+        wireSplayAdjustDrag(cardEl, p, i); // this card's own edge (both edges, for the anchor) sets the fan's spacing — see above
       });
       wirePeelInteraction(el, p, topIndex); // fallback for the (rare) spots inside el not covered by any specific card, e.g. between fanned cards
     } else {
@@ -2374,8 +2414,13 @@ function wireWholeInteraction(el, p){
   });
 }
 // The pile's label, doubling as its "move whole stack" handle — always a
-// whole-piece move (never a peel), and a plain click on it does nothing since
-// it's a drag-only affordance.
+// whole-piece move (never a peel), and a plain click on it opens the STACK
+// radial menu (top-card actions plus the pile-wide ones — see
+// openPieceRadialMenu) rather than moving anything. This is the one way to
+// reach that menu on an already-SPLAYED pile, where every individual card
+// now opens its own single-card menu instead (see wirePeelInteraction/
+// wireSplayAdjustDrag) — the label handle is what still represents "the
+// pile as a whole" there.
 function wireGroupHandleDrag(handleEl, p){
   let startX, startY, ghost=null;
   wirePressDragClick(handleEl, {
@@ -2415,6 +2460,7 @@ function wireGroupHandleDrag(handleEl, p){
       updateDragGhost(ghost, p.x, p.y, pieceW(p), pieceH(p));
       repositionAttachedTokens(p.id);
     },
+    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY), // the Stack menu — see comment above
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
       clearMergeHighlight();
@@ -2425,14 +2471,18 @@ function wireGroupHandleDrag(handleEl, p){
     },
   });
 }
-// Click+drag on ONE specific visible card of a multi-card pile — a plain click
-// still opens the pile's radial menu (same menu regardless of which card you
-// clicked, since the actions apply to the pile as a whole), but a drag makes
-// that exact card a real, independent piece the instant the drag starts (see
-// beginPeelAsPiece) and drives it exactly like any other whole-piece drag
-// from then on (see driveWholePieceDrag/finalizeWholePieceDrop) — following
-// the cursor, merging into whatever pile it's dropped on, or tucking into a
-// splayed pile's fan showing its own face at the exact previewed slot.
+// Click+drag on ONE specific visible card of a multi-card (necessarily
+// splayed — this only ever wires individual `.splay-card` elements) pile —
+// a plain click opens the SINGLE-CARD radial menu scoped to that exact card
+// (see openPieceRadialMenu), even for the anchor/top card, since picking any
+// one card out of a splay means you're pointing at that card specifically,
+// not "the pile" (reach the pile-wide Stack menu via its label handle
+// instead — see wireGroupHandleDrag). A drag makes that exact card a real,
+// independent piece the instant the drag starts (see beginPeelAsPiece) and
+// drives it exactly like any other whole-piece drag from then on (see
+// driveWholePieceDrag/finalizeWholePieceDrop) — following the cursor,
+// merging into whatever pile it's dropped on, or tucking into a splayed
+// pile's fan showing its own face at the exact previewed slot.
 function wirePeelInteraction(cardEl, p, cardIndex){
   let ctx = null;
   wirePressDragClick(cardEl, {
@@ -2445,7 +2495,7 @@ function wirePeelInteraction(cardEl, p, cardIndex){
       if(!ctx){ ctx = beginPeelAsPiece(p, cardIndex, ev.clientX, ev.clientY); if(!ctx) return; }
       driveWholePieceDrag(ctx, ev.clientX-ctx.pickupClientX, ev.clientY-ctx.pickupClientY, ev);
     },
-    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
+    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, cardIndex), // single-card menu for THIS card specifically
     onDrop: (dx, dy, ev)=>{
       if(!ctx) return;
       finalizeWholePieceDrop(ctx, ev);
@@ -2617,36 +2667,69 @@ function clearMergeHighlight(){
   }
   mergeHighlightId = null;
 }
-function flipTopCard(pieceId){
-  const p = state.pieces.get(pieceId); if(!p) return;
-  const idx = p.faceStates.length-1;
+// Flips ONE card's face — the pile's own top card by default, or a specific
+// `cardIndex` (any card of a splay, from the single-card radial menu or the
+// F hotkey while hovering that card — see hoveredCardIndex).
+function flipTopCard(pieceId, cardIndex){
+  const p = state.pieces.get(pieceId); if(!p || !p.faceStates.length) return;
+  const idx = cardIndex!=null ? cardIndex : p.faceStates.length-1;
+  if(idx<0 || idx>=p.faceStates.length) return;
   const oldFace = p.faceStates[idx];
   const newFace = !oldFace;
-  doAction('FLIP_TOP', {id:pieceId, faceUp:newFace});
-  setUndo(()=> doAction('FLIP_TOP', {id:pieceId, faceUp:oldFace}));
+  doAction('FLIP_TOP', {id:pieceId, faceUp:newFace, cardIndex:idx});
+  setUndo(()=> doAction('FLIP_TOP', {id:pieceId, faceUp:oldFace, cardIndex:idx}));
 }
-// Rotates the WHOLE pile in place (a "tap", independent of the shared board-view
-// rotation) — cycles 0→90→180→270→0 forward, or the reverse with dir=-1. A
-// SPLAYED multi-card pile is the one exception: there, R rotates only the
-// ONE card currently under the cursor (see hoveredCardIndex/wireCardHoverIndex)
-// rather than spinning every fanned-out card together — an unsplayed pile (or
-// a single card, or an image) has no individual cards to pick between, so it
-// keeps rotating as one whole unit exactly as before.
-function rotatePiece(pieceId, dir){
+// Rotates a SPECIFIC card of a SPLAYED pile by index (`cardIndex` non-null),
+// used wherever the target card is already known explicitly — the
+// single-card radial menu, and rotatePiece below once it's resolved which
+// card (if any) the hotkey should actually be targeting. cardIndex===null
+// (or the pile isn't splayed/multi-card) rotates the WHOLE piece in place
+// instead — a "tap", independent of the shared board-view rotation, cycling
+// 0→90→180→270→0 forward, or the reverse with dir=-1 — same as ever for an
+// unsplayed pile, a single card, or an image, none of which have individual
+// cards to pick between.
+function rotateCardAt(pieceId, cardIndex, dir){
   const p = state.pieces.get(pieceId); if(!p) return;
-  if(p.splayed && p.cardIds.length>1 && hoveredCardIndex!=null && hoveredCardIndex<p.cardIds.length){
-    const idx = hoveredCardIndex;
+  if(p.splayed && p.cardIds.length>1 && cardIndex!=null && cardIndex<p.cardIds.length){
     const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
-    const old = cardRotations[idx]||0;
+    const old = cardRotations[cardIndex]||0;
     const next = (old + (dir||1)*90 + 360) % 360;
-    doAction('ROTATE_CARD', {id:pieceId, cardIndex:idx, rotation:next});
-    setUndo(()=> doAction('ROTATE_CARD', {id:pieceId, cardIndex:idx, rotation:old}));
+    doAction('ROTATE_CARD', {id:pieceId, cardIndex, rotation:next});
+    setUndo(()=> doAction('ROTATE_CARD', {id:pieceId, cardIndex, rotation:old}));
     return;
   }
   const old = p.rotation||0;
   const next = (old + (dir||1)*90 + 360) % 360;
   doAction('ROTATE_PIECE', {id:pieceId, rotation:next});
   setUndo(()=> doAction('ROTATE_PIECE', {id:pieceId, rotation:old}));
+}
+// R hotkey: rotates whichever card (if any) is currently hovered within a
+// SPLAYED pile (see hoveredCardIndex/wireCardHoverIndex) — anywhere else
+// (an unsplayed pile, a single card, an image, or just not hovering any one
+// card of the splay right now) there's no individual card to pick, so the
+// whole piece rotates as one unit, same as ever.
+function rotatePiece(pieceId, dir){
+  const p = state.pieces.get(pieceId); if(!p) return;
+  const idx = (p.splayed && p.cardIds.length>1 && hoveredCardIndex!=null) ? hoveredCardIndex : null;
+  rotateCardAt(pieceId, idx, dir);
+}
+// Discards exactly ONE card from a pile outright — no hand/board destination,
+// unlike Draw — leaving the rest of the pile (splayed or not) otherwise
+// intact. Reuses the SEARCH_REMOVE machinery (a generic "here's the pile's
+// new card list" event, same as confirmSearchRemove/drawTopCard) rather than
+// inventing a new one — the only thing that changes is that nothing gets
+// pushed to hand or placed on the board with the removed card. If this was
+// the pile's last card, setPieceCards' own empty-array check deletes the
+// whole piece, same as it always has.
+function removeCard(pieceId, cardIndex){
+  const p = state.pieces.get(pieceId); if(!p || cardIndex<0 || cardIndex>=p.cardIds.length) return;
+  const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
+  const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates], originalCardRotations = [...cardRotations];
+  const remainingCardIds = p.cardIds.filter((_,i)=>i!==cardIndex);
+  const remainingFaceStates = p.faceStates.filter((_,i)=>i!==cardIndex);
+  const remainingCardRotations = cardRotations.filter((_,i)=>i!==cardIndex);
+  doAction('REMOVE_CARD', {id:pieceId, remainingCardIds, remainingFaceStates, remainingCardRotations});
+  setUndo(()=> doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations}));
 }
 // Locking a pile only blocks dragging it (see wirePieceDrag) — flip/rotate/draw etc.
 // all still work, since lock is about "don't let me bump this out of place".
@@ -2665,15 +2748,20 @@ function toggleZoneLock(zoneId){
 
 /* =========================================================================
    HOTKEY HINT — while hovering a board piece with the mouse (desktop only),
-   F flips the top card, R rotates the whole pile a quarter-turn, and D draws
-   the top card into your hand. A small reminder pill tracks the piece so the
-   keys are discoverable without cluttering the radial menu.
+   F flips a card, R rotates it a quarter-turn, and D draws it into your hand.
+   For an unsplayed pile (or a single card) that's always the pile's own top
+   card / the one card there is; hovering a SPLAYED pile, all three instead
+   target specifically whichever card is under the cursor right now (see
+   hoveredCardIndex below) — same as picking that card's own single-card
+   radial menu action, just via the keyboard. A small reminder pill tracks
+   the piece (and rewords itself for "this card only" — see showHotkeyHint)
+   so the keys are discoverable without cluttering the radial menu.
    ========================================================================= */
 let hoveredPieceId = null;
 // Which card (array index) of a SPLAYED pile the mouse is currently over —
 // null whenever that's not a meaningful question (nothing splayed is
-// hovered right now). Only R (see rotatePiece) reads this; F/D still act on
-// the pile as a whole regardless of which card is under the cursor.
+// hovered right now). F/R/D (see the keydown handler below) all read this
+// to scope themselves to that one card instead of the pile as a whole.
 let hoveredCardIndex = null;
 function wireCardHoverIndex(cardEl, i){
   cardEl.addEventListener('mouseenter', ()=>{ hoveredCardIndex = i; });
@@ -2698,13 +2786,19 @@ function wireHotkeyHint(el, pieceId){
 function showHotkeyHint(el){
   const hint = document.getElementById('hotkeyHint');
   const p = state.pieces.get(el.dataset.id);
-  const rotateLabel = (p && p.splayed && p.cardIds.length>1) ? 'Rotate card' : 'Rotate';
+  // A splayed multi-card pile means F/R/D all target one specific card (see
+  // the keydown handler) rather than the pile as a whole — reworded here so
+  // the hint actually matches what pressing the key will do.
+  const perCard = !!(p && p.splayed && p.cardIds.length>1);
+  const rotateLabel = perCard ? 'Rotate card' : 'Rotate';
+  const flipLabel = perCard ? 'Flip card' : 'Flip';
+  const drawLabel = perCard ? 'Draw card' : 'Draw';
   hint.innerHTML = (p && p.kind==='image')
     ? `<div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> Rotate</div>` // an image piece has no card faces to flip or draw from
     : `
-    <div class="hk-item"><kbd>F</kbd> Flip</div>
+    <div class="hk-item"><kbd>F</kbd> ${flipLabel}</div>
     <div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> ${rotateLabel}</div>
-    <div class="hk-item"><kbd>D</kbd> Draw</div>
+    <div class="hk-item"><kbd>D</kbd> ${drawLabel}</div>
   `;
   const rect = el.getBoundingClientRect();
   hint.classList.remove('hidden');
@@ -2723,9 +2817,14 @@ document.addEventListener('keydown', (e)=>{
   const p = state.pieces.get(hoveredPieceId);
   if(!p) return;
   const key = e.key.toLowerCase();
+  // Whichever card (if any) is under the cursor right now within a SPLAYED
+  // pile — undefined (not just null) so it cleanly falls through to
+  // flipTopCard/drawTopCard's own "no cardIndex given" default of the top
+  // card, same as rotateCardAt/rotatePiece already does with null.
+  const cardIdx = (p.splayed && p.cardIds.length>1 && hoveredCardIndex!=null && hoveredCardIndex<p.cardIds.length) ? hoveredCardIndex : undefined;
   if(key==='r'){ e.preventDefault(); rotatePiece(hoveredPieceId, e.shiftKey ? -1 : 1); }
-  else if(p.kind!=='image' && key==='f'){ e.preventDefault(); flipTopCard(hoveredPieceId); }
-  else if(p.kind!=='image' && key==='d'){ e.preventDefault(); drawTopCard(hoveredPieceId, 'hand'); }
+  else if(p.kind!=='image' && key==='f'){ e.preventDefault(); flipTopCard(hoveredPieceId, cardIdx); }
+  else if(p.kind!=='image' && key==='d'){ e.preventDefault(); drawTopCard(hoveredPieceId, 'hand', cardIdx); }
 });
 
 // True when the cursor (in world coords) is over the BOTTOM THIRD of the
@@ -2918,6 +3017,14 @@ function splayEdgeHintHtml(dir){
   else style = `left:0;right:0;bottom:0;height:${T}px;`; // 'down'
   return `<div class="splay-edge-hint" style="${style}"></div>`;
 }
+// The anchor card gets BOTH bars along the splay's axis — see
+// isOnAnchorSplayEdge — since either edge is live for it, unlike every other
+// card which only ever has the one matching the current direction.
+function anchorSplayEdgeHintHtml(dir){
+  return (dir==='left'||dir==='right')
+    ? splayEdgeHintHtml('left')+splayEdgeHintHtml('right')
+    : splayEdgeHintHtml('up')+splayEdgeHintHtml('down');
+}
 // An UNSPLAYED multi-card pile: grabbing the thin border strip around its own
 // edge (stackEdgeAt) begins a splay in that edge's direction right away —
 // dragging further out grows the spacing exactly like wireSplayAdjustDrag
@@ -3013,6 +3120,22 @@ function isOnSplayAdjustEdge(p, clientX, clientY, depth){
   if(dir==='up') return Math.abs(cardLocal.y) <= zone;
   return Math.abs(PIECE_H - cardLocal.y) <= zone; // 'down'
 }
+// The anchor card's OWN two edges along the splay's locked axis — its LEFT
+// and RIGHT edges for a horizontal splay, TOP and BOTTOM for vertical
+// (EITHER one; unlike every other card, which only has the one edge that
+// matches the current direction, the anchor sits at depth 0 with no offset
+// of its own, so both its edges along that axis are exposed and either one
+// reads as a natural "fan this open" grab). Straddles each edge LINE itself,
+// same zone convention as isOnSplayAdjustEdge/stackEdgeAt.
+function isOnAnchorSplayEdge(p, clientX, clientY){
+  const dir = p.splayDir || 'right';
+  const pieceLocal = localOffsetInPiece(p, clientX, clientY);
+  const zone = SPLAY_EDGE_ZONE / state.view.scale;
+  if(dir==='left' || dir==='right'){
+    return Math.abs(pieceLocal.x) <= zone || Math.abs(PIECE_W - pieceLocal.x) <= zone;
+  }
+  return Math.abs(pieceLocal.y) <= zone || Math.abs(PIECE_H - pieceLocal.y) <= zone;
+}
 // ANY card in a splayed pile except the anchor itself: grabbing the SAME
 // edge that began the splay (matching p.splayDir, see isOnSplayAdjustEdge)
 // extends or collapses the existing fan along that one LOCKED axis — it can
@@ -3030,13 +3153,26 @@ function isOnSplayAdjustEdge(p, clientX, clientY, depth){
 // (see renderBoard's offsetFor), committing that one recovered spacing value
 // moves every card in the fan together, keeping the gaps between
 // consecutive outer edges equal no matter which card you dragged.
+//
+// The ANCHOR card (cardIndex === the pile's own top index) is the one
+// exception to all of that: it has no depth of its own (always 0 — it never
+// moves), so there's nothing to divide by. Grabbing one of ITS two edges
+// (see isOnAnchorSplayEdge) instead drives the spacing directly off the raw
+// cursor distance past that edge — exactly the same math the pile used the
+// very first time it was fanned out via wireStackInteraction (depth 1) —
+// which just happens to also be the most convenient card to grab, since
+// it's the one card in the pile that's always fully exposed regardless of
+// how tight the fan currently is.
 function wireSplayAdjustDrag(cardEl, p, cardIndex){
   let mode=null, old=null, ctx=null;
+  const isAnchor = cardIndex === p.cardIds.length-1;
   const depthOf = ()=> Math.max(1, (p.cardIds.length-1) - cardIndex);
+  const onEdgeAt = (clientX, clientY)=> isAnchor
+    ? isOnAnchorSplayEdge(p, clientX, clientY)
+    : isOnSplayAdjustEdge(p, clientX, clientY, depthOf());
   cardEl.addEventListener('mousemove', (e)=>{
     if(mode) return;
-    const onEdge = isOnSplayAdjustEdge(p, e.clientX, e.clientY, depthOf());
-    cardEl.style.cursor = onEdge ? cursorForSplayEdge(p.splayDir||'right') : '';
+    cardEl.style.cursor = onEdgeAt(e.clientX, e.clientY) ? cursorForSplayEdge(p.splayDir||'right') : '';
   });
   cardEl.addEventListener('mouseleave', ()=>{ if(!mode) cardEl.style.cursor = ''; });
   wirePressDragClick(cardEl, {
@@ -3044,7 +3180,7 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
       if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
       if(p.locked) return false;
       if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
-      const onEdge = isOnSplayAdjustEdge(p, e.clientX, e.clientY, depthOf());
+      const onEdge = onEdgeAt(e.clientX, e.clientY);
       mode = onEdge ? 'adjust' : 'peel';
       if(mode==='adjust'){
         old = { splayed:true, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
@@ -3056,14 +3192,16 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
     onMove: (dx, dy, ev)=>{
       if(mode==='adjust'){
         const dir = old.dir; // locked — never recomputed from the drag vector
-        const spacing = splaySpacingForCursor(p, dir, ev.clientX, ev.clientY, depthOf());
+        const spacing = isAnchor
+          ? splaySpacingForCursor(p, dir, ev.clientX, ev.clientY) // depth 1 — see comment above
+          : splaySpacingForCursor(p, dir, ev.clientX, ev.clientY, depthOf());
         previewSplay(p.id, true, dir, spacing);
         return;
       }
       if(!ctx){ ctx = beginPeelAsPiece(p, cardIndex, ev.clientX, ev.clientY); if(!ctx) return; }
       driveWholePieceDrag(ctx, ev.clientX-ctx.pickupClientX, ev.clientY-ctx.pickupClientY, ev);
     },
-    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
+    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, cardIndex), // single-card menu for THIS card specifically
     onDrop: (dx, dy, ev)=>{
       if(mode==='adjust'){
         document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
@@ -3090,25 +3228,31 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
 // Privately reveals the CURRENTLY-HIDDEN face of the top card to the peeking
 // player only — never changes the piece's actual state. Other players are told
 // a peek happened (and where), never what was seen.
-function peekTopCard(pieceId){
+// Privately reveals ONE card's currently-hidden face — the pile's own top
+// card by default, or a specific `cardIndex` (any card of a splay).
+function peekTopCard(pieceId, cardIndex){
   const p = state.pieces.get(pieceId); if(!p || !p.cardIds.length) return;
-  const idx = p.cardIds.length-1;
+  const idx = cardIndex!=null ? cardIndex : p.cardIds.length-1;
+  if(idx<0 || idx>=p.cardIds.length) return;
   const card = cardsById.get(p.cardIds[idx]);
   const otherFaceUp = !p.faceStates[idx];
   openPeekPopup(card, otherFaceUp);
   doNote('peeked at a card on the board');
 }
 
-// Removes the top card of a pile, sending it either into the player's private
-// hand (untracked beyond this point) or onto the board as a new face-up piece.
-function drawTopCard(pieceId, destination){
+// Removes ONE card from a pile — the top card by default, or a specific
+// `cardIndex` (any card of a splay) — sending it either into the player's
+// private hand (untracked beyond this point) or onto the board as a new
+// face-down piece.
+function drawTopCard(pieceId, destination, cardIndex){
   const p = state.pieces.get(pieceId); if(!p || !p.cardIds.length) return;
-  const idx = p.cardIds.length-1;
+  const idx = cardIndex!=null ? cardIndex : p.cardIds.length-1;
+  if(idx<0 || idx>=p.cardIds.length) return;
   const cardId = p.cardIds[idx];
   const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
-  const remainingCardIds = p.cardIds.slice(0, idx);
-  const remainingFaceStates = p.faceStates.slice(0, idx);
-  const remainingCardRotations = cardRotations.slice(0, idx);
+  const remainingCardIds = p.cardIds.filter((_,i)=>i!==idx);
+  const remainingFaceStates = p.faceStates.filter((_,i)=>i!==idx);
+  const remainingCardRotations = cardRotations.filter((_,i)=>i!==idx);
   const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates], originalCardRotations = [...cardRotations];
   doAction('DRAW_TOP', { id:pieceId, remainingCardIds, remainingFaceStates, remainingCardRotations, destination });
   if(destination==='hand'){
@@ -3211,6 +3355,13 @@ document.getElementById('btnSearchCancel').addEventListener('click', ()=>documen
 // each time (re-run after every action so things like a Lock/Unlock label or
 // Splay/Unsplay toggle stay accurate); a function that returns null/empty
 // means the thing the menu was about is gone, so the menu closes itself.
+// An item is normally {icon,label,action}, optionally with group:'stack' for
+// the accent-tinted styling (see .radial-item.stack-action) that visually
+// sets a pile-wide action apart from an ordinary single-card one. An item
+// can instead be {divider:true} — a small non-interactive dot that still
+// claims its own slot in the ring, so items on either side of it read as two
+// separate clusters instead of one continuous loop (see openPieceRadialMenu,
+// which brackets its stack-action group with one on each side).
 function openRadialMenu(itemsSource, clientX, clientY){
   const getItems = typeof itemsSource==='function' ? itemsSource : ()=>itemsSource;
   const menu = document.getElementById('radialMenu');
@@ -3222,7 +3373,11 @@ function openRadialMenu(itemsSource, clientX, clientY){
     menu.innerHTML = items.map((it,i)=>{
       const angle = (i/n)*Math.PI*2 - Math.PI/2; // start at 12 o'clock, clockwise
       const x = Math.round(Math.cos(angle)*radius), y = Math.round(Math.sin(angle)*radius);
-      return `<div class="radial-item" data-i="${i}" style="left:${x}px;top:${y}px;">
+      if(it.divider){
+        return `<div class="radial-divider" style="left:${x}px;top:${y}px;"></div>`;
+      }
+      const cls = 'radial-item' + (it.group==='stack' ? ' stack-action' : '');
+      return `<div class="${cls}" data-i="${i}" style="left:${x}px;top:${y}px;">
         <span class="radial-icon">${it.icon||'•'}</span><span class="radial-label">${escapeHtml(it.label)}</span>
       </div>`;
     }).join('');
@@ -3233,6 +3388,8 @@ function openRadialMenu(itemsSource, clientX, clientY){
     menu.style.left = cx+'px';
     menu.style.top = cy+'px';
     menu.classList.remove('hidden');
+    // .radial-divider slots are deliberately excluded by this selector — no
+    // action to run, so no listener to attach.
     [...menu.querySelectorAll('.radial-item')].forEach(el=>{
       el.addEventListener('click', (e)=>{
         e.stopPropagation();
@@ -3255,7 +3412,43 @@ document.addEventListener('click', (e)=>{
   closeImageScalePopover();
 });
 
-function openPieceRadialMenu(pieceId, clientX, clientY){
+// The 5 actions that apply to exactly ONE card — Flip/Peek/Draw/Rotate/Remove,
+// all scoped to `cardIndex` specifically (not "the pile" in any sense). Used
+// standalone for a genuinely single-card piece or any card picked out of a
+// splay, and as the first half of the combined stack menu below.
+function singleCardMenuItems(p, cardIndex){
+  return [
+    {icon:'⟲', label:'Flip', action:()=>flipTopCard(p.id, cardIndex)},
+    {icon:'👁', label:'Peek', action:()=>peekTopCard(p.id, cardIndex)},
+    {icon:'✋', label:'Draw', action:()=>drawTopCard(p.id, 'hand', cardIndex)},
+    {icon:'↻', label:'Rotate', action:()=>rotateCardAt(p.id, cardIndex, 1)},
+    {icon:'🗑', label:'Remove', action:()=>removeCard(p.id, cardIndex)},
+  ];
+}
+// Two different menus, depending on WHAT was actually clicked:
+//
+// - Any individual card — a genuinely standalone single-card piece, or ANY
+//   one card picked out of a splay (the anchor included) — gets just the 5
+//   single-card actions above, scoped to that one card. Pass `cardIndex`
+//   explicitly whenever the click landed on a specific splay card (see
+//   wirePeelInteraction/wireSplayAdjustDrag); it's what tells this apart
+//   from the stack case below even for a card that happens to be the pile's
+//   own top card. A genuinely standalone lone card (no stack to speak of at
+//   all) also gets a Lock/Unlock — there's no separate "stack handle" it
+//   could ever reach a Lock Stack option through, and pinning a single card
+//   in place is still a reasonable thing to want. It does NOT get a Label,
+//   though — that one's pile-flavored enough (labeling a specific card
+//   within a stack wouldn't make much sense either) that it stays exclusive
+//   to the Stack menu below.
+// - The STACK itself — an unsplayed pile's own single visible face (no
+//   individual cards to pick between), or the pile's "move whole stack"
+//   label handle clicked without dragging it (see wireGroupHandleDrag) —
+//   gets those same 5 actions for its top card PLUS the pile-wide ones
+//   (Flip/Shuffle/Label/Search/Lock/Remove Stack), visually set apart as a
+//   distinct accent-tinted cluster with a gap on each side (see
+//   openRadialMenu's divider support and .stack-action) rather than mixed
+//   into one undifferentiated ring.
+function openPieceRadialMenu(pieceId, clientX, clientY, cardIndex){
   openRadialMenu(()=>{
     const p = state.pieces.get(pieceId); if(!p) return null;
     if(p.kind==='image'){
@@ -3268,16 +3461,25 @@ function openPieceRadialMenu(pieceId, clientX, clientY){
         {icon:'🗑', label:'Remove', action:()=>doAction('REMOVE_PIECE', {id:pieceId})},
       ];
     }
+    const isStack = p.cardIds.length>1;
+    const targetIndex = cardIndex!=null ? cardIndex : p.cardIds.length-1; // default: the top/anchor card
+    const cardItems = singleCardMenuItems(p, targetIndex);
+    if(cardIndex!=null) return cardItems; // one specific card picked out of a splay
+    if(!isStack){
+      // A genuinely standalone lone card — see the doc comment above for why
+      // Lock (but not Label) still gets tacked on here.
+      return [...cardItems, {icon: p.locked?'🔓':'🔒', label: p.locked?'Unlock':'Lock', action:()=>togglePieceLock(pieceId)}];
+    }
     return [
-      {icon:'⟲', label:'Flip', action:()=>flipTopCard(pieceId)},
-      {icon:'🔃', label:'Flip Stack', action:()=>flipStack(pieceId)},
-      {icon:'👁', label:'Peek', action:()=>peekTopCard(pieceId)},
-      {icon:'🔀', label:'Shuffle', action:()=>shufflePiece(pieceId)},
-      {icon:'🏷', label: p.label?'Rename':'Label', action:()=>setPieceLabel(pieceId)},
-      {icon:'🔍', label:'Search', action:()=>openSearchModal(pieceId)},
-      {icon:'✋', label:'To Hand', action:()=>drawTopCard(pieceId,'hand')},
-      {icon: p.locked?'🔓':'🔒', label: p.locked?'Unlock':'Lock', action:()=>togglePieceLock(pieceId)},
-      {icon:'🗑', label:'Remove', action:()=>doAction('REMOVE_PIECE', {id:pieceId})},
+      ...cardItems,
+      {divider:true},
+      {icon:'🔃', label:'Flip Stack', group:'stack', action:()=>flipStack(pieceId)},
+      {icon:'🔀', label:'Shuffle Stack', group:'stack', action:()=>shufflePiece(pieceId)},
+      {icon:'🏷', label: p.label?'Rename Stack':'Label Stack', group:'stack', action:()=>setPieceLabel(pieceId)},
+      {icon:'🔍', label:'Search Stack', group:'stack', action:()=>openSearchModal(pieceId)},
+      {icon: p.locked?'🔓':'🔒', label: p.locked?'Unlock Stack':'Lock Stack', group:'stack', action:()=>togglePieceLock(pieceId)},
+      {icon:'🗑', label:'Remove Stack', group:'stack', action:()=>doAction('REMOVE_PIECE', {id:pieceId})},
+      {divider:true},
     ];
   }, clientX, clientY);
 }
