@@ -124,9 +124,16 @@ input[type="range"]{accent-color:var(--accent);}
 #boardWorld{position:absolute;top:0;left:0;transform-origin:0 0;}
 
 .piece{position:absolute;cursor:grab;user-select:none;touch-action:none;width:140px;transform-origin:center center;
-  transition:filter .15s var(--bounce);}
+  transition:filter .15s var(--bounce);z-index:1;}
 .piece:hover{filter:brightness(1.08) drop-shadow(0 8px 14px rgba(0,0,0,.5));}
 .piece.selected{filter:brightness(1.04);}
+/* While a piece is actively being dragged, it normally floats above everything
+   (z-index:50) — except when it's hovering the bottom third of a valid merge
+   target, where it should visually slide UNDER that target instead, previewing
+   that it'll land at the bottom of the pile rather than the top (z-index:0,
+   below every piece's z-index:1 baseline). See shouldInsertBelow. */
+.piece.dragging-piece{z-index:50;}
+.piece.dragging-piece.insert-below{z-index:0;}
 .piece .piece-face{width:140px;height:196px;border-radius:var(--radius-sm);border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden;background:var(--surface-2);position:relative;}
 .piece img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;}
 .piece .cardback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
@@ -149,7 +156,14 @@ input[type="range"]{accent-color:var(--accent);}
 .piece.merge-target .piece-label{background:var(--ok);color:#0a2a12;}
 .piece .piece-label{position:absolute;bottom:-22px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;
   color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);padding:2px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  transition:background .1s,color .1s;}
+  transition:background .1s,color .1s,transform .35s var(--bounce);
+  /* Counter-rotates against the whole board's own rotation (#boardRotate — see
+     applyRotation, which keeps --counter-rotate updated on it) so the label's TEXT
+     always faces the viewer upright, independent of how the table is turned. This
+     only touches the label's own orientation, not its position — it's still placed
+     exactly where it always was (bottom-center of its card), which is what actually
+     keeps it "attached" as the board spins; only which way the text reads changes. */
+  transform:rotate(var(--counter-rotate,0deg));}
 .piece.image-piece .piece-face{width:100%;height:100%;border-radius:var(--radius);background:transparent;box-shadow:none;}
 .piece.image-piece img{border-radius:var(--radius);box-shadow:var(--shadow);object-fit:contain;}
 
@@ -174,7 +188,8 @@ input[type="range"]{accent-color:var(--accent);}
    rather than being pinned to a fixed 140px box; sits slightly HIGH, overlapping
    up onto the bottom of the top card itself, rather than hanging fully below it. */
 .piece .piece-label.stack-handle{cursor:move;min-width:26px;min-height:14px;transition:filter .15s var(--bounce),background .1s,color .1s;
-  left:70px;right:auto;bottom:auto;top:180px;width:max-content;max-width:260px;transform:translateX(-50%);}
+  left:70px;right:auto;bottom:auto;top:180px;width:max-content;max-width:260px;
+  transform:translateX(-50%) rotate(var(--counter-rotate,0deg));}
 .piece .piece-label.stack-handle:hover{filter:brightness(1.15);}
 
 /* Ghost/silhouette preview shown while dragging a piece or token — a faint
@@ -427,6 +442,10 @@ input[type="range"]{accent-color:var(--accent);}
    same distance) — highlighted with an accent outline and glow so it's obvious
    at a glance which card does that job. */
 .splay-card.splay-adjust-target{outline:2px solid var(--accent);outline-offset:2px;box-shadow:0 0 0 5px var(--accent-soft),var(--shadow);cursor:move;}
+/* Placeholder slot shown while a peeled/played card is hovering a splay,
+   previewing exactly where it would land (see splayPreview / splayInsertIndex)
+   — never interactive, just a visual "it goes here" cue. */
+.splay-card.splay-gap{background:var(--accent-soft);border:2px dashed var(--accent);box-shadow:none;pointer-events:none;}
 
 /* ---------- History ---------- */
 .history-row{font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);}
@@ -458,10 +477,6 @@ input[type="range"]{accent-color:var(--accent);}
     <div class="setup-row">
       <div class="btn btn-sm" id="btnToggleRejoin" style="color:var(--text-soft);">Rejoining an existing room instead? ▾</div>
       <div id="rejoinFields" class="hidden" style="margin-top:10px;">
-        <div class="setup-row">
-          <label>Game Room spreadsheet ID (its Google Drive file ID)</label>
-          <input type="text" id="roomSheetIdInput" placeholder="Paste the Sheet ID...">
-        </div>
         <div class="setup-row">
           <label>Session</label>
           <div class="session-tabs" id="sessionTabs">
@@ -600,10 +615,6 @@ input[type="range"]{accent-color:var(--accent);}
     <div class="modal-header"><h2 id="connectModalTitle">Connect this room</h2><div class="btn btn-icon" data-close="connectModal">✕</div></div>
     <div class="modal-body">
       <div class="setup-row">
-        <label>Game Room spreadsheet ID (its Google Drive file ID)</label>
-        <input type="text" id="connectSheetIdInput" placeholder="Paste the Sheet ID...">
-      </div>
-      <div class="setup-row">
         <div class="session-tabs" id="connectTabs">
           <div class="tab active" data-mode="host">Open Room</div>
           <div class="tab" data-mode="join">Join Room</div>
@@ -629,6 +640,10 @@ input[type="range"]{accent-color:var(--accent);}
 // room_apps_script.gs); this URL is safe to hardcode since it isn't bound to
 // any one room's data.
 const ROOM_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwSvYNuugrPcPdppUzW-ggZJCoqCseY5TLsN1E6VRjlsjrDjvfb5oIqiXnEZfH_W08N/exec';
+// The one Game Room spreadsheet everyone shares now — no longer something a
+// player pastes in themselves. Every table this app hosts lives in this one
+// sheet's event log, distinguished only by session code.
+const ROOM_SHEET_ID = '1bcUd6qaDY72yGtSR5KBCtzSCZaBUtNL9PT9A7tKMXNI';
 
 // Same OAuth client as the deckbuilder — an OAuth client's "authorized
 // JavaScript origins" are per-origin, not per-file, so as long as this file
@@ -698,7 +713,6 @@ function onGoogleSignIn(response){
 
 initGoogleSignIn();
 
-const LS_ROOM_SHEET_ID_KEY = 'eoo_room_sheet_id';
 const POLL_MS = 1500;
 const PIECE_W = 140, PIECE_H = 196; // board-space px at scale 1 — matches the .piece CSS size, and is the
 // fixed footprint of every ordinary card-stack piece. A custom-image piece (kind:'image')
@@ -1303,7 +1317,13 @@ function applyView(){
 // content, pivoting on the viewport's own visual center — this avoids needing to
 // recompute a moving pivot point every time the user pans or zooms.
 function applyRotation(){
-  document.getElementById('boardRotate').style.transform = `rotate(${state.viewRotation}deg)`;
+  const el = document.getElementById('boardRotate');
+  el.style.transform = `rotate(${state.viewRotation}deg)`;
+  // Read by .piece-label's own transform (a CSS custom property inherits down
+  // through every descendant, including ones with their own transforms) so every
+  // piece's label spins back upright to face the viewer, without this function
+  // needing to know or touch any individual label element itself.
+  el.style.setProperty('--counter-rotate', (-state.viewRotation) + 'deg');
 }
 // Converts a screen-space drag delta into true (unrotated) board-space delta —
 // needed for every drag interaction so dragging still feels natural regardless of
@@ -1700,18 +1720,33 @@ function renderBoard(){
       const dir = p.splayDir || 'right';
       const spacing = p.splaySpacing || 36;
       const horizontal = dir==='left' || dir==='right';
-      const topIndex = p.cardIds.length-1;
-      const extent = topIndex*spacing;
+      const n = p.cardIds.length;
+      const topIndex = n-1;
+      const adjustIndex = topIndex-1; // the "2nd card down" — depth 1 from the top
+      // A card being dragged in from elsewhere (peeled off another pile, or
+      // played from hand) can be previewing a "tuck" into this exact splay —
+      // see splayInsertIndex/splayPreview. When it is, depthFor gives every
+      // real card one extra depth once it's on the far side of the gap from
+      // the anchor, opening up a slot at the previewed position; a single
+      // placeholder card (class splay-gap) is added at that slot. Nothing
+      // here touches p.cardIds itself — this is a render-only preview, not a
+      // real change, committed only on an actual drop (see peelCardToBoard /
+      // playHandCardToBoard).
+      const preview = (splayPreview && splayPreview.targetId===p.id) ? splayPreview : null;
+      const depthFor = (i)=> !preview ? (topIndex-i) : (i<preview.insertIndex ? (n-i) : (n-i-1));
+      const extent = (preview ? n : topIndex)*spacing;
       el.style.width = (PIECE_W + (horizontal?extent:0)) + 'px';
       el.style.height = (PIECE_H + (horizontal?0:extent)) + 'px';
-      const adjustIndex = topIndex-1; // the "2nd card down" — depth 1 from the top
-      el.innerHTML = p.cardIds.map((cid,i)=>{
-        const depth = topIndex-i;
+      const offsetFor = (depth)=>{
         let left=0, top=0;
         if(dir==='right') left = depth*spacing;
         else if(dir==='left') left = -depth*spacing;
         else if(dir==='down') top = depth*spacing;
         else if(dir==='up') top = -depth*spacing;
+        return {left, top};
+      };
+      let html = p.cardIds.map((cid,i)=>{
+        const {left, top} = offsetFor(depthFor(i));
         // NOTE: deliberately NOT also class="piece-face" — .piece .piece-face{position:relative}
         // is a more specific selector than plain .splay-card{position:absolute}, so a card
         // carrying both classes loses its absolute positioning and falls into normal
@@ -1723,9 +1758,14 @@ function renderBoard(){
         // never needed that class in the first place.
         const cls = 'splay-card' + (i===adjustIndex ? ' splay-adjust-target' : '');
         return `<div class="${cls}" data-i="${i}" style="left:${left}px;top:${top}px;">${cardFaceHtml(cid, p.faceStates[i])}</div>`;
-      }).join('') + `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`;
+      }).join('');
+      if(preview){
+        const {left, top} = offsetFor(n-preview.insertIndex);
+        html += `<div class="splay-card splay-gap" style="left:${left}px;top:${top}px;"></div>`;
+      }
+      el.innerHTML = html + `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`;
       topCardOffset = {left:0, top:0}; // the top card is always the anchor now
-      [...el.querySelectorAll('.splay-card')].forEach(cardEl=>{
+      [...el.querySelectorAll('.splay-card:not(.splay-gap)')].forEach(cardEl=>{
         const i = Number(cardEl.dataset.i);
         wireHoverPreview(cardEl, ()=>({card:cardsById.get(p.cardIds[i]), faceUp:p.faceStates[i]}));
         if(i===adjustIndex){
@@ -1750,7 +1790,7 @@ function renderBoard(){
       wireHoverPreview(el, ()=>pieceTopFace(p));
       if(isStack){
         topCardOffset = {left:0, top:0};
-        wirePeelInteraction(el, p, p.cardIds.length-1); // only one visible face (the top card) — dragging it anywhere peels the top card
+        wireStackInteraction(el, p); // edge = begin a splay; anywhere else = peel the top card off, same as always
       } else {
         wireWholeInteraction(el, p); // nothing to peel — a single card just moves as a whole
       }
@@ -1809,7 +1849,14 @@ document.getElementById('boardViewport').addEventListener('wheel', (e)=>{
   e.preventDefault();
   const vp = document.getElementById('boardViewport');
   const rect = vp.getBoundingClientRect();
-  const mx = e.clientX-rect.left, my = e.clientY-rect.top;
+  // The point under the cursor, in #boardRotate's own (unrotated) local frame — see
+  // clientToWorld's comment. Re-derived here (rather than just calling clientToWorld
+  // for world coords) because re-anchoring the view after zooming needs this
+  // intermediate "rotation undone but pan/zoom not yet undone" point too, not just
+  // the final world coords.
+  const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+  const rel = rotateVector(e.clientX-cx, e.clientY-cy, state.viewRotation);
+  const mx = (cx+rel.x)-rect.left, my = (cy+rel.y)-rect.top;
   const worldX = (mx - state.view.x)/state.view.scale;
   const worldY = (my - state.view.y)/state.view.scale;
   const maxScale = Math.min(vp.clientWidth/PIECE_W, vp.clientHeight/PIECE_H); // one card fills the screen
@@ -2041,7 +2088,8 @@ function peelCardToHand(pieceId, cardIndex){
 function finishWholeMove(p, startX, startY, clientX, clientY){
   const target = p.kind==='image' ? null : findOverlapTarget(p, clientX, clientY); // custom images never merge into/onto card piles
   if(target){
-    mergePieceOntoTarget(p.id, target.id); // re-renders the board itself, sets its own undo
+    const world = clientToWorld(clientX, clientY);
+    mergePieceOntoTarget(p.id, target.id, shouldInsertBelow(target, world.y)); // re-renders the board itself, sets its own undo
     return;
   }
   p.x = snapCoord(p.x); p.y = snapCoord(p.y);
@@ -2088,6 +2136,7 @@ function wireWholeInteraction(el, p){
       }
       clearHandDropFeedback();
       if(!ghost) ghost = createDragGhost();
+      el.classList.add('dragging-piece');
       const d = screenDeltaToWorldDelta(dx, dy);
       p.x = startX+d.x; p.y = startY+d.y;
       el.style.left=p.x+'px'; el.style.top=p.y+'px';
@@ -2095,11 +2144,14 @@ function wireWholeInteraction(el, p){
       repositionAttachedTokens(p.id);
       const target = p.kind==='image' ? null : findOverlapTarget(p, ev.clientX, ev.clientY);
       if(target) showMergeHighlight(target.id); else clearMergeHighlight();
+      const world = clientToWorld(ev.clientX, ev.clientY);
+      el.classList.toggle('insert-below', !!target && shouldInsertBelow(target, world.y));
     },
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
       clearMergeHighlight();
+      el.classList.remove('dragging-piece', 'insert-below');
       const canGoToHand = p.kind!=='image' && p.cardIds.length===1;
       if(canGoToHand && isOverHandPanel(ev.clientX, ev.clientY)){
         clearHandDropFeedback();
@@ -2124,18 +2176,23 @@ function wireGroupHandleDrag(handleEl, p){
     },
     onMove: (dx, dy, ev)=>{
       if(!ghost) ghost = createDragGhost();
+      const pieceEl = handleEl.closest('.piece');
+      if(pieceEl) pieceEl.classList.add('dragging-piece');
       const d = screenDeltaToWorldDelta(dx, dy);
       p.x = startX+d.x; p.y = startY+d.y;
-      const pieceEl = handleEl.closest('.piece');
       if(pieceEl){ pieceEl.style.left=p.x+'px'; pieceEl.style.top=p.y+'px'; }
       updateDragGhost(ghost, p.x, p.y, pieceW(p), pieceH(p));
       repositionAttachedTokens(p.id);
       const target = findOverlapTarget(p, ev.clientX, ev.clientY);
       if(target) showMergeHighlight(target.id); else clearMergeHighlight();
+      const world = clientToWorld(ev.clientX, ev.clientY);
+      if(pieceEl) pieceEl.classList.toggle('insert-below', !!target && shouldInsertBelow(target, world.y));
     },
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
       clearMergeHighlight();
+      const pieceEl = handleEl.closest('.piece');
+      if(pieceEl) pieceEl.classList.remove('dragging-piece', 'insert-below');
       finishWholeMove(p, startX, startY, ev.clientX, ev.clientY);
     },
   });
@@ -2153,29 +2210,54 @@ function wirePeelInteraction(cardEl, p, cardIndex){
       if(p.locked) return false;
       if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
     },
-    onMove: (dx, dy, ev)=>{
-      if(isOverHandPanel(ev.clientX, ev.clientY)){
-        if(ghost){ removeDragGhost(ghost); ghost=null; }
-        showHandDropFeedback(p.cardIds[cardIndex], ev.clientX, ev.clientY);
-        return;
-      }
-      clearHandDropFeedback();
-      if(!ghost) ghost = createDragGhost();
-      const world = clientToWorld(ev.clientX, ev.clientY);
-      updateDragGhost(ghost, world.x-PIECE_W/2, world.y-PIECE_H/2, PIECE_W, PIECE_H);
-    },
+    onMove: (dx, dy, ev)=>{ ghost = peelDragTick(p, cardIndex, ev, ghost); },
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
-    onDrop: (dx, dy, ev)=>{
-      removeDragGhost(ghost); ghost=null;
-      if(isOverHandPanel(ev.clientX, ev.clientY)){
-        clearHandDropFeedback();
-        peelCardToHand(p.id, cardIndex);
-        return;
-      }
-      clearHandDropFeedback();
-      peelCardToBoard(p.id, cardIndex, ev.clientX, ev.clientY);
-    },
+    onDrop: (dx, dy, ev)=>{ peelDragDrop(p, cardIndex, ghost, ev); ghost=null; },
   });
+}
+// Shared by wirePeelInteraction (dragging one visible card of a pile off) and
+// wireStackInteraction's peel branch (dragging the middle of an unsplayed
+// pile) — the actual drag-tick visuals for a single peeled-off card following
+// the cursor: the ghost preview, and (see peelCardToBoard's matching comment)
+// the merge highlight / splay "tuck" preview when it's hovering a pile it
+// could land on.
+function peelDragTick(p, cardIndex, ev, ghost){
+  if(isOverHandPanel(ev.clientX, ev.clientY)){
+    if(ghost){ removeDragGhost(ghost); ghost=null; }
+    clearMergeHighlight();
+    clearSplayPreview();
+    showHandDropFeedback(p.cardIds[cardIndex], ev.clientX, ev.clientY);
+    return ghost;
+  }
+  clearHandDropFeedback();
+  const world = clientToWorld(ev.clientX, ev.clientY);
+  const target = findOverlapTarget({id:p.id}, ev.clientX, ev.clientY);
+  const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
+  let rebuilt = false;
+  if(splayTarget){
+    clearMergeHighlight();
+    rebuilt = setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x, world.y));
+  } else {
+    rebuilt = clearSplayPreview();
+    if(target) showMergeHighlight(target.id); else clearMergeHighlight();
+  }
+  if(rebuilt){ if(ghost) removeDragGhost(ghost); ghost = createDragGhost(); }
+  else if(!ghost){ ghost = createDragGhost(); }
+  updateDragGhost(ghost, world.x-PIECE_W/2, world.y-PIECE_H/2, PIECE_W, PIECE_H);
+  return ghost;
+}
+// Shared drop handling for the same two gestures peelDragTick serves.
+function peelDragDrop(p, cardIndex, ghost, ev){
+  removeDragGhost(ghost);
+  clearMergeHighlight();
+  clearSplayPreview();
+  if(isOverHandPanel(ev.clientX, ev.clientY)){
+    clearHandDropFeedback();
+    peelCardToHand(p.id, cardIndex);
+    return;
+  }
+  clearHandDropFeedback();
+  peelCardToBoard(p.id, cardIndex, ev.clientX, ev.clientY);
 }
 // Pulls exactly one card (by index — the top card, or, on a splayed pile,
 // whichever one was grabbed) out of a pile and drops it as its own new piece
@@ -2192,6 +2274,27 @@ function peelCardToBoard(pieceId, cardIndex, clientX, clientY){
   const remainingFaceStates = p.faceStates.filter((_,i)=>i!==cardIndex);
   const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates];
   const world = clientToWorld(clientX, clientY);
+  // Dropped right on top of another pile (any pile but the one it's being
+  // peeled from) — merge straight into it, instead of always landing as a
+  // new standalone piece. A SPLAYED target inserts at the exact fanned
+  // position it was previewing (see splayInsertIndex); any other target uses
+  // the coarser top/bottom-only rule a whole-piece drop uses.
+  const target = findOverlapTarget({id:pieceId}, clientX, clientY);
+  if(target){
+    const insertIndex = (target.splayed && target.cardIds.length>1)
+      ? splayInsertIndex(target, world.x, world.y)
+      : (shouldInsertBelow(target, world.y) ? 0 : target.cardIds.length);
+    const targetOldCardIds = [...target.cardIds], targetOldFaceStates = [...target.faceStates];
+    const cardIds = [...target.cardIds.slice(0,insertIndex), cardId, ...target.cardIds.slice(insertIndex)];
+    const faceStates = [...target.faceStates.slice(0,insertIndex), faceUp, ...target.faceStates.slice(insertIndex)];
+    doAction('DRAW_TOP', { id:pieceId, remainingCardIds, remainingFaceStates, destination:'board' });
+    doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, removedId: null });
+    setUndo(()=>{
+      doAction('RESTORE_PIECE_CARDS', {id:target.id, cardIds:targetOldCardIds, faceStates:targetOldFaceStates});
+      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates});
+    });
+    return;
+  }
   let dropX = snapCoord(world.x - PIECE_W/2), dropY = snapCoord(world.y - PIECE_H/2);
   ({x:dropX, y:dropY} = applyZoneSnap(dropX, dropY, PIECE_W, PIECE_H));
   doAction('DRAW_TOP', { id:pieceId, remainingCardIds, remainingFaceStates, destination:'board' });
@@ -2265,6 +2368,40 @@ function findOverlapTarget(draggedPiece, clientX, clientY){
 // there's no ambiguity about whether letting go will place the card there.
 // Only ever one target highlighted at a time; cleared on every drag tick that
 // isn't over a target, and always on drop/cancel.
+// While a peeled/hand-played card is being dragged over a splayed pile, this
+// holds where it would land if dropped right now — {targetId, insertIndex}
+// (insertIndex is an index into that pile's cardIds array, same convention
+// DRAW_TOP/MERGE_PIECES use: 0 = new bottom card, cardIds.length = new top
+// card). renderBoard()'s splayed-pile branch reads it to open a preview gap;
+// it's never itself a source of truth for real state.
+let splayPreview = null;
+function setSplayPreview(targetId, insertIndex){
+  if(splayPreview && splayPreview.targetId===targetId && splayPreview.insertIndex===insertIndex) return;
+  splayPreview = {targetId, insertIndex};
+  renderBoard();
+}
+function clearSplayPreview(){
+  if(!splayPreview) return;
+  splayPreview = null;
+  renderBoard();
+}
+// Where a loose card hovering at (worldX,worldY) would land in a splayed
+// pile's fan. Near the anchor (the top card) this naturally resolves to
+// insertIndex===cardIds.length — an ordinary top-of-pile insert — and at the
+// far end of the fan it resolves to 0 — an ordinary bottom-of-pile insert —
+// so no separate top/bottom special-casing is needed on top of this.
+function splayInsertIndex(target, worldX, worldY){
+  const dir = target.splayDir || 'right';
+  const spacing = target.splaySpacing || 36;
+  const n = target.cardIds.length;
+  let axisPos;
+  if(dir==='right') axisPos = worldX - target.x;
+  else if(dir==='left') axisPos = target.x - worldX;
+  else if(dir==='down') axisPos = worldY - target.y;
+  else axisPos = target.y - worldY; // 'up'
+  const depth = Math.max(0, Math.min(n, Math.round(axisPos / spacing)));
+  return n - depth;
+}
 let mergeHighlightId = null;
 function showMergeHighlight(pieceId){
   if(mergeHighlightId === pieceId) return;
@@ -2394,14 +2531,28 @@ document.addEventListener('keydown', (e)=>{
   else if(p.kind!=='image' && key==='d'){ e.preventDefault(); drawTopCard(hoveredPieceId, 'hand'); }
 });
 
-function mergePieceOntoTarget(sourceId, targetId){
+// True when the cursor (in world coords) is over the BOTTOM THIRD of the
+// target's own top-card footprint (always PIECE_W x PIECE_H at the target's
+// x,y, regardless of how far a splay visually extends it) — the drop should
+// then insert the dragged card(s) underneath the pile instead of on top of it.
+// Deliberately generous (a full third, not a thin strip right at the edge) so
+// it's easy to land without needing pixel precision.
+function shouldInsertBelow(target, worldY){
+  if(!target) return false;
+  return worldY >= target.y + PIECE_H*2/3;
+}
+function mergePieceOntoTarget(sourceId, targetId, insertBelow){
   const source = state.pieces.get(sourceId);
   const target = state.pieces.get(targetId);
   if(!source || !target || source.id===target.id) return;
   const sourceClone = JSON.parse(JSON.stringify(source));
   const targetOldCardIds = [...target.cardIds], targetOldFaceStates = [...target.faceStates];
-  const cardIds = [...target.cardIds, ...source.cardIds]; // dropped piece's cards go on top
-  const faceStates = [...target.faceStates, ...source.faceStates]; // each card keeps its own face — nothing here forces a match
+  // Dropped piece's cards go on top by default — UNLESS the drop was aimed at
+  // the bottom third of the target (see shouldInsertBelow), in which case they
+  // go underneath instead. Either way each card keeps its own face — nothing
+  // here forces a match.
+  const cardIds = insertBelow ? [...source.cardIds, ...target.cardIds] : [...target.cardIds, ...source.cardIds];
+  const faceStates = insertBelow ? [...source.faceStates, ...target.faceStates] : [...target.faceStates, ...source.faceStates];
   doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, removedId: source.id });
   setUndo(()=>{
     doAction('RESTORE_PIECE_CARDS', {id:target.id, cardIds:targetOldCardIds, faceStates:targetOldFaceStates});
@@ -2460,14 +2611,84 @@ function splayMaxFor(dir){ return (dir==='left'||dir==='right') ? PIECE_W : PIEC
 // wireTokenSplayAdjustDrag) — a small buffer above the bare minimum so "let go
 // right as it gets tight" reliably reads as "close it", not just an exact 6px.
 const SPLAY_UNSPLAY_THRESHOLD = SPLAY_MIN + 4;
-// Toggling Splay on/off from the radial menu — turning it on keeps whatever
-// direction/spacing this pile last had (or the default, for a pile that's
-// never been splayed before); drag the highlighted 2nd card afterward to
-// actually set the fan. Turning it off just restacks it.
-function toggleSplay(pieceId){
-  const p = state.pieces.get(pieceId); if(!p) return;
-  const old = { splayed:p.splayed, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
-  commitSplay(pieceId, !p.splayed, old.dir, old.spacing, old);
+// How wide a border strip around an UNSPLAYED pile's own edge counts as
+// "grabbing the edge" (see stackEdgeAt) rather than an ordinary peel-drag on
+// the card itself. Board-space px, like every other splay measurement here.
+const SPLAY_EDGE_ZONE = 20;
+// Undoes both the board's own rotation (state.viewRotation, via clientToWorld)
+// and this particular piece's own rotation (p.rotation — always a multiple of
+// 90°, same as the board's, so this is exact, never skewed) to get a point in
+// the piece's own unrotated local box: (0,0) at its top-left corner, (PIECE_W,
+// PIECE_H) at its bottom-right — i.e. genuinely "which part of THIS card, as
+// drawn before any rotation was applied, is the cursor over."
+function localOffsetInPiece(p, clientX, clientY){
+  const world = clientToWorld(clientX, clientY);
+  const cx = p.x + PIECE_W/2, cy = p.y + PIECE_H/2;
+  const rel = rotateVector(world.x-cx, world.y-cy, p.rotation||0);
+  return { x: rel.x + PIECE_W/2, y: rel.y + PIECE_H/2 };
+}
+// Which edge (if any) of an UNSPLAYED multi-card pile a mousedown landed in —
+// null means it landed in the middle, an ordinary peel-drag zone. A corner
+// (close to two edges at once) resolves to whichever margin is smaller.
+function stackEdgeAt(p, clientX, clientY){
+  const local = localOffsetInPiece(p, clientX, clientY);
+  const margins = [['left',local.x], ['right',PIECE_W-local.x], ['up',local.y], ['down',PIECE_H-local.y]];
+  let best=null, bestVal=Infinity;
+  margins.forEach(([dir,val])=>{ if(val<=SPLAY_EDGE_ZONE && val<bestVal){ best=dir; bestVal=val; } });
+  return best;
+}
+// An UNSPLAYED multi-card pile: grabbing the thin border strip around its own
+// edge (stackEdgeAt) begins a splay in that edge's direction right away —
+// dragging further out grows the spacing exactly like wireSplayAdjustDrag
+// does for an already-splayed pile's 2nd card (same live preview, same
+// snap-back-to-unsplayed-on-release-near-zero), just reached by a different
+// gesture since there's no fanned-out 2nd card to grab yet. The direction is
+// locked to whichever edge was grabbed at mousedown; changing it means
+// dragging back to fully unsplayed first (see wireSplayAdjustDrag's own
+// snap-back), then starting a fresh drag from a different edge. Grabbing
+// anywhere else peels the top card off, same as always.
+function wireStackInteraction(el, p){
+  let mode=null, edgeDir=null, old=null, ghost=null;
+  wirePressDragClick(el, {
+    onDown: (e)=>{
+      if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
+      if(p.locked) return false;
+      if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
+      edgeDir = stackEdgeAt(p, e.clientX, e.clientY);
+      mode = edgeDir ? 'edge' : 'peel';
+      if(mode==='edge') old = { splayed:false, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
+    },
+    onMove: (dx, dy, ev)=>{
+      if(mode==='edge'){
+        const d = screenDeltaToWorldDelta(dx, dy);
+        let mag;
+        if(edgeDir==='left') mag = -d.x;
+        else if(edgeDir==='right') mag = d.x;
+        else if(edgeDir==='up') mag = -d.y;
+        else mag = d.y; // 'down'
+        const spacing = Math.max(SPLAY_MIN, Math.min(splayMaxFor(edgeDir), mag));
+        previewSplay(p.id, true, edgeDir, spacing);
+        return;
+      }
+      ghost = peelDragTick(p, p.cardIds.length-1, ev, ghost);
+    },
+    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
+    onDrop: (dx, dy, ev)=>{
+      if(mode==='edge'){
+        const p2 = state.pieces.get(p.id); if(!p2) return;
+        // Same "let go near-zero = cancel back to unsplayed" rule as
+        // wireSplayAdjustDrag — here it also covers simply never having
+        // dragged far enough to leave SPLAY_MIN in the first place.
+        if(p2.splaySpacing <= SPLAY_UNSPLAY_THRESHOLD){
+          commitSplay(p.id, false, p2.splayDir, p2.splaySpacing, old);
+        } else {
+          commitSplay(p.id, true, p2.splayDir, p2.splaySpacing, old);
+        }
+        return;
+      }
+      peelDragDrop(p, p.cardIds.length-1, ghost, ev); ghost=null;
+    },
+  });
 }
 // The "2nd card down" of a splayed pile (depth 1 from the top) is the one you
 // drag to set the whole fan's direction and spacing in one gesture — every
@@ -2557,6 +2778,11 @@ function drawTopCard(pieceId, destination){
    ========================================================================= */
 function openSearchModal(pieceId){
   const p = state.pieces.get(pieceId); if(!p) return;
+  // Opened from the radial menu's own "Search" option — a click that originates
+  // INSIDE the radial menu never reaches the document-level outside-click closer
+  // (see the click listener right after closeRadialMenu below), so without this
+  // the menu was left open, floating behind the search modal.
+  closeRadialMenu();
   const listEl = document.getElementById('searchModalList');
   listEl.innerHTML = p.cardIds.map((cid,i)=>{
     const card = cardsById.get(cid);
@@ -2683,7 +2909,6 @@ function openPieceRadialMenu(pieceId, clientX, clientY){
       {icon:'⟲', label:'Flip', action:()=>flipTopCard(pieceId)},
       {icon:'🔃', label:'Flip Stack', action:()=>flipStack(pieceId)},
       {icon:'👁', label:'Peek', action:()=>peekTopCard(pieceId)},
-      {icon:'▤', label: p.splayed?'Unsplay':'Splay', action:()=>toggleSplay(pieceId)},
       {icon:'🔀', label:'Shuffle', action:()=>shufflePiece(pieceId)},
       {icon:'🏷', label: p.label?'Rename':'Label', action:()=>setPieceLabel(pieceId)},
       {icon:'🔍', label:'Search', action:()=>openSearchModal(pieceId)},
@@ -3265,10 +3490,23 @@ document.getElementById('customPieceFileInput').addEventListener('change', (e)=>
    "Edit Zones" is checked, so they stay out of the way of ordinary play; the
    right-click Edit/Delete menu always works regardless of that toggle.
    ========================================================================= */
+// Converts a point in CLIENT (screen) space into the coordinate frame #boardWorld's
+// own pan/zoom transform operates in. #boardRotate wraps #boardWorld and rotates
+// around the viewport's own visual center (see applyRotation/CSS) — an OUTER layer
+// around the already-panned/zoomed content — so a screen point has to have that
+// rotation undone FIRST, before the pan/zoom math below even applies. Skipping that
+// step (treating client coords as if they mapped straight through the pan/zoom alone)
+// only happens to be correct at viewRotation===0; at any other rotation, panning,
+// drag-from-a-point, and zoom-to-cursor all land on the wrong spot. rotateVector
+// already does exactly this "undo the rotation" transform for drag deltas, and works
+// just as well on a point expressed as an offset from the rotation's own pivot.
 function clientToWorld(clientX, clientY){
   const vp = document.getElementById('boardViewport');
   const rect = vp.getBoundingClientRect();
-  return { x: (clientX-rect.left - state.view.x)/state.view.scale, y: (clientY-rect.top - state.view.y)/state.view.scale };
+  const cx = rect.left + rect.width/2, cy = rect.top + rect.height/2;
+  const rel = rotateVector(clientX-cx, clientY-cy, state.viewRotation);
+  const ix = cx + rel.x, iy = cy + rel.y;
+  return { x: (ix-rect.left - state.view.x)/state.view.scale, y: (iy-rect.top - state.view.y)/state.view.scale };
 }
 // Checks every zone with a snap mode and nudges (x,y) — the top-left of a box of size
 // (w,h) whose CENTER is being tested for containment — into or out of that zone.
@@ -3621,10 +3859,28 @@ function wireHandCardDrag(el, idx){
         dragging=true; document.body.appendChild(ghost);
       }
       ghost.style.left=(ev.clientX-35)+'px'; ghost.style.top=(ev.clientY-49)+'px';
+      // A card played from hand can land directly on a pile, merging into it.
+      // Dropped on a SPLAYED pile specifically, it previews a "tuck" at the
+      // exact fanned position it would land at (see peelCardToBoard's
+      // matching comment for the board-side version of this).
+      const boardRect = document.getElementById('boardViewport').getBoundingClientRect();
+      const overBoard = ev.clientX>=boardRect.left && ev.clientX<=boardRect.right && ev.clientY>=boardRect.top && ev.clientY<=boardRect.bottom;
+      const target = overBoard ? findOverlapTarget({id:null}, ev.clientX, ev.clientY) : null;
+      const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
+      if(splayTarget){
+        clearMergeHighlight();
+        const world = clientToWorld(ev.clientX, ev.clientY);
+        setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x, world.y));
+      } else {
+        clearSplayPreview();
+        if(target) showMergeHighlight(target.id); else clearMergeHighlight();
+      }
     }
     function onUp(ev){
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      clearMergeHighlight();
+      clearSplayPreview();
       if(!dragging) return;
       ghost.remove();
       const boardRect = document.getElementById('boardViewport').getBoundingClientRect();
@@ -3643,13 +3899,26 @@ function wireHandCardDrag(el, idx){
 }
 function playHandCardToBoard(idx, clientX, clientY){
   const cardId = state.hand[idx];
+  // Dropped right on a pile — merge straight into it instead of always
+  // landing as a new standalone piece. A SPLAYED target inserts at the exact
+  // fanned position it was previewing; any other target uses the coarser
+  // top/bottom-only rule a whole-piece drop uses.
+  const target = findOverlapTarget({id:null}, clientX, clientY);
   state.hand.splice(idx,1);
   renderHand();
   syncHandCount();
-  const vp = document.getElementById('boardViewport');
-  const rect = vp.getBoundingClientRect();
-  const worldX = (clientX-rect.left - state.view.x)/state.view.scale - PIECE_W/2;
-  const worldY = (clientY-rect.top - state.view.y)/state.view.scale - PIECE_H/2;
+  if(target){
+    const world = clientToWorld(clientX, clientY);
+    const insertIndex = (target.splayed && target.cardIds.length>1)
+      ? splayInsertIndex(target, world.x, world.y)
+      : (shouldInsertBelow(target, world.y) ? 0 : target.cardIds.length);
+    const cardIds = [...target.cardIds.slice(0,insertIndex), cardId, ...target.cardIds.slice(insertIndex)];
+    const faceStates = [...target.faceStates.slice(0,insertIndex), true, ...target.faceStates.slice(insertIndex)];
+    doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, removedId: null });
+    return;
+  }
+  const world = clientToWorld(clientX, clientY);
+  const worldX = world.x - PIECE_W/2, worldY = world.y - PIECE_H/2;
   doAction('PLACE_PIECE', { id:newPieceId(), x:worldX, y:worldY, cardIds:[cardId], faceStates:[true], owner:state.playerId });
 }
 function reorderHand(fromIdx, toIdx){
@@ -3776,8 +4045,6 @@ document.getElementById('btnToggleRejoin').addEventListener('click', ()=>{
   document.getElementById('rejoinFields').classList.toggle('hidden');
 });
 
-const rememberedSheetId = localStorage.getItem(LS_ROOM_SHEET_ID_KEY);
-if(rememberedSheetId) document.getElementById('roomSheetIdInput').value = rememberedSheetId;
 const rememberedSessionCode = localStorage.getItem(LS_LAST_SESSION_CODE_KEY);
 if(rememberedSessionCode){
   // A remembered session code strongly suggests this is a RECONNECT (refresh, or
@@ -3821,8 +4088,7 @@ document.getElementById('btnEnterRoom').addEventListener('click', async ()=>{
   // onGoogleSignIn) by the time this screen is even reachable.
 
   const rejoinOpen = !document.getElementById('rejoinFields').classList.contains('hidden');
-  const sheetId = document.getElementById('roomSheetIdInput').value.trim();
-  if(!rejoinOpen || !sheetId){
+  if(!rejoinOpen){
     // The default path: straight onto an empty local board, no sync at all yet.
     enterGameScreen();
     return;
@@ -3830,7 +4096,7 @@ document.getElementById('btnEnterRoom').addEventListener('click', async ()=>{
   let code = setupMode==='host' ? randomId(6) : document.getElementById('joinCodeInput').value.trim().toUpperCase();
   if(!code){ err.textContent = 'Enter a session code.'; return; }
   enterGameScreen();
-  connectToRoom({sheetId, code, isHost: setupMode==='host'});
+  connectToRoom({code, isHost: setupMode==='host'});
 });
 
 /* =========================================================================
@@ -3839,10 +4105,9 @@ document.getElementById('btnEnterRoom').addEventListener('click', async ()=>{
    underway (adopts its shared board in place of your local one). Either way
    this can happen at any time, not just at the very start.
    ========================================================================= */
-function connectToRoom({sheetId, code, isHost}){
-  state.roomSheetId = sheetId;
+function connectToRoom({code, isHost}){
+  state.roomSheetId = ROOM_SHEET_ID;
   state.sessionCode = code;
-  localStorage.setItem(LS_ROOM_SHEET_ID_KEY, sheetId);
   localStorage.setItem(LS_LAST_SESSION_CODE_KEY, code);
   state.lastSeq = 0;
   if(isHost){
@@ -3873,7 +4138,6 @@ document.getElementById('connectTabs').addEventListener('click', (e)=>{
 });
 function openConnectModal(mode){
   document.getElementById('connectError').textContent = '';
-  document.getElementById('connectSheetIdInput').value = localStorage.getItem(LS_ROOM_SHEET_ID_KEY) || '';
   document.getElementById('connectJoinCodeInput').value = '';
   document.getElementById('connectTabs').querySelector(`[data-mode="${mode}"]`).click();
   document.getElementById('connectModal').classList.remove('hidden');
@@ -3883,8 +4147,6 @@ document.getElementById('btnJoinRoom').addEventListener('click', ()=> openConnec
 document.getElementById('btnConnectGo').addEventListener('click', ()=>{
   const err = document.getElementById('connectError');
   err.textContent = '';
-  const sheetId = document.getElementById('connectSheetIdInput').value.trim();
-  if(!sheetId){ err.textContent = 'Paste the game room spreadsheet ID.'; return; }
   const isHost = connectMode==='host';
   let code = isHost ? randomId(6) : document.getElementById('connectJoinCodeInput').value.trim().toUpperCase();
   if(!code){ err.textContent = 'Enter a session code.'; return; }
@@ -3893,7 +4155,7 @@ document.getElementById('btnConnectGo').addEventListener('click', ()=>{
     if(!confirm('Joining will replace your current solo board with the room\'s shared board. Continue?')) return;
   }
   document.getElementById('connectModal').classList.add('hidden');
-  connectToRoom({sheetId, code, isHost});
+  connectToRoom({code, isHost});
 });
 </script>
 </body>
