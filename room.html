@@ -448,11 +448,15 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    direction and spacing (every deeper card just follows at a multiple of that
    same distance) — highlighted with an accent outline and glow so it's obvious
    at a glance which card does that job. */
-.splay-card.splay-adjust-target{outline:2px solid var(--accent);outline-offset:2px;box-shadow:0 0 0 5px var(--accent-soft),var(--shadow);cursor:move;}
+.splay-card.splay-adjust-target{outline:2px solid var(--accent);outline-offset:2px;box-shadow:0 0 0 5px var(--accent-soft),var(--shadow);}
 /* Placeholder slot shown while a peeled/played card is hovering a splay,
    previewing exactly where it would land (see splayPreview / splayInsertIndex)
    — never interactive, just a visual "it goes here" cue. */
 .splay-card.splay-gap{background:var(--accent-soft);border:2px dashed var(--accent);box-shadow:none;pointer-events:none;}
+/* A tuck preview carrying a real card face (see splayPreview/setSplayPreview) —
+   the dragged card itself, shown sitting in its would-land slot, rather than
+   a blank placeholder. Still dashed so it still reads as "not committed yet". */
+.splay-card.splay-gap.splay-gap-real{background:transparent;}
 
 /* ---------- History ---------- */
 .history-row{font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);}
@@ -1700,6 +1704,13 @@ function renderBoard(){
   world.innerHTML='';
   renderZones(); // rendered first so they sit visually behind pieces/tokens
   state.pieces.forEach(p=>{
+    // A single card currently tucked into a splayed pile's fan as a live
+    // preview (see setSplayPreview/driveWholePieceDrag) isn't rendered as its
+    // own floating piece at all while that's true — it's shown for real
+    // inside the target pile's splay branch below instead, and reappears as
+    // a normal piece the instant the drag moves away from the target (which
+    // clears the preview and re-renders).
+    if(splayPreview && splayPreview.sourceId===p.id) return;
     const el = document.createElement('div');
     el.className='piece' + (p.splayed?' splayed':'') + (state.selectedIds.has(p.id)?' selected':'') + (p.kind==='image'?' image-piece':'');
     el.style.left = p.x+'px'; el.style.top = p.y+'px';
@@ -1768,7 +1779,16 @@ function renderBoard(){
       }).join('');
       if(preview){
         const {left, top} = offsetFor(n-preview.insertIndex);
-        html += `<div class="splay-card splay-gap" style="left:${left}px;top:${top}px;"></div>`;
+        // When the preview carries an actual card (a single dragged card —
+        // see setSplayPreview/driveWholePieceDrag), show that card's own face
+        // sitting right in its would-land slot instead of a blank
+        // placeholder — the dragged piece itself is skipped from its own
+        // normal rendering while this is showing (see the top of
+        // renderBoard). A multi-card whole-pile drag has no single face to
+        // show, so it still falls back to the plain dashed placeholder.
+        const cls = 'splay-card splay-gap' + (preview.cardId ? ' splay-gap-real' : '');
+        const inner = preview.cardId ? cardFaceHtml(preview.cardId, preview.faceUp) : '';
+        html += `<div class="${cls}" style="left:${left}px;top:${top}px;">${inner}</div>`;
       }
       el.innerHTML = html + `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`;
       topCardOffset = {left:0, top:0}; // the top card is always the anchor now
@@ -1776,8 +1796,8 @@ function renderBoard(){
         const i = Number(cardEl.dataset.i);
         wireHoverPreview(cardEl, ()=>({card:cardsById.get(p.cardIds[i]), faceUp:p.faceStates[i]}));
         if(i===adjustIndex){
-          cardEl.title = 'Drag to set splay direction and spacing';
-          wireSplayAdjustDrag(cardEl, p); // this one card sets the fan for the whole pile — see above
+          cardEl.title = 'Drag the highlighted edge to set spacing; drag anywhere else on this card to peel it off';
+          wireSplayAdjustDrag(cardEl, p, i); // this one card sets the fan for the whole pile — see above
         } else {
           wirePeelInteraction(cardEl, p, i); // every other visible card peels off individually when dragged
         }
@@ -2071,35 +2091,41 @@ function sendPieceToHand(p){
 }
 // Pulls exactly one card (by index — the top card, or, on a splayed pile,
 // whichever one was grabbed) out of a pile IMMEDIATELY — the moment a peel
-// drag actually starts, not whenever it eventually lands — so the source
-// pile's count/render updates the instant the card is picked up, same as
-// picking a real card off a real stack. Returns everything the drag still
-// needs to finish landing it (see peelDragTick/peelDragDrop) and to undo the
-// whole gesture as one step once it does; null if the index was already
-// stale (shouldn't normally happen — nothing else can touch this pile mid-
-// drag on the same client).
-function beginPeel(p, cardIndex){
+// drag actually starts, not whenever it eventually lands — as an actual
+// real, independent piece on the board (not a ghost) at the point it was
+// grabbed, so the source pile's count/render updates the instant the card is
+// picked up AND the card itself is, from that point on, a normal floating
+// piece: see driveWholePieceDrag/finalizeWholePieceDrop, which take it from
+// here exactly the same way they drive any other whole-piece drag (hand,
+// merge, or tucking into a splayed pile showing its own face). Returns a
+// ctx ready to hand straight to driveWholePieceDrag; its `sourceRestore`
+// is what finalizeWholePieceDrop composes onto the landing undo so a single
+// Undo reverses the whole gesture, pickup and landing together. Null if the
+// index was already stale (shouldn't normally happen — nothing else can
+// touch this pile mid-drag on the same client).
+function beginPeelAsPiece(p, cardIndex, clientX, clientY){
   if(!p || cardIndex<0 || cardIndex>=p.cardIds.length) return null;
   const cardId = p.cardIds[cardIndex];
   const faceUp = p.faceStates[cardIndex];
   const remainingCardIds = p.cardIds.filter((_,i)=>i!==cardIndex);
   const remainingFaceStates = p.faceStates.filter((_,i)=>i!==cardIndex);
   const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates];
-  doAction('DRAW_TOP', { id:p.id, remainingCardIds, remainingFaceStates, destination:'board' });
-  return { sourceId:p.id, cardId, faceUp, originalCardIds, originalFaceStates };
-}
-// Lands an already-picked-up peeled card (see beginPeel) in the hand instead
-// of onto the board.
-function placePeeledCardToHand(pick){
-  state.hand.push(pick.cardId);
-  renderHand();
-  syncHandCount();
-  setUndo(()=>{
-    state.hand.pop();
-    renderHand();
-    syncHandCount();
-    doAction('RESTORE_PIECE_CARDS', {id:pick.sourceId, cardIds:pick.originalCardIds, faceStates:pick.originalFaceStates});
-  });
+  const sourceId = p.id;
+  doAction('DRAW_TOP', { id:sourceId, remainingCardIds, remainingFaceStates, destination:'board' });
+  const world = clientToWorld(clientX, clientY);
+  const x = snapCoord(world.x - PIECE_W/2), y = snapCoord(world.y - PIECE_H/2);
+  const newId = newPieceId();
+  doAction('PLACE_PIECE', { id:newId, x, y, cardIds:[cardId], faceStates:[faceUp], owner:state.playerId });
+  const newPiece = state.pieces.get(newId);
+  if(!newPiece) return null;
+  return {
+    p:newPiece, el:null, ghost:null, tucked:false, startX:x, startY:y,
+    pickupClientX:clientX, pickupClientY:clientY,
+    sourceRestore: ()=>{
+      doAction('REMOVE_PIECE', {id:newId});
+      doAction('RESTORE_PIECE_CARDS', {id:sourceId, cardIds:originalCardIds, faceStates:originalFaceStates});
+    },
+  };
 }
 // Shared landing logic for a whole-piece move (used by both a plain drag on a
 // single-card/image piece, and a drag from the "move whole stack" handle on a
@@ -2140,75 +2166,113 @@ function repositionAttachedTokens(pieceId){
     if(el){ el.style.left = tx+'px'; el.style.top = ty+'px'; }
   });
 }
+// Shared engine behind every "this is now a real, independent piece
+// following the cursor" drag — a piece that already existed before the drag
+// (wireWholeInteraction) and a piece that was JUST created the instant this
+// particular drag started (peeling a card off a pile, or playing one from
+// hand — see beginPeelAsPiece) both drive through the exact same code from
+// here on, so they look and behave identically: hand-drop feedback, a merge
+// highlight over an ordinary pile, or — hovering a SPLAYED pile — the piece
+// itself relocating into the fan at the exact previewed slot, showing its
+// own face there (see setSplayPreview/renderBoard) instead of a separate
+// ghost-plus-silhouette. Moving back out before releasing un-tucks it
+// cleanly and it resumes following the cursor as a normal floating piece.
+//
+// `ctx` is `{p, el, ghost, tucked, startX, startY}` — `p` is the piece being
+// dragged, `startX`/`startY` its world position at the moment THIS drag
+// began (not necessarily its very first placement — for a freshly-peeled
+// card that's the point it was picked up), and `el`/`ghost`/`tucked` are
+// live drag state this function owns and updates in place.
+function driveWholePieceDrag(ctx, dx, dy, ev){
+  const p = state.pieces.get(ctx.p.id);
+  if(!p) return; // consumed by something else mid-drag — shouldn't normally happen
+  const canGoToHand = p.kind!=='image' && p.cardIds.length===1;
+  if(canGoToHand && isOverHandPanel(ev.clientX, ev.clientY)){
+    if(clearSplayPreview()) ctx.tucked = false; // no-op if it wasn't tucked
+    if(ctx.ghost){ removeDragGhost(ctx.ghost); ctx.ghost=null; } // the board-space ghost has no meaning once we're over the hand
+    ctx.el = null;
+    clearMergeHighlight();
+    showHandDropFeedback(p.cardIds[0], ev.clientX, ev.clientY);
+    return;
+  }
+  clearHandDropFeedback();
+  const d = screenDeltaToWorldDelta(dx, dy);
+  p.x = ctx.startX+d.x; p.y = ctx.startY+d.y;
+  const target = p.kind==='image' ? null : findOverlapTarget(p, ev.clientX, ev.clientY);
+  const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
+  const world = clientToWorld(ev.clientX, ev.clientY);
+  if(splayTarget){
+    // Close enough to tuck: preview it with this piece's OWN card face (it's
+    // always exactly one card here — image pieces never reach this branch,
+    // and everything else that drives through this function is single-card),
+    // and hide the loose floating piece entirely while that's showing — see
+    // renderBoard's splayPreview.sourceId check — rather than also keeping a
+    // ghost/silhouette around.
+    clearMergeHighlight();
+    const insertIndex = splayInsertIndex(splayTarget, world.x, world.y);
+    setSplayPreview(splayTarget.id, insertIndex, {sourceId:p.id, cardId:p.cardIds[0], faceUp:p.faceStates[0]});
+    if(ctx.ghost){ removeDragGhost(ctx.ghost); ctx.ghost=null; }
+    ctx.el = null;
+    ctx.tucked = true;
+    return;
+  }
+  // Not (or no longer) close enough to tuck — clearing a preview that was
+  // showing rebuilds the board (the piece reappears in its own right there),
+  // which drops any DOM reference we were holding; reacquire it below.
+  if(clearSplayPreview()) ctx.tucked = false;
+  if(target) showMergeHighlight(target.id); else clearMergeHighlight();
+  if(!ctx.el) ctx.el = document.querySelector(`.piece[data-id="${p.id}"]`);
+  if(!ctx.el) return;
+  if(!ctx.ghost) ctx.ghost = createDragGhost();
+  ctx.el.classList.add('dragging-piece');
+  ctx.el.style.left=p.x+'px'; ctx.el.style.top=p.y+'px';
+  ctx.el.classList.toggle('insert-below', !!target && shouldInsertBelow(target, world.y));
+  updateDragGhost(ctx.ghost, p.x, p.y, pieceW(p), pieceH(p));
+  repositionAttachedTokens(p.id);
+}
+// Lands a drag driven by driveWholePieceDrag, whichever gesture started it —
+// hand if it's hovering the hand panel, otherwise finishWholeMove's usual
+// merge-or-plain-place logic (which already knows about a splayed target's
+// exact tuck slot). If `ctx.sourceRestore` is set (see beginPeelAsPiece —
+// this piece didn't exist before this drag), it's composed onto whatever
+// undo finishWholeMove/sendPieceToHand just set, so a single Undo reverses
+// the WHOLE gesture — the pickup and wherever it landed — in one step.
+function finalizeWholePieceDrop(ctx, ev){
+  const p = state.pieces.get(ctx.p.id);
+  clearMergeHighlight();
+  clearSplayPreview();
+  if(ctx.ghost) removeDragGhost(ctx.ghost);
+  if(ctx.el) ctx.el.classList.remove('dragging-piece', 'insert-below');
+  if(!p) return;
+  const canGoToHand = p.kind!=='image' && p.cardIds.length===1;
+  if(canGoToHand && isOverHandPanel(ev.clientX, ev.clientY)){
+    clearHandDropFeedback();
+    sendPieceToHand(p);
+  } else {
+    clearHandDropFeedback();
+    finishWholeMove(p, ctx.startX, ctx.startY, ev.clientX, ev.clientY);
+  }
+  if(ctx.sourceRestore){
+    const inner = state.undoFn, restore = ctx.sourceRestore;
+    state.undoFn = ()=>{ if(inner) inner(); restore(); };
+  }
+}
 // Whole-piece click+drag — used for image pieces and single-card piles, where
 // there's nothing to "peel" so a plain drag just moves the one thing there is.
 function wireWholeInteraction(el, p){
-  let startX, startY, ghost=null;
+  let ctx = null;
   wirePressDragClick(el, {
     onDown: (e)=>{
       if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
       if(p.locked) return false;
       if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
-      startX = p.x; startY = p.y;
+      ctx = { p, el, ghost:null, tucked:false, startX:p.x, startY:p.y };
     },
-    onMove: (dx, dy, ev)=>{
-      const canGoToHand = p.kind!=='image' && p.cardIds.length===1;
-      if(canGoToHand && isOverHandPanel(ev.clientX, ev.clientY)){
-        if(ghost){ removeDragGhost(ghost); ghost=null; } // the board-space ghost has no meaning once we're over the hand
-        clearMergeHighlight();
-        clearSplayPreview();
-        showHandDropFeedback(p.cardIds[0], ev.clientX, ev.clientY);
-        return;
-      }
-      clearHandDropFeedback();
-      const d = screenDeltaToWorldDelta(dx, dy);
-      p.x = startX+d.x; p.y = startY+d.y;
-      const target = p.kind==='image' ? null : findOverlapTarget(p, ev.clientX, ev.clientY);
-      const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
-      const world = clientToWorld(ev.clientX, ev.clientY);
-      // Dropped right on top of another pile, this piece merges into it — a
-      // SPLAYED target previews the exact fanned "tuck" position (see
-      // splayInsertIndex); any other target just shows the coarser
-      // top/bottom-only highlight. Either way, previewing a tuck rebuilds the
-      // board (to open the gap), which destroys and recreates both this
-      // piece's own element and the drag ghost — reacquire both when that
-      // happens, since window-level drag tracking (wirePressDragClick) keeps
-      // running across the swap but stale DOM references wouldn't.
-      let rebuilt = false;
-      if(splayTarget){
-        clearMergeHighlight();
-        rebuilt = setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x, world.y));
-      } else {
-        rebuilt = clearSplayPreview();
-        if(target) showMergeHighlight(target.id); else clearMergeHighlight();
-      }
-      if(rebuilt){
-        el = document.querySelector(`.piece[data-id="${p.id}"]`) || el;
-        if(ghost) removeDragGhost(ghost);
-        ghost = createDragGhost();
-      } else if(!ghost){
-        ghost = createDragGhost();
-      }
-      el.classList.add('dragging-piece');
-      el.style.left=p.x+'px'; el.style.top=p.y+'px';
-      el.classList.toggle('insert-below', !!target && !splayTarget && shouldInsertBelow(target, world.y));
-      updateDragGhost(ghost, p.x, p.y, pieceW(p), pieceH(p));
-      repositionAttachedTokens(p.id);
-    },
+    onMove: (dx, dy, ev)=> driveWholePieceDrag(ctx, dx, dy, ev),
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
-      removeDragGhost(ghost); ghost=null;
-      clearMergeHighlight();
-      clearSplayPreview();
-      el.classList.remove('dragging-piece', 'insert-below');
-      const canGoToHand = p.kind!=='image' && p.cardIds.length===1;
-      if(canGoToHand && isOverHandPanel(ev.clientX, ev.clientY)){
-        clearHandDropFeedback();
-        sendPieceToHand(p);
-        return;
-      }
-      clearHandDropFeedback();
-      finishWholeMove(p, startX, startY, ev.clientX, ev.clientY);
+      finalizeWholePieceDrop(ctx, ev);
+      ctx = null;
     },
   });
 }
@@ -2264,11 +2328,14 @@ function wireGroupHandleDrag(handleEl, p){
 }
 // Click+drag on ONE specific visible card of a multi-card pile — a plain click
 // still opens the pile's radial menu (same menu regardless of which card you
-// clicked, since the actions apply to the pile as a whole), but a drag peels
-// exactly that card off into its own new piece, following the cursor with a
-// single-card ghost preview and landing at the drop point.
+// clicked, since the actions apply to the pile as a whole), but a drag makes
+// that exact card a real, independent piece the instant the drag starts (see
+// beginPeelAsPiece) and drives it exactly like any other whole-piece drag
+// from then on (see driveWholePieceDrag/finalizeWholePieceDrop) — following
+// the cursor, merging into whatever pile it's dropped on, or tucking into a
+// splayed pile's fan showing its own face at the exact previewed slot.
 function wirePeelInteraction(cardEl, p, cardIndex){
-  let ghost=null, pick=null;
+  let ctx = null;
   wirePressDragClick(cardEl, {
     onDown: (e)=>{
       if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
@@ -2276,96 +2343,15 @@ function wirePeelInteraction(cardEl, p, cardIndex){
       if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
     },
     onMove: (dx, dy, ev)=>{
-      if(!pick){ pick = beginPeel(p, cardIndex); if(!pick) return; }
-      ghost = peelDragTick(pick, ev, ghost);
+      if(!ctx){ ctx = beginPeelAsPiece(p, cardIndex, ev.clientX, ev.clientY); if(!ctx) return; }
+      driveWholePieceDrag(ctx, ev.clientX-ctx.pickupClientX, ev.clientY-ctx.pickupClientY, ev);
     },
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
-      if(!pick) return;
-      peelDragDrop(pick, ghost, ev); ghost=null; pick=null;
+      if(!ctx) return;
+      finalizeWholePieceDrop(ctx, ev);
+      ctx = null;
     },
-  });
-}
-// Shared by wirePeelInteraction (dragging one visible card of a pile off) and
-// wireStackInteraction's peel branch (dragging the middle of an unsplayed
-// pile) — the actual drag-tick visuals for an already-picked-up peeled card
-// (see beginPeel — it's already out of its source pile by the time this
-// runs) following the cursor: the ghost preview, and (see
-// placePeeledCardToBoard's matching comment) the merge highlight / splay
-// "tuck" preview when it's hovering a pile it could land on.
-function peelDragTick(pick, ev, ghost){
-  if(isOverHandPanel(ev.clientX, ev.clientY)){
-    if(ghost){ removeDragGhost(ghost); ghost=null; }
-    clearMergeHighlight();
-    clearSplayPreview();
-    showHandDropFeedback(pick.cardId, ev.clientX, ev.clientY);
-    return ghost;
-  }
-  clearHandDropFeedback();
-  const world = clientToWorld(ev.clientX, ev.clientY);
-  const target = findOverlapTarget({id:pick.sourceId}, ev.clientX, ev.clientY);
-  const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
-  let rebuilt = false;
-  if(splayTarget){
-    clearMergeHighlight();
-    rebuilt = setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x, world.y));
-  } else {
-    rebuilt = clearSplayPreview();
-    if(target) showMergeHighlight(target.id); else clearMergeHighlight();
-  }
-  if(rebuilt){ if(ghost) removeDragGhost(ghost); ghost = createDragGhost(); }
-  else if(!ghost){ ghost = createDragGhost(); }
-  updateDragGhost(ghost, world.x-PIECE_W/2, world.y-PIECE_H/2, PIECE_W, PIECE_H);
-  return ghost;
-}
-// Shared drop handling for the same two gestures peelDragTick serves.
-function peelDragDrop(pick, ghost, ev){
-  removeDragGhost(ghost);
-  clearMergeHighlight();
-  clearSplayPreview();
-  if(isOverHandPanel(ev.clientX, ev.clientY)){
-    clearHandDropFeedback();
-    placePeeledCardToHand(pick);
-    return;
-  }
-  clearHandDropFeedback();
-  placePeeledCardToBoard(pick, ev.clientX, ev.clientY);
-}
-// Lands an already-picked-up peeled card (see beginPeel) as its own new piece
-// at the given screen point, preserving that card's own current face-up state
-// (unlike "Draw to Hand"/"Draw to Board" in the radial menu, which always
-// deals face-down — here you can SEE which face you're grabbing, especially
-// on a splay, so it should land showing that same face).
-function placePeeledCardToBoard(pick, clientX, clientY){
-  const {sourceId, cardId, faceUp, originalCardIds, originalFaceStates} = pick;
-  const world = clientToWorld(clientX, clientY);
-  // Dropped right on top of another pile (any pile but the one it's being
-  // peeled from) — merge straight into it, instead of always landing as a
-  // new standalone piece. A SPLAYED target inserts at the exact fanned
-  // position it was previewing (see splayInsertIndex); any other target uses
-  // the coarser top/bottom-only rule a whole-piece drop uses.
-  const target = findOverlapTarget({id:sourceId}, clientX, clientY);
-  if(target){
-    const insertIndex = (target.splayed && target.cardIds.length>1)
-      ? splayInsertIndex(target, world.x, world.y)
-      : (shouldInsertBelow(target, world.y) ? 0 : target.cardIds.length);
-    const targetOldCardIds = [...target.cardIds], targetOldFaceStates = [...target.faceStates];
-    const cardIds = [...target.cardIds.slice(0,insertIndex), cardId, ...target.cardIds.slice(insertIndex)];
-    const faceStates = [...target.faceStates.slice(0,insertIndex), faceUp, ...target.faceStates.slice(insertIndex)];
-    doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, removedId: null });
-    setUndo(()=>{
-      doAction('RESTORE_PIECE_CARDS', {id:target.id, cardIds:targetOldCardIds, faceStates:targetOldFaceStates});
-      doAction('RESTORE_PIECE_CARDS', {id:sourceId, cardIds:originalCardIds, faceStates:originalFaceStates});
-    });
-    return;
-  }
-  let dropX = snapCoord(world.x - PIECE_W/2), dropY = snapCoord(world.y - PIECE_H/2);
-  ({x:dropX, y:dropY} = applyZoneSnap(dropX, dropY, PIECE_W, PIECE_H));
-  const newId = newPieceId();
-  doAction('PLACE_PIECE', { id:newId, x:dropX, y:dropY, cardIds:[cardId], faceStates:[faceUp], owner:state.playerId });
-  setUndo(()=>{
-    doAction('REMOVE_PIECE', {id:newId});
-    doAction('RESTORE_PIECE_CARDS', {id:sourceId, cardIds:originalCardIds, faceStates:originalFaceStates});
   });
 }
 // Moves every currently-selected (and unlocked) piece by the same delta as the
@@ -2437,16 +2423,29 @@ function findOverlapTarget(draggedPiece, clientX, clientY){
 // DRAW_TOP/MERGE_PIECES use: 0 = new bottom card, cardIds.length = new top
 // card). renderBoard()'s splayed-pile branch reads it to open a preview gap;
 // it's never itself a source of truth for real state.
+// cardInfo, when given, is {sourceId, cardId, faceUp} for a single dragged
+// card — sourceId is the piece currently being dragged (skipped from its own
+// normal rendering, see renderBoard) and cardId/faceUp are what's drawn for
+// real in the preview slot inside the target's fan (see renderBoard's
+// splayed-pile branch). Omit it (or pass null/undefined) for the old blank
+// dashed-placeholder preview, still used for a multi-card whole-pile drag
+// where there's no single face to show.
 let splayPreview = null;
-function setSplayPreview(targetId, insertIndex){
-  if(splayPreview && splayPreview.targetId===targetId && splayPreview.insertIndex===insertIndex) return;
-  splayPreview = {targetId, insertIndex};
+function setSplayPreview(targetId, insertIndex, cardInfo){
+  const next = cardInfo
+    ? {targetId, insertIndex, sourceId:cardInfo.sourceId, cardId:cardInfo.cardId, faceUp:cardInfo.faceUp}
+    : {targetId, insertIndex, sourceId:null, cardId:null, faceUp:null};
+  if(splayPreview && splayPreview.targetId===next.targetId && splayPreview.insertIndex===next.insertIndex
+     && splayPreview.sourceId===next.sourceId && splayPreview.cardId===next.cardId) return false;
+  splayPreview = next;
   renderBoard();
+  return true;
 }
 function clearSplayPreview(){
-  if(!splayPreview) return;
+  if(!splayPreview) return false;
   splayPreview = null;
   renderBoard();
+  return true;
 }
 // Where a loose card hovering at (worldX,worldY) would land in a splayed
 // pile's fan. Near the anchor (the top card) this naturally resolves to
@@ -2723,7 +2722,7 @@ function cursorForSplayEdge(dir){ return (dir==='left'||dir==='right') ? 'ew-res
 // snap-back), then starting a fresh drag from a different edge. Grabbing
 // anywhere else peels the top card off, same as always.
 function wireStackInteraction(el, p){
-  let mode=null, edgeDir=null, old=null, ghost=null, pick=null;
+  let mode=null, edgeDir=null, old=null, ctx=null;
   // Hover feedback (no drag in progress yet): the cursor previews which edge
   // (if any) a mousedown here would begin a splay from, so the "grab a strip
   // around the edge" affordance is discoverable before you commit to it. Off
@@ -2763,8 +2762,8 @@ function wireStackInteraction(el, p){
         previewSplay(p.id, true, edgeDir, spacing);
         return;
       }
-      if(!pick){ pick = beginPeel(p, p.cardIds.length-1); if(!pick) return; }
-      ghost = peelDragTick(pick, ev, ghost);
+      if(!ctx){ ctx = beginPeelAsPiece(p, p.cardIds.length-1, ev.clientX, ev.clientY); if(!ctx) return; }
+      driveWholePieceDrag(ctx, ev.clientX-ctx.pickupClientX, ev.clientY-ctx.pickupClientY, ev);
     },
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
@@ -2781,45 +2780,102 @@ function wireStackInteraction(el, p){
         }
         return;
       }
-      if(!pick) return;
-      peelDragDrop(pick, ghost, ev); ghost=null; pick=null;
+      if(!ctx) return;
+      finalizeWholePieceDrop(ctx, ev);
+      ctx = null;
     },
   });
 }
-// The "2nd card down" of a splayed pile (depth 1 from the top) is the one you
-// drag to set the whole fan's direction and spacing in one gesture — every
-// deeper card just follows at a proportional multiple of the same distance
-// (see renderBoard). The drag snaps to whichever axis moved further (never
-// diagonal), same min/max range as before.
-function wireSplayAdjustDrag(cardEl, p){
-  let old;
+// Splay-card-local geometry for wireSplayAdjustDrag: the adjust-target card
+// (the "2nd card down", always exactly one spacing-unit out from the anchor
+// — depth 1) is only in "adjust the fan" territory when the grab lands
+// within SPLAY_EDGE_ZONE of the ONE edge matching the pile's CURRENT splay
+// direction — everywhere else on that same card (including its other three
+// edges) falls through to an ordinary peel, same as any other visible card
+// in the pile. Reuses localOffsetInPiece (the piece's own unrotated local
+// box) and just shifts by this one card's own known offset from the anchor.
+function isOnSplayAdjustEdge(p, clientX, clientY){
+  const dir = p.splayDir || 'right';
+  const spacing = p.splaySpacing || 36;
+  const pieceLocal = localOffsetInPiece(p, clientX, clientY);
+  let left=0, top=0;
+  if(dir==='right') left = spacing;
+  else if(dir==='left') left = -spacing;
+  else if(dir==='down') top = spacing;
+  else top = -spacing; // 'up'
+  const cardLocal = { x: pieceLocal.x - left, y: pieceLocal.y - top };
+  const zone = SPLAY_EDGE_ZONE / state.view.scale;
+  if(dir==='left') return cardLocal.x <= zone;
+  if(dir==='right') return (PIECE_W - cardLocal.x) <= zone;
+  if(dir==='up') return cardLocal.y <= zone;
+  return (PIECE_H - cardLocal.y) <= zone; // 'down'
+}
+// The "2nd card down" of a splayed pile (depth 1 from the top): grabbing the
+// SAME edge that began the splay (matching p.splayDir, see
+// isOnSplayAdjustEdge) extends or collapses the existing fan along that one
+// LOCKED axis — it can never switch axis or flip direction mid-adjust; to
+// change direction, first collapse fully back to unsplayed (drag that edge
+// back past SPLAY_UNSPLAY_THRESHOLD), then start a fresh splay from a
+// different edge via wireStackInteraction. Grabbing anywhere else on this
+// card is an ordinary peel — see beginPeelAsPiece/driveWholePieceDrag.
+function wireSplayAdjustDrag(cardEl, p, cardIndex){
+  let mode=null, old=null, ctx=null;
+  cardEl.addEventListener('mousemove', (e)=>{
+    if(mode) return;
+    const onEdge = isOnSplayAdjustEdge(p, e.clientX, e.clientY);
+    cardEl.style.cursor = onEdge ? cursorForSplayEdge(p.splayDir||'right') : '';
+  });
+  cardEl.addEventListener('mouseleave', ()=>{ if(!mode) cardEl.style.cursor = ''; });
   wirePressDragClick(cardEl, {
     onDown: (e)=>{
+      if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
       if(p.locked) return false;
-      old = { splayed:true, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
+      if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
+      const onEdge = isOnSplayAdjustEdge(p, e.clientX, e.clientY);
+      mode = onEdge ? 'adjust' : 'peel';
+      if(mode==='adjust'){
+        old = { splayed:true, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
+        // Locked for the whole drag, same reasoning as wireStackInteraction's
+        // own edge-drag lock — see the force-cursor-ew/ns CSS.
+        document.body.classList.add((old.dir==='left'||old.dir==='right') ? 'force-cursor-ew' : 'force-cursor-ns');
+      }
     },
-    onMove: (dx, dy)=>{
-      const d = screenDeltaToWorldDelta(dx, dy);
-      let dir;
-      if(Math.abs(d.x) >= Math.abs(d.y)) dir = d.x>=0 ? 'right' : 'left';
-      else dir = d.y>=0 ? 'down' : 'up';
-      const mag = Math.max(Math.abs(d.x), Math.abs(d.y));
-      const spacing = Math.max(SPLAY_MIN, Math.min(splayMaxFor(dir), mag));
-      previewSplay(p.id, true, dir, spacing);
+    onMove: (dx, dy, ev)=>{
+      if(mode==='adjust'){
+        const d = screenDeltaToWorldDelta(dx, dy);
+        const dir = old.dir; // locked — never recomputed from the drag vector
+        let mag;
+        if(dir==='left') mag = -d.x;
+        else if(dir==='right') mag = d.x;
+        else if(dir==='up') mag = -d.y;
+        else mag = d.y; // 'down'
+        const spacing = Math.max(SPLAY_MIN, Math.min(splayMaxFor(dir), mag));
+        previewSplay(p.id, true, dir, spacing);
+        return;
+      }
+      if(!ctx){ ctx = beginPeelAsPiece(p, cardIndex, ev.clientX, ev.clientY); if(!ctx) return; }
+      driveWholePieceDrag(ctx, ev.clientX-ctx.pickupClientX, ev.clientY-ctx.pickupClientY, ev);
     },
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
-    onDrop: ()=>{
-      const p2 = state.pieces.get(p.id); if(!p2) return;
-      // Letting go with the 2nd card dragged back in close to the anchor would
-      // otherwise leave a nearly-closed fan where that same card is almost
-      // entirely covered by the top card next time — effectively untouchable.
-      // Reading that gesture as "close it" and just unsplaying is both what the
-      // player usually means and the only way to keep every card reachable.
-      if(p2.splaySpacing <= SPLAY_UNSPLAY_THRESHOLD){
-        commitSplay(p.id, false, p2.splayDir, p2.splaySpacing, old);
-      } else {
-        commitSplay(p.id, true, p2.splayDir, p2.splaySpacing, old);
+    onDrop: (dx, dy, ev)=>{
+      if(mode==='adjust'){
+        document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
+        const p2 = state.pieces.get(p.id); if(!p2) return;
+        // Letting go with the fan dragged back in close to the anchor would
+        // otherwise leave a nearly-closed fan where that same card is almost
+        // entirely covered by the top card next time — effectively untouchable.
+        // Reading that gesture as "close it" and just unsplaying is both what the
+        // player usually means and the only way to keep every card reachable.
+        if(p2.splaySpacing <= SPLAY_UNSPLAY_THRESHOLD){
+          commitSplay(p.id, false, p2.splayDir, p2.splaySpacing, old);
+        } else {
+          commitSplay(p.id, true, p2.splayDir, p2.splaySpacing, old);
+        }
+        return;
       }
+      if(!ctx) return;
+      finalizeWholePieceDrop(ctx, ev);
+      ctx = null;
     },
   });
 }
@@ -3972,11 +4028,18 @@ function wireHandCardDrag(el, idx){
       const target = overBoard ? findOverlapTarget({id:null}, ev.clientX, ev.clientY) : null;
       const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
       if(splayTarget){
+        // Same "the card itself tucks in, no separate silhouette" preview as
+        // a peeled/whole-piece drag (see driveWholePieceDrag) — the card's
+        // real face renders right in its would-land slot inside the splay
+        // (see renderBoard), so the cursor-follow ghost is hidden while that's
+        // showing instead of both being visible at once.
         clearMergeHighlight();
         const world = clientToWorld(ev.clientX, ev.clientY);
-        setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x, world.y));
+        setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x, world.y), {sourceId:null, cardId:pick.cardId, faceUp:true});
+        ghost.style.visibility = 'hidden';
       } else {
         clearSplayPreview();
+        ghost.style.visibility = '';
         if(target) showMergeHighlight(target.id); else clearMergeHighlight();
       }
     }
