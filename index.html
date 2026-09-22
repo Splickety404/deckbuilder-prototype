@@ -1103,10 +1103,19 @@ async function onGoogleSignIn(response){
     localStorage.setItem(LS_LAST_EMAIL_KEY, who.email);
     document.getElementById('signinAccountLine').textContent = who.email;
     document.getElementById('btnChangeGame').style.display = who.games.length>1 ? 'inline-flex' : 'none';
+    setSigninStatus('');
 
     if(who.games.length===1){
       selectGame(who.games[0]);
     } else {
+      // selectGame() (called when the user picks from the modal below) hides the
+      // sign-in gate itself, but that's too late here: with more than one game, the
+      // gate has to come down FIRST so the game-select modal — which sits at a lower
+      // z-index than the gate — is actually visible and clickable, rather than being
+      // fully rendered but invisibly stuck underneath the still-showing gate (exactly
+      // what "gets stuck checking access" looked like: the modal was there the whole
+      // time, just hidden behind the gate that never went away).
+      hideSigninGate();
       // More than one game available — ask every time, rather than silently
       // remembering the last choice, so switching is never surprising.
       openGameSelectModal(selectGame);
