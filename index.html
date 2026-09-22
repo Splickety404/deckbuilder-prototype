@@ -1043,6 +1043,7 @@ async function loadData(silent){
           rows: result.rows,
           setName: result.setName || entry.label,
           folderId: entry.folderId,
+          sheetId: result.sheetId, // the set's actual Google Sheet file id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.gs indexes by sheet id, never folder id)
           genericBackUrl: result.genericBackUrl || '',
           genericBacks: result.genericBacks || {},
           pcio: result.pcio || {found:false},
@@ -1063,7 +1064,13 @@ async function loadData(silent){
     state.genericBacks = backsSrc ? backsSrc.genericBacks : { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' };
     state.pcio = (rawSetResults.find(s=>s.pcio && s.pcio.found) || {}).pcio || {found:false};
 
-    const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.folderId, state.isEchoMode));
+    // Every card's own _sheetId (see processRawRows) has to be the actual Google
+    // Sheet file id (s.sheetId), NOT the set's folder id (s.folderId) — this was
+    // passing folderId here, which is fine for everything the deckbuilder itself
+    // does (folderId already uniquely identifies a set internally), but meant
+    // every deck exported to JSON carried a bogus "sheetId" the game room app
+    // could never actually look up, failing with "Unknown sheet" on import.
+    const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.sheetId, state.isEchoMode));
     const rows = mergeCardSets(setCardLists);
 
     state.cards = rows;
