@@ -476,7 +476,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     <div class="btn" id="btnLoadDeck">Load ▾</div>
     <div class="btn btn-accent" id="btnExport">Export ▾</div>
     <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
-    <div class="btn" id="btnDownloadPcio">Download Board</div>
+    <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
     <div class="btn btn-sm" id="btnManageSets" title="Which card sets you have access to">Sets</div>
     <div class="btn btn-sm" id="btnChangeGame" title="Switch to a different game" style="display:none;">Game ▾</div>
     <div class="btn btn-icon" id="btnHelp" title="Help">❔</div>
@@ -798,7 +798,8 @@ const state = {
   lastClickIndex: null,
   visibleCardsOrder: [],
   genericBacks: { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' }, // Echo mode's own per-type card backs, for exports only
-  genericBackUrl: '', // generic (non-Echo) mode's single shared "back.png"/"back.pdf" per set, for exports only
+  genericBackUrl: '', // generic (non-Echo) mode's single shared "back.png"/"back.pdf" per game, for exports only
+  pcio: {found:false}, // this game's .pcio board file, if it has one — see applyPcioUI()
   flippedCards: new Set(), // ids currently showing their real back (double-sided cards only)
 };
 // Whichever key state.decks/state.filtersByType should currently be read/written
@@ -919,7 +920,7 @@ async function fetchSetData(folderId){
     });
   }
   if(!result.ok) throw new Error(result.error || 'Unknown error scanning that folder.');
-  return result; // {ok:true, setName, rows}
+  return result; // {ok:true, setName, sheetId, rows, genericBackUrl, genericBacks, pcio}
 }
 
 // Asks the server who this ID token belongs to, and which GAMES (each with only the
@@ -946,7 +947,7 @@ async function fetchWhoAmI(idToken){
     });
   }
   if(!result.ok) throw new Error(result.error || 'Could not verify your sign-in.');
-  return result; // {ok:true, email, sets:[{folderId,label}]}
+  return result; // {ok:true, email, games:[{folderId,label,sets:[{folderId,label}]}]}
 }
 
 // Echo mode is detected once per load, globally, from the union of every authorized
@@ -974,7 +975,7 @@ async function loadData(silent){
   if(!silent) setSyncStatus('loading card data…');
   showLoadingOverlay();
   try{
-    const rawSetResults = []; // [{rows, setName, folderId, genericBackUrl}]
+    const rawSetResults = []; // [{rows, setName, folderId, genericBackUrl, genericBacks, pcio}]
 
     for(const entry of state.authorizedSets){
       try{
@@ -988,6 +989,8 @@ async function loadData(silent){
           setName: result.setName || entry.label,
           folderId: entry.folderId,
           genericBackUrl: result.genericBackUrl || '',
+          genericBacks: result.genericBacks || {},
+          pcio: result.pcio || {found:false},
         });
       }catch(e){
         console.error('Could not load set '+entry.folderId+':', e);
@@ -996,10 +999,14 @@ async function loadData(silent){
     }
 
     state.isEchoMode = detectEchoMode(rawSetResults);
-    // One shared generic back per set (see processRawRows/backUrlForExport) — the
-    // first set that has one wins, since a generic-mode deck typically only has one
-    // set loaded anyway.
+    // Card backs and the .pcio board file both live in the GAME's own main folder now
+    // (not any individual set's folder — see Code.gs's scanGameFolderAssets), so every
+    // set in this game reports the exact same values; the first set that reports one
+    // wins, which also degrades gracefully if a set somehow can't resolve its parent.
     state.genericBackUrl = (rawSetResults.find(s=>s.genericBackUrl) || {}).genericBackUrl || '';
+    const backsSrc = rawSetResults.find(s=>s.genericBacks && (s.genericBacks.overlordBackUrl||s.genericBacks.schemeBackUrl||s.genericBacks.championBackUrl));
+    state.genericBacks = backsSrc ? backsSrc.genericBacks : { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' };
+    state.pcio = (rawSetResults.find(s=>s.pcio && s.pcio.found) || {}).pcio || {found:false};
 
     const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.folderId, state.isEchoMode));
     const rows = mergeCardSets(setCardLists);
@@ -1008,10 +1015,10 @@ async function loadData(silent){
     state.byId = new Map(rows.map(r=>[r.id, r]));
     setSyncStatus('synced ' + new Date().toLocaleTimeString() + (state.hasImages?'':' — no art columns found yet'));
     applyModeUI();
+    applyPcioUI();
     computeAndCacheAspects();
     computeFieldDefs();
     renderAll();
-    if(state.isEchoMode) fetchGenericBacks(); // non-blocking — CSV export just falls back to blank backs if this fails
   }catch(err){
     console.error(err);
     setSyncStatus('sync failed — check your connection ('+err.message+')');
@@ -1023,27 +1030,10 @@ function setSyncStatus(s){ document.getElementById('sync-status').textContent = 
 function showLoadingOverlay(){ document.getElementById('loading-overlay').classList.add('active'); }
 function hideLoadingOverlay(){ document.getElementById('loading-overlay').classList.remove('active'); }
 
-async function fetchGenericBacks(){
-  try{
-    const res = await fetch(`${WEBAPP_URL}?genericBacks=1&_=${Date.now()}`);
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    state.genericBacks = await res.json();
-  }catch(fetchErr){
-    try{
-      state.genericBacks = await new Promise((resolve,reject)=>{
-        const cbName = '__eooBacksCb_' + Math.random().toString(36).slice(2);
-        const script = document.createElement('script');
-        const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
-        function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-        window[cbName] = (data)=>{ cleanup(); resolve(data); };
-        script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-        script.src = `${WEBAPP_URL}?genericBacks=1&callback=${cbName}&_=${Date.now()}`;
-        document.head.appendChild(script);
-      });
-    }catch(e){
-      console.error('Could not load generic card backs (CSV exports for single-sided cards will have a blank back column):', e);
-    }
-  }
+// Only offer to download a .pcio board when the currently-loaded game actually has
+// one in its main folder — never a dead button that just errors when clicked.
+function applyPcioUI(){
+  document.getElementById('btnDownloadPcio').style.display = (state.pcio && state.pcio.found) ? 'inline-flex' : 'none';
 }
 
 /* =========================================================================
@@ -1140,6 +1130,8 @@ function resetGameSpecificState(){
   state.flippedCards = new Set();
   state.genericBacks = { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' };
   state.genericBackUrl = '';
+  state.pcio = {found:false};
+  document.getElementById('btnDownloadPcio').style.display = 'none'; // reset until the new game's loadData() re-evaluates it
 }
 
 // Switching games mid-session, via the "Game" button — deliberately clears all
@@ -2803,35 +2795,12 @@ const PLAYTEST_ROOM_URL = 'https://playingcards.io/@playingcardsio/standard-52-c
   el.href = PLAYTEST_ROOM_URL;
 })();
 
-async function fetchLatestPcioInfo(){
-  const url = `${WEBAPP_URL}?latestPcio=1`;
-  try{
-    const res = await fetch(url + '&_=' + Date.now());
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    return await res.json();
-  }catch(fetchErr){
-    return await new Promise((resolve,reject)=>{
-      const cbName = '__eooPcioCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${WEBAPP_URL}?latestPcio=1&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-}
-
-document.getElementById('btnDownloadPcio').addEventListener('click', async ()=>{
-  toast('Looking for the board file…');
-  try{
-    const info = await fetchLatestPcioInfo();
-    if(!info.found){ toast('No .pcio file found in the assets folder.'); return; }
-    window.open(info.downloadUrl, '_blank');
-  }catch(e){
-    toast('Could not find the board file: '+e.message);
-  }
+// state.pcio is already known (resolved once per game load, from the game's own main
+// folder — see loadData/applyPcioUI) so there's no need for a separate round trip
+// here; the button itself is hidden entirely whenever state.pcio.found is false.
+document.getElementById('btnDownloadPcio').addEventListener('click', ()=>{
+  if(!state.pcio || !state.pcio.found){ toast('No .pcio file found for this game.'); return; }
+  window.open(state.pcio.downloadUrl, '_blank');
 });
 
 
