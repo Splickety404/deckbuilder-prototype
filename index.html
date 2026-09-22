@@ -2206,9 +2206,16 @@ function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;
 // (a PDF, or anything untagged/legacy from before this existed) gets sized down; an
 // image URL is returned as-is, fragment stripped, requesting the file at its own
 // native size.
-function sizedUrl(url, w){
+//
+// The PDF export is the one caller that always wants the `force` override: it
+// deliberately downsizes to a fixed print resolution (900px wide) no matter the
+// source format, both to cap file size and because a native-resolution PNG can be
+// print-production scale — large enough that fetching/decoding it client-side is
+// what was actually failing PDF export for PNG-sourced cards. `force` skips the
+// "leave images alone" branch above and always appends the width, same as a PDF.
+function sizedUrl(url, w, force){
   if(!url) return '';
-  const isImage = url.includes('#img-src');
+  const isImage = !force && url.includes('#img-src');
   const base = url.split('#')[0];
   return isImage ? base : (base + '=w' + w);
 }
@@ -3228,8 +3235,10 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
     const {card, side} = list[i];
     // 900px wide comfortably clears 300 DPI at this card's ~2.4in physical width — good
     // print quality without pulling the full source resolution, which is print-production
-    // scale (and was the main driver of the old PDF's large file size).
-    const url = side==='front' ? sizedUrl(card._front, 900) : sizedUrl(card._back, 900);
+    // scale (and was the main driver of the old PDF's large file size). force:true here
+    // because PDF export always wants this fixed width, even for a card whose art is a
+    // plain PNG/JPEG that the on-screen previews now fetch at native size.
+    const url = side==='front' ? sizedUrl(card._front, 900, true) : sizedUrl(card._back, 900, true);
 
     doc.setDrawColor(180,183,190); doc.rect(x,y,CARD_W,CARD_H);
 
