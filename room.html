@@ -1778,14 +1778,17 @@ function renderBoard(){
       // x/y with no offset) and every card beneath it fans out AWAY from that
       // anchor — depth 1 (the "2nd card down") sits one spacing-unit away, depth 2
       // sits two units away, and so on, so each deeper card is proportionally
-      // farther out. Direction+spacing is set by dragging that 2nd card directly
-      // (see wireSplayAdjustDrag) rather than a separate popover.
+      // farther out. Direction+spacing can be set by dragging the outer edge of
+      // ANY card in the pile (except the anchor itself) — see wireSplayAdjustDrag
+      // — not just the 2nd card down; whichever one you grab, its own distance
+      // from the anchor is what you're setting, and every other card's distance
+      // (that many spacing-units, same direction) follows automatically so the
+      // gaps between consecutive outer edges stay equal throughout the fan.
       const dir = p.splayDir || 'right';
       const spacing = p.splaySpacing || 36;
       const horizontal = dir==='left' || dir==='right';
       const n = p.cardIds.length;
       const topIndex = n-1;
-      const adjustIndex = topIndex-1; // the "2nd card down" — depth 1 from the top
       // A card being dragged in from elsewhere (peeled off another pile, or
       // played from hand) can be previewing a "tuck" into this exact splay —
       // see splayInsertIndex/splayPreview. When it is, depthFor gives every
@@ -1848,7 +1851,7 @@ function renderBoard(){
         // the anchor card ends up thousands of pixels off-screen" bug. .splay-card already
         // declares its own width/height/border/background identical to .piece-face, so it
         // never needed that class in the first place.
-        const isAdjust = i===adjustIndex;
+        const isAdjust = i!==topIndex; // every card but the anchor has a live, draggable outer edge
         const cls = 'splay-card' + (isAdjust ? ' splay-adjust-target' : '');
         const hint = isAdjust ? splayEdgeHintHtml(dir) : '';
         const rotStyle = rot ? `transform:rotate(${rot}deg);` : '';
@@ -1883,11 +1886,11 @@ function renderBoard(){
         // hoveredCardIndex/rotatePiece) so R rotates just that one card
         // instead of the whole pile.
         wireCardHoverIndex(cardEl, i);
-        if(i===adjustIndex){
-          cardEl.title = 'Drag the highlighted edge to set spacing; drag anywhere else on this card to peel it off';
-          wireSplayAdjustDrag(cardEl, p, i); // this one card sets the fan for the whole pile — see above
+        if(i===topIndex){
+          wirePeelInteraction(cardEl, p, i); // the anchor has no outer edge of its own to adjust — everything else is measured from it
         } else {
-          wirePeelInteraction(cardEl, p, i); // every other visible card peels off individually when dragged
+          cardEl.title = 'Drag the highlighted edge to set that card\'s spacing; drag anywhere else on this card to peel it off';
+          wireSplayAdjustDrag(cardEl, p, i); // this card's own edge sets its distance from the anchor — the rest of the fan follows proportionally, see above
         }
       });
       wirePeelInteraction(el, p, topIndex); // fallback for the (rare) spots inside el not covered by any specific card, e.g. between fanned cards
@@ -2226,10 +2229,11 @@ function finishWholeMove(p, startX, startY, clientX, clientY){
   if(target){
     const world = clientToWorld(clientX, clientY);
     // A SPLAYED target inserts at the exact fanned position it was
-    // previewing (see splayInsertIndex); any other target uses the coarser
-    // top/bottom-only rule.
+    // previewing (see splayInsertIndex — keyed off the dragged piece's OWN
+    // board position, p.x/p.y, not the cursor); any other target uses the
+    // coarser cursor-based top/bottom-only rule.
     const insertIndex = (target.splayed && target.cardIds.length>1)
-      ? splayInsertIndex(target, world.x, world.y)
+      ? splayInsertIndex(target, p.x, p.y)
       : (shouldInsertBelow(target, world.y) ? 0 : target.cardIds.length);
     mergePieceOntoTarget(p.id, target.id, insertIndex); // re-renders the board itself, sets its own undo
     return;
@@ -2300,7 +2304,9 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
     // renderBoard's splayPreview.sourceId check — rather than also keeping a
     // ghost/silhouette around.
     clearMergeHighlight();
-    const insertIndex = splayInsertIndex(splayTarget, world.x, world.y);
+    // Keyed off the dragged piece's OWN board position (p.x/p.y, already
+    // updated above this tick), not the cursor — see splayInsertIndex.
+    const insertIndex = splayInsertIndex(splayTarget, p.x, p.y);
     setSplayPreview(splayTarget.id, insertIndex, {sourceId:p.id, cardId:p.cardIds[0], faceUp:p.faceStates[0], rotation:p.rotation||0});
     if(ctx.ghost){ removeDragGhost(ctx.ghost); ctx.ghost=null; }
     ctx.el = null;
@@ -2391,7 +2397,9 @@ function wireGroupHandleDrag(handleEl, p){
       let rebuilt = false;
       if(splayTarget){
         clearMergeHighlight();
-        rebuilt = setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x, world.y));
+        // Keyed off the dragged pile's OWN board position (p.x/p.y), not the
+        // cursor — see splayInsertIndex.
+        rebuilt = setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, p.x, p.y));
       } else {
         rebuilt = clearSplayPreview();
         if(target) showMergeHighlight(target.id); else clearMergeHighlight();
@@ -2539,20 +2547,31 @@ function clearSplayPreview(){
   renderBoard();
   return true;
 }
-// Where a loose card hovering at (worldX,worldY) would land in a splayed
-// pile's fan. Near the anchor (the top card) this naturally resolves to
-// insertIndex===cardIds.length — an ordinary top-of-pile insert — and at the
-// far end of the fan it resolves to 0 — an ordinary bottom-of-pile insert —
-// so no separate top/bottom special-casing is needed on top of this.
-function splayInsertIndex(target, worldX, worldY){
+// Where an incoming card, whose own board-space TOP-LEFT corner is
+// (cardX,cardY), would land in a splayed pile's fan — specifically, the
+// slot whose depth-implied position is closest to where that card would
+// actually be sitting right now if it weren't tucking into anything at all.
+// Each depth d's own left edge (for a horizontal splay; top edge for
+// vertical) sits at target.x plus/minus d*spacing (see renderBoard's
+// offsetFor — same convention, ignoring that function's own per-card
+// rotation compensation, which only ever nudges a card a few px and isn't
+// worth the noise here), so comparing cardX/cardY — the card's OWN edge, not
+// the cursor's raw position, which can sit anywhere within or even outside
+// the card depending on where it was grabbed — against that same axis is
+// what actually answers "which slot is this card closest to." Near the
+// anchor (the top card) this naturally resolves to insertIndex===cardIds.length
+// — an ordinary top-of-pile insert — and at the far end of the fan it
+// resolves to 0 — an ordinary bottom-of-pile insert — so no separate
+// top/bottom special-casing is needed on top of this.
+function splayInsertIndex(target, cardX, cardY){
   const dir = target.splayDir || 'right';
   const spacing = target.splaySpacing || 36;
   const n = target.cardIds.length;
   let axisPos;
-  if(dir==='right') axisPos = worldX - target.x;
-  else if(dir==='left') axisPos = target.x - worldX;
-  else if(dir==='down') axisPos = worldY - target.y;
-  else axisPos = target.y - worldY; // 'up'
+  if(dir==='right') axisPos = cardX - target.x;
+  else if(dir==='left') axisPos = target.x - cardX;
+  else if(dir==='down') axisPos = cardY - target.y;
+  else axisPos = target.y - cardY; // 'up'
   const depth = Math.max(0, Math.min(n, Math.round(axisPos / spacing)));
   return n - depth;
 }
@@ -2853,7 +2872,7 @@ function stackEdgeAt(p, clientX, clientY){
 // edges get the horizontal resize cursor, up/down edges the vertical one,
 // matching the axis that edge's splay actually fans out along.
 function cursorForSplayEdge(dir){ return (dir==='left'||dir==='right') ? 'ew-resize' : 'ns-resize'; }
-// The spacing value that puts the 2nd card's own OUTER (far-from-anchor)
+// The spacing value that puts the GRABBED card's own OUTER (far-from-anchor)
 // edge — the exact edge isOnSplayAdjustEdge/stackEdgeAt check for a grab —
 // precisely under the cursor's CURRENT position, computed fresh each tick
 // from where the cursor actually is right now rather than a delta piled up
@@ -2866,16 +2885,25 @@ function cursorForSplayEdge(dir){ return (dir==='left'||dir==='right') ? 'ew-res
 // grab point, instead of snapping to whatever a fresh delta-from-zero would
 // give. Used both to begin a brand new splay (wireStackInteraction, where
 // the "2nd card" is really just the sliver of it about to peek out from
-// under the still-single anchor) and to adjust an existing one
-// (wireSplayAdjustDrag) — geometrically identical in both cases.
-function splaySpacingForCursor(p, dir, clientX, clientY){
+// under the still-single anchor, always depth 1) and to adjust an existing
+// one (wireSplayAdjustDrag, any card at any depth) — geometrically identical
+// in both cases once `depth` is factored in: `raw` is the distance from the
+// anchor's own edge to the cursor, i.e. exactly depth*spacing for whichever
+// card was actually grabbed, so dividing it back down by that card's own
+// depth recovers the single per-card spacing that would put ITS edge there
+// — and since every other card's offset is that same spacing times ITS OWN
+// depth, the whole fan adjusts together, evenly, no matter which card in it
+// you happen to be holding. depth defaults to 1 (the ordinary "2nd card" /
+// begin-a-splay case, where the grabbed card IS one spacing-unit out).
+function splaySpacingForCursor(p, dir, clientX, clientY, depth){
   const local = localOffsetInPiece(p, clientX, clientY);
   let raw;
   if(dir==='right') raw = local.x - PIECE_W;
   else if(dir==='left') raw = -local.x;
   else if(dir==='down') raw = local.y - PIECE_H;
   else raw = -local.y; // 'up'
-  return Math.max(SPLAY_MIN, Math.min(splayMaxFor(dir), raw));
+  const spacing = raw / (depth||1);
+  return Math.max(SPLAY_MIN, Math.min(splayMaxFor(dir), spacing));
 }
 // The thin accent bar drawn on the adjust-target card's one draggable edge
 // (see isOnSplayAdjustEdge) — a fixed 6px thick, running the full length of
@@ -2959,19 +2987,19 @@ function wireStackInteraction(el, p){
     },
   });
 }
-// Splay-card-local geometry for wireSplayAdjustDrag: the adjust-target card
-// (the "2nd card down", always exactly one spacing-unit out from the anchor
-// — depth 1) is only in "adjust the fan" territory when the grab lands
-// within SPLAY_EDGE_ZONE of the ONE edge matching the pile's CURRENT splay
-// direction — everywhere else on that same card (including its other three
-// edges) falls through to an ordinary peel, same as any other visible card
-// in the pile. Same straddle-the-edge-line zone as stackEdgeAt (see its
-// comment) — right on, or just off, the physical edge — reusing
-// localOffsetInPiece and just shifting by this one card's own known offset
-// from the anchor.
-function isOnSplayAdjustEdge(p, clientX, clientY){
+// Splay-card-local geometry for wireSplayAdjustDrag: ANY card in the pile
+// except the anchor itself (depth>=1) is in "adjust the fan" territory when
+// the grab lands within SPLAY_EDGE_ZONE of the ONE edge matching the pile's
+// CURRENT splay direction — everywhere else on that same card (including
+// its other three edges) falls through to an ordinary peel, same as any
+// other visible card in the pile. `depth` is that card's own distance from
+// the anchor in spacing-units (topIndex - cardIndex), so its expected edge
+// sits depth*spacing out, not just one spacing-unit like the old
+// only-the-2nd-card version — same straddle-the-edge-line zone as
+// stackEdgeAt (see its comment): right on, or just off, the physical edge.
+function isOnSplayAdjustEdge(p, clientX, clientY, depth){
   const dir = p.splayDir || 'right';
-  const spacing = p.splaySpacing || 36;
+  const spacing = (p.splaySpacing || 36) * (depth||1);
   const pieceLocal = localOffsetInPiece(p, clientX, clientY);
   let left=0, top=0;
   if(dir==='right') left = spacing;
@@ -2985,19 +3013,29 @@ function isOnSplayAdjustEdge(p, clientX, clientY){
   if(dir==='up') return Math.abs(cardLocal.y) <= zone;
   return Math.abs(PIECE_H - cardLocal.y) <= zone; // 'down'
 }
-// The "2nd card down" of a splayed pile (depth 1 from the top): grabbing the
-// SAME edge that began the splay (matching p.splayDir, see
-// isOnSplayAdjustEdge) extends or collapses the existing fan along that one
-// LOCKED axis — it can never switch axis or flip direction mid-adjust; to
-// change direction, first collapse fully back to unsplayed (drag that edge
-// back past SPLAY_UNSPLAY_THRESHOLD), then start a fresh splay from a
-// different edge via wireStackInteraction. Grabbing anywhere else on this
-// card is an ordinary peel — see beginPeelAsPiece/driveWholePieceDrag.
+// ANY card in a splayed pile except the anchor itself: grabbing the SAME
+// edge that began the splay (matching p.splayDir, see isOnSplayAdjustEdge)
+// extends or collapses the existing fan along that one LOCKED axis — it can
+// never switch axis or flip direction mid-adjust; to change direction,
+// first collapse fully back to unsplayed (drag that edge back past
+// SPLAY_UNSPLAY_THRESHOLD), then start a fresh splay from a different edge
+// via wireStackInteraction. Grabbing anywhere else on this card is an
+// ordinary peel — see beginPeelAsPiece/driveWholePieceDrag.
+//
+// Whichever card you grab, you're really setting THAT card's own distance
+// from the anchor's edge — cursor position implies a raw distance
+// (splaySpacingForCursor's `raw`), and dividing by this card's own depth
+// recovers the single per-card `spacing` that would put its edge exactly
+// there. Since every card's own offset is that same spacing times ITS depth
+// (see renderBoard's offsetFor), committing that one recovered spacing value
+// moves every card in the fan together, keeping the gaps between
+// consecutive outer edges equal no matter which card you dragged.
 function wireSplayAdjustDrag(cardEl, p, cardIndex){
   let mode=null, old=null, ctx=null;
+  const depthOf = ()=> Math.max(1, (p.cardIds.length-1) - cardIndex);
   cardEl.addEventListener('mousemove', (e)=>{
     if(mode) return;
-    const onEdge = isOnSplayAdjustEdge(p, e.clientX, e.clientY);
+    const onEdge = isOnSplayAdjustEdge(p, e.clientX, e.clientY, depthOf());
     cardEl.style.cursor = onEdge ? cursorForSplayEdge(p.splayDir||'right') : '';
   });
   cardEl.addEventListener('mouseleave', ()=>{ if(!mode) cardEl.style.cursor = ''; });
@@ -3006,7 +3044,7 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
       if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
       if(p.locked) return false;
       if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
-      const onEdge = isOnSplayAdjustEdge(p, e.clientX, e.clientY);
+      const onEdge = isOnSplayAdjustEdge(p, e.clientX, e.clientY, depthOf());
       mode = onEdge ? 'adjust' : 'peel';
       if(mode==='adjust'){
         old = { splayed:true, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
@@ -3018,7 +3056,7 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
     onMove: (dx, dy, ev)=>{
       if(mode==='adjust'){
         const dir = old.dir; // locked — never recomputed from the drag vector
-        const spacing = splaySpacingForCursor(p, dir, ev.clientX, ev.clientY);
+        const spacing = splaySpacingForCursor(p, dir, ev.clientX, ev.clientY, depthOf());
         previewSplay(p.id, true, dir, spacing);
         return;
       }
@@ -4208,7 +4246,12 @@ function wireHandCardDrag(el, idx){
         // showing instead of both being visible at once.
         clearMergeHighlight();
         const world = clientToWorld(ev.clientX, ev.clientY);
-        setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x, world.y), {sourceId:null, cardId:pick.cardId, faceUp:true});
+        // A hand card has no real piece/board position yet — by convention
+        // (see playHandCardToBoard) the cursor marks where its CENTER would
+        // land if placed standalone, so its would-be top-left corner is half
+        // a card up and to the left of that; splayInsertIndex wants that
+        // corner, same as every other caller, not the raw cursor point.
+        setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x-PIECE_W/2, world.y-PIECE_H/2), {sourceId:null, cardId:pick.cardId, faceUp:true});
         ghost.style.visibility = 'hidden';
       } else {
         clearSplayPreview();
@@ -4253,8 +4296,10 @@ function playHandCardToBoard(pick, clientX, clientY){
   const target = findOverlapTarget({id:null}, clientX, clientY);
   const world = clientToWorld(clientX, clientY);
   if(target){
+    // Same would-be top-left corner as wireHandCardDrag's matching preview —
+    // see its comment.
     const insertIndex = (target.splayed && target.cardIds.length>1)
-      ? splayInsertIndex(target, world.x, world.y)
+      ? splayInsertIndex(target, world.x-PIECE_W/2, world.y-PIECE_H/2)
       : (shouldInsertBelow(target, world.y) ? 0 : target.cardIds.length);
     const cardIds = [...target.cardIds.slice(0,insertIndex), pick.cardId, ...target.cardIds.slice(insertIndex)];
     const faceStates = [...target.faceStates.slice(0,insertIndex), true, ...target.faceStates.slice(insertIndex)];
