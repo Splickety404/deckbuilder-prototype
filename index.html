@@ -1021,6 +1021,31 @@ async function fetchSetImages(folderId){
   return result; // {ok:true, sheetId, images:[{id,'front-image-url','back-image-url'}, ...]}
 }
 
+// Game-level assets (card backs, the .pcio board file) — see the gameAssets endpoint
+// in Code.gs. A fast=true fetchSetData() skips these too (same live-Drive-folder-scan
+// cost as art), so this is called once per GAME (not once per set within it — every
+// set in a game shares the same assets) to catch them up in the background.
+async function fetchGameAssets(gameFolderId){
+  const url = `${WEBAPP_URL}?gameAssets=${encodeURIComponent(gameFolderId)}&idToken=${encodeURIComponent(state.idToken)}`;
+  let result;
+  try{
+    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
+  }catch(fetchErr){
+    result = await new Promise((resolve,reject)=>{
+      const cbName = '__eooAssetsCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to load this game\'s shared assets.')); }, 30000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+  if(!result.ok) throw new Error(result.error || 'Unknown error loading this game\'s assets.');
+  return result; // {ok:true, genericBackUrl, overlordBackUrl, schemeBackUrl, championBackUrl, pcio}
+}
+
 // Asks the server who this ID token belongs to, and which GAMES (each with only the
 // sets within it) that email currently has live Drive access to at least one set of.
 // This is the ONLY place the list of available games/sets comes from — nothing about
@@ -1071,42 +1096,36 @@ async function loadData(silent){
   if(!silent) setSyncStatus('loading card data…');
   showLoadingOverlay();
   try{
-    const rawSetResults = []; // [{rows, setName, folderId, genericBackUrl, genericBacks, pcio}]
+    const rawSetResults = []; // [{rows, setName, folderId, sheetId}]
 
-    for(const entry of state.authorizedSets){
-      try{
-        // fast=true: get card text back immediately without waiting on the slow
-        // live Drive art-folder scan — see the syncAllSetImages() call below, which
-        // catches art up per set in the background once the user can already work.
-        const result = await fetchSetData(entry.folderId, true);
-        if(!state.headers.length && result.rows.length){
-          state.headers = Object.keys(result.rows[0]);
-          state.hasImages = state.headers.includes('front-image-url');
-        }
-        rawSetResults.push({
-          rows: result.rows,
-          setName: result.setName || entry.label,
-          folderId: entry.folderId,
-          sheetId: result.sheetId, // the set's actual Google Sheet file id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.gs indexes by sheet id, never folder id)
-          genericBackUrl: result.genericBackUrl || '',
-          genericBacks: result.genericBacks || {},
-          pcio: result.pcio || {found:false},
-        });
-      }catch(e){
-        console.error('Could not load set '+entry.folderId+':', e);
-        toast(`Could not load set "${entry.label}": ${e.message}`);
+    // Fetched concurrently rather than one set at a time — each fast=true fetch is
+    // now just a Sheets read, independent of every other set, so there's no reason
+    // to make one set's request wait on another's round trip. A set that fails just
+    // toasts and gets skipped, same as the old sequential loop's own error handling.
+    const fastResults = await Promise.allSettled(
+      state.authorizedSets.map(entry => fetchSetData(entry.folderId, true))
+    );
+    fastResults.forEach((res, i)=>{
+      const entry = state.authorizedSets[i];
+      if(res.status==='rejected'){
+        console.error('Could not load set '+entry.folderId+':', res.reason);
+        toast(`Could not load set "${entry.label}": ${res.reason.message}`);
+        return;
       }
-    }
+      const result = res.value;
+      if(!state.headers.length && result.rows.length){
+        state.headers = Object.keys(result.rows[0]);
+        state.hasImages = state.headers.includes('front-image-url');
+      }
+      rawSetResults.push({
+        rows: result.rows,
+        setName: result.setName || entry.label,
+        folderId: entry.folderId,
+        sheetId: result.sheetId, // the set's actual Google Sheet file id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.gs indexes by sheet id, never folder id)
+      });
+    });
 
     state.isEchoMode = detectEchoMode(rawSetResults);
-    // Card backs and the .pcio board file both live in the GAME's own main folder now
-    // (not any individual set's folder — see Code.gs's scanGameFolderAssets), so every
-    // set in this game reports the exact same values; the first set that reports one
-    // wins, which also degrades gracefully if a set somehow can't resolve its parent.
-    state.genericBackUrl = (rawSetResults.find(s=>s.genericBackUrl) || {}).genericBackUrl || '';
-    const backsSrc = rawSetResults.find(s=>s.genericBacks && (s.genericBacks.overlordBackUrl||s.genericBacks.schemeBackUrl||s.genericBacks.championBackUrl));
-    state.genericBacks = backsSrc ? backsSrc.genericBacks : { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' };
-    state.pcio = (rawSetResults.find(s=>s.pcio && s.pcio.found) || {}).pcio || {found:false};
 
     // Every card's own _sheetId (see processRawRows) has to be the actual Google
     // Sheet file id (s.sheetId), NOT the set's folder id (s.folderId) — this was
@@ -1125,9 +1144,10 @@ async function loadData(silent){
     computeFieldDefs();
     renderAll();
     // Card text is in and the grid is already rendered and usable — don't make the
-    // user wait on art too. hideLoadingOverlay() happens here, not after the image
-    // sync below, which runs in the background and pops each set's art in as its
-    // own scan finishes (see syncAllSetImages/applySetImages).
+    // user wait on art, or on the game-level assets (card backs/.pcio board), either.
+    // hideLoadingOverlay() happens here; both background passes below pop their own
+    // results in once they finish (see syncAllSetImages/applySetImages and
+    // loadGameAssetsInBackground/applyPcioUI).
     hideLoadingOverlay();
     if(state.hasImages && rawSetResults.length){
       setSyncStatus('synced ' + new Date().toLocaleTimeString() + ' — loading art…');
@@ -1135,6 +1155,7 @@ async function loadData(silent){
     } else {
       setSyncStatus('synced ' + new Date().toLocaleTimeString() + (state.hasImages?'':' — no art columns found yet'));
     }
+    if(state.currentGameFolderId) loadGameAssetsInBackground(state.currentGameFolderId);
   }catch(err){
     console.error(err);
     setSyncStatus('sync failed — check your connection ('+err.message+')');
@@ -1174,6 +1195,28 @@ function applySetImages(images){
     if(c._front !== front || c._back !== back){ c._front = front; c._back = back; changed = true; }
   });
   if(changed) renderAll();
+}
+
+// Catches up the game-level assets (card backs, .pcio board) a fast=true loadData()
+// skipped — silent and non-blocking: nothing about browsing or deckbuilding depends
+// on this, it just enables Download .pcio / Playtest Room / the CSV export option
+// (via applyPcioUI) and the export card-back URLs once it resolves.
+async function loadGameAssetsInBackground(gameFolderId){
+  try{
+    const assets = await fetchGameAssets(gameFolderId);
+    state.genericBackUrl = assets.genericBackUrl || '';
+    state.genericBacks = {
+      overlordBackUrl: assets.overlordBackUrl || '',
+      schemeBackUrl: assets.schemeBackUrl || '',
+      championBackUrl: assets.championBackUrl || '',
+    };
+    state.pcio = assets.pcio || {found:false};
+    applyPcioUI();
+  }catch(e){
+    console.error('Could not load game assets for '+gameFolderId+':', e);
+    // Non-fatal — those buttons just stay hidden and card-back export URLs stay
+    // blank until the next reload; nothing else in the app depends on this.
+  }
 }
 function setSyncStatus(s){ document.getElementById('sync-status').textContent = s; }
 function showLoadingOverlay(){ document.getElementById('loading-overlay').classList.add('active'); }
