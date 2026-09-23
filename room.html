@@ -209,9 +209,26 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 /* Token color comes entirely from its user-defined type (state.tokenTypes) and is
    applied inline per-instance in renderTokens() — there are no more fixed built-in
    token colors/types. */
+/* z-index:2 (above .piece's own baseline z-index:1 below) is what keeps a
+   token from ever being buried under an ordinary card on the table — tokens
+   are rendered into #boardWorld AFTER every piece (see renderBoard calling
+   renderTokens() last), so DOM order alone would already put them on top,
+   but .piece's explicit z-index:1 otherwise beats that regardless of order
+   (an element with a higher z-index always paints above one with a lower/
+   auto z-index, no matter which comes later in the DOM) — that mismatch was
+   the actual bug: an ordinary card sat on top of any token underneath it.
+   Still correctly loses to .piece.dragging-piece's z-index:50 (see below),
+   which is exactly the one case a card SHOULD paint over a token — the card
+   the player is actively holding/dragging right now. A splay-preview slot
+   (.splay-card.splay-gap) is a plain child of its target .piece, never
+   promoted to dragging-piece, so it stays under this z-index too, matching
+   the "unless simultaneously shown as part of a stack-splay preview"
+   exception. Hand cards (.hand-card) live in a completely different part of
+   the DOM (#hand-panel, not #boardWorld) so they're never in this stacking
+   contest at all — that's the other stated exception, satisfied for free. */
 .token{position:absolute;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   font-weight:700;font-size:14px;color:#fff;cursor:grab;box-shadow:var(--shadow);border:2px solid rgba(255,255,255,.3);user-select:none;
-  transition:transform .15s var(--bounce),filter .15s;}
+  transition:transform .15s var(--bounce),filter .15s;z-index:2;}
 .token:hover{transform:scale(1.18);filter:brightness(1.1);}
 .token.attached{width:28px;height:28px;font-size:11px;}
 /* A splayed token stack turns .token itself into a plain, invisible positioning
@@ -245,9 +262,23 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   background:rgba(20,22,27,.55);border-radius:var(--radius-pill);padding:2px 10px;pointer-events:none;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 12px);}
 .zone-handle{position:absolute;width:16px;height:16px;background:var(--accent);border:2px solid var(--accent-contrast);
-  border-radius:6px;cursor:nwse-resize;transition:transform .15s var(--bounce);}
+  border-radius:6px;transition:transform .15s var(--bounce);}
 .zone-handle:hover{transform:scale(1.2);}
-.zone-handle.br{right:-8px;bottom:-8px;}
+/* One handle per edge/corner (see renderZones/wireZoneResize) — corner
+   handles resize both dimensions from that corner, edge handles (centered
+   along their own edge, via the 50% + negative margin centering trick,
+   same idea as .zone-label's own centering) resize just the one dimension
+   perpendicular to that edge. Cursor per handle matches the physical
+   direction it drags in, same convention as the splay-edge cursors
+   (cursorForSplayEdge) elsewhere in this file. */
+.zone-handle.nw{left:-8px;top:-8px;cursor:nwse-resize;}
+.zone-handle.n{left:50%;top:-8px;margin-left:-8px;cursor:ns-resize;}
+.zone-handle.ne{right:-8px;top:-8px;cursor:nesw-resize;}
+.zone-handle.e{right:-8px;top:50%;margin-top:-8px;cursor:ew-resize;}
+.zone-handle.se{right:-8px;bottom:-8px;cursor:nwse-resize;}
+.zone-handle.s{left:50%;bottom:-8px;margin-left:-8px;cursor:ns-resize;}
+.zone-handle.sw{left:-8px;bottom:-8px;cursor:nesw-resize;}
+.zone-handle.w{left:-8px;top:50%;margin-top:-8px;cursor:ew-resize;}
 
 /* ---------- Hand resize handle — drag the seam between the board and the hand ---------- */
 #handResizeHandle{flex:none;height:9px;cursor:row-resize;background:var(--surface-2);
@@ -345,7 +376,23 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .token-type-item, .focus-item{padding:9px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .12s;}
 .token-type-item:hover, .focus-item:hover{background:var(--surface-2);}
 .token-dot{width:12px;height:12px;border-radius:50%;flex:none;}
+/* Edit affordance on an existing token type row (see openTokenTypeMenu) —
+   pushed to the far right via margin-left:auto in the row's own flex layout,
+   dimmed until hovered so the row doesn't look cluttered at rest, and its
+   own click target so it never fights with the row's "place a token" click. */
+.token-type-edit{margin-left:auto;flex:none;opacity:.55;padding:2px 5px;border-radius:6px;font-size:12px;}
+.token-type-edit:hover{opacity:1;background:var(--surface);}
 #tokenMenu input{width:100%;margin:6px 10px 10px 10px;width:calc(100% - 20px);}
+/* The generic rule above was meant for the plain-text name field, but its
+   bare `input` selector also matches the color swatch in the very same
+   popover (see openNewTokenTypeForm/openEditTokenTypeForm) — stretching it
+   to nearly the whole popover's width and overflowing outside it, instead of
+   the small square swatch `.popover-row input[type="color"]` already
+   describes elsewhere. `#tokenMenu input[type="color"]` is more specific
+   than that generic rule (an id beats any number of plain classes/
+   attributes), so this is what actually wins and keeps the swatch small and
+   inside the popover. */
+#tokenMenu input[type="color"]{width:40px;height:28px;margin:0;flex:none;}
 
 /* ---------- Hover preview ---------- */
 #hoverPreview{position:fixed;z-index:95;pointer-events:none;bottom:130px;right:20px;box-shadow:var(--shadow);border-radius:var(--radius);overflow:hidden;}
@@ -402,13 +449,27 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .lock-badge{position:absolute;top:-8px;right:-8px;width:20px;height:20px;border-radius:50%;background:var(--surface);
   border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;z-index:2;}
 
-/* ---------- Visible grid overlay — drawn as a CSS background on the transformed
-   board-world layer so it pans/zooms with everything else automatically. ---------- */
-#boardWorld.show-grid{
+/* ---------- Visible grid overlay. #boardWorld itself can't carry this: it's
+   position:absolute with no explicit width/height and every child of it is
+   ALSO absolutely positioned (out of flow), so it never gets an intrinsic
+   size of its own to paint a background into — a background-image on a
+   0×0 box paints nothing, which is exactly why toggling Show Grid used to
+   have no visible effect. #boardGrid is a real, normally-sized sibling
+   (100% of #boardRotate, which DOES have real pixel dimensions) that sits
+   beneath #boardWorld in paint order, with its background-size/position
+   kept in sync with the current pan/zoom by JS (see syncGridBackground(),
+   called from applyView()) rather than by riding along on a CSS transform —
+   more code, but it actually has a box to draw into. ---------- */
+#boardGrid{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;display:none;}
+/* Only shown once Show Grid is actually checked (see applyGridDisplay) — a
+   bare, unlabeled number input sitting in the toolbar at all times just
+   reads as a stray "80" with no visible connection to anything. */
+#gridSizeInput.hidden{display:none;}
+#boardGrid.show-grid{
+  display:block;
   background-image:
     linear-gradient(to right, rgba(255,255,255,0.09) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(255,255,255,0.09) 1px, transparent 1px);
-  background-size: var(--grid-size, 80px) var(--grid-size, 80px);
 }
 
 /* ---------- Quick chat/emote bubbles ----------
@@ -436,6 +497,29 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   82%{opacity:1;}
   100%{opacity:0;}
 }
+/* A bubble generated from a synced game event (see showHistoryBubble) rather
+   than someone actually typing in chat — visually distinct (accent-tinted
+   left edge, no bold name prefix) and the one kind of bubble the "Show in
+   chat" toggle can hide, via #chatPanel.hide-history below. */
+.chat-bubble.history-bubble{border-left:3px solid var(--accent);color:var(--text-soft);font-style:italic;}
+#chatPanel.hide-history .chat-bubble.history-bubble{display:none;}
+
+/* ---------- Full game history flyout ----------
+   Opened from #btnChatHistory, right next to the chat toggle. Anchored to
+   #chatPanel (already position:absolute, so it's a valid containing block)
+   and pinned to bottom:100% of it so it always opens upward, above the chat
+   log and input — never a centered modal, per the user's own framing of
+   this as part of the chat UI rather than a separate screen. */
+#historyFlyout{position:absolute;left:0;bottom:100%;margin-bottom:8px;width:min(320px,80vw);
+  max-height:340px;display:flex;flex-direction:column;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
+  padding:10px 12px;}
+#historyFlyout.hidden{display:none;}
+.history-flyout-header{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex:none;}
+.history-flyout-header b{flex:1;font-size:13px;}
+.history-toggle-label{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-soft);
+  white-space:nowrap;cursor:pointer;}
+#historyFlyoutBody{overflow-y:auto;}
 
 /* ---------- Peek popup ---------- */
 #peekPopup{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:96;display:flex;align-items:center;justify-content:center;cursor:pointer;}
@@ -458,36 +542,21 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    taller box) and on how many cards are in the pile. */
 .splay-card{position:absolute;width:140px;height:196px;border-radius:var(--radius-sm);border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden;background:var(--surface-2);}
 .splay-card img{width:100%;height:100%;object-fit:cover;display:block;}
-/* ANY card in a splayed pile except the anchor itself has a live outer edge
-   you can drag to set that card's own distance from the anchor — every other
-   card follows proportionally (see wireSplayAdjustDrag/isOnSplayAdjustEdge).
-   Rather than permanently decorating every one of those edges at once (noisy
-   with a deep pile), the accent cue below only shows up while actually
-   hovering that specific card — see the :hover rule below.
-   IMPORTANT: no position override here. .splay-card is already
-   position:absolute (see above), which already makes it a valid containing
-   block for its own absolutely-positioned .splay-edge-hint child — that's
-   all CSS positioning needs. An earlier version of this rule set
-   position:relative instead, on the theory that the hint needed a
-   "positioned ancestor" — true, but .splay-card already IS one. Forcing
-   position:relative instead pulls the card OUT of the piece's absolute
-   fan-layout scheme and back into normal HTML block flow, where multiple
-   such cards stack downward one after another before their own left/top
-   offsets even get applied — invisible with only one adjustable card in the
-   pile (a 2-card splay), but a very visible "cards land somewhere
-   completely different, and lower cards drift further down/diagonally with
-   every card added" bug the moment a 3rd card (a 2nd adjustable card) joined
-   the mix. */
-.splay-card.splay-adjust-target{cursor:inherit;}
-/* The actual draggable-edge cue for a splay-adjust-target card (see above) —
-   a thin accent bar sitting right on the one edge that extends/collapses the
-   fan, straddling the edge the same way the live grab zone does (see
-   isOnSplayAdjustEdge) so what's highlighted matches what's actually live.
-   Hidden until that specific card is actually hovered (or dragged, which
-   keeps it hovered), so a deep splay doesn't show every card's edge lit up
-   at once — only the one you're about to interact with. */
-.splay-edge-hint{position:absolute;background:var(--accent);box-shadow:0 0 6px var(--accent-soft);pointer-events:none;border-radius:2px;opacity:0;transition:opacity 120ms ease;}
-.splay-card.splay-adjust-target:hover .splay-edge-hint{opacity:1;}
+/* No visual highlight on a splay's draggable edges — the cursor itself
+   (ew-resize/ns-resize, see cursorForSplayEdge) is the only cue that an
+   edge is live; deliberate, so a deep pile doesn't get visually noisy.
+   IMPORTANT, if anything is ever added back here: never give .splay-card
+   (or a class layered onto it) a `position` override. It's already
+   position:absolute (see above) — that's already a valid containing block
+   for any absolutely-positioned child a future cue might need. An earlier
+   version set position:relative instead, on the theory that a child needed
+   a "positioned ancestor" — true, but .splay-card already IS one,  so the
+   override just pulled the card OUT of the piece's absolute fan-layout
+   scheme and into normal HTML block flow, where multiple such cards stack
+   downward one after another before their own left/top offsets even get
+   applied — invisible with only one such card in the pile, but a very
+   visible "cards drift further down/diagonally with every card added" bug
+   the moment a 2nd one joined the mix. */
 /* Placeholder slot shown while a peeled/played card is hovering a splay,
    previewing exactly where it would land (see splayPreview / splayInsertIndex)
    — never interactive, just a visual "it goes here" cue. */
@@ -572,7 +641,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
     <label class="btn btn-sm" style="cursor:pointer;">
       <input type="checkbox" id="showGridCheckbox" style="margin-right:5px;">Show Grid
     </label>
-    <input type="number" id="gridSizeInput" min="20" max="300" step="5" value="80" title="Grid cell size (px)" style="width:52px;">
+    <input type="number" id="gridSizeInput" class="hidden" min="20" max="300" step="5" value="80" title="Grid cell size (px)" style="width:52px;">
     <div class="btn btn-sm" id="btnDice">🎲 Dice</div>
     <div id="dicePopover" class="hidden"></div>
     <span id="turnIndicator" style="font-size:12px;color:var(--text-soft);">Turn: —</span>
@@ -581,7 +650,6 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
     <div class="btn btn-sm" id="btnUndo" style="opacity:.4;pointer-events:none;">Undo</div>
     <div id="playerCounters" style="font-size:12px;color:var(--text-soft);"></div>
     <div class="btn btn-sm" id="btnZoomFit">Fit All</div>
-    <div class="btn btn-sm" id="btnHistory">History</div>
     <div class="btn btn-sm" id="btnExportLayout">Export Layout</div>
     <div class="btn btn-sm" id="btnImportLayout">Import Layout</div>
     <input type="file" id="layoutFileInput" accept=".json" style="display:none;">
@@ -590,13 +658,23 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 
   <div id="boardViewport">
     <div id="boardRotate">
+      <div id="boardGrid"></div>
       <div id="boardWorld"></div>
     </div>
     <div id="chatPanel">
       <div id="chatLog"></div>
       <div id="chatBar">
         <div class="btn btn-icon" id="btnChatToggle" title="Collapse chat">💬</div>
+        <div class="btn btn-icon" id="btnChatHistory" title="Full game history">📜</div>
         <input type="text" id="chatInput" placeholder="Say something…" maxlength="200">
+      </div>
+      <div id="historyFlyout" class="hidden">
+        <div class="history-flyout-header">
+          <b>Game History</b>
+          <label class="history-toggle-label"><input type="checkbox" id="chkShowHistoryInChat"> Show in chat</label>
+          <div class="btn btn-icon" id="btnCloseHistoryFlyout" title="Close">✕</div>
+        </div>
+        <div id="historyFlyoutBody"></div>
       </div>
     </div>
   </div>
@@ -650,13 +728,6 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
         <div class="btn" id="btnSearchToBoard">Take Selected → Board</div>
       </div>
     </div>
-  </div>
-</div>
-
-<div class="modal-overlay hidden" id="historyModal">
-  <div class="modal-box">
-    <div class="modal-header"><h2>Game History</h2><div class="btn btn-icon" data-close="historyModal">✕</div></div>
-    <div class="modal-body"><div id="historyBody"></div></div>
   </div>
 </div>
 
@@ -978,7 +1049,7 @@ async function pollRoomOnce(){
       state.lastSeq = Math.max(state.lastSeq, ev.seq);
       if(ev.payload && ev.payload._origin===state.clientId) return; // already applied optimistically
       applyRoomEvent(ev.type, ev.payload, {remote:true});
-      toast(describeEvent(ev.type, ev.payload, ev.playerName));
+      showHistoryBubble(describeEvent(ev.type, ev.payload, ev.playerName));
     });
     setConnStatus(true);
   }catch(e){ setConnStatus(false, e.message); }
@@ -1175,6 +1246,25 @@ function applyRoomEvent(type, payload){
       state.tokenTypes.set(payload.name, payload.color);
       break;
     }
+    // Editing an EXISTING token type (see openEditTokenTypeForm) rather than
+    // defining a new one. A placed token references its type by NAME
+    // (t.type), looked up live against state.tokenTypes at render time (see
+    // renderTokens) rather than a copied color snapshot — so a pure color
+    // edit already shows up on every already-placed token of this type for
+    // free, just by overwriting the map entry below, no further work needed.
+    // Renaming is the one case that needs help: the name IS the map key, and
+    // every placed token's own t.type field still holds the OLD name after
+    // the key changes — left alone, they'd silently stop resolving to any
+    // color/letter at all the moment their old key disappears. So a rename
+    // also walks every placed token and repoints it to the new name.
+    case 'EDIT_TOKEN_TYPE': {
+      if(payload.oldName !== payload.name){
+        state.tokenTypes.delete(payload.oldName);
+        state.tokens.forEach(t=>{ if(t.type===payload.oldName) t.type = payload.name; });
+      }
+      state.tokenTypes.set(payload.name, payload.color);
+      break;
+    }
     case 'PLACE_ZONE': {
       state.zones.set(payload.id, { id:payload.id, x:payload.x, y:payload.y, w:payload.w, h:payload.h,
         color:payload.color, strokeColor:payload.strokeColor, strokeWidth:payload.strokeWidth,
@@ -1253,7 +1343,7 @@ function applyRoomEvent(type, payload){
     }
     case 'NOTE': break; // no board mutation — handled entirely via the toast/history text
   }
-  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE'].includes(type)) renderBoard();
+  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','EDIT_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE'].includes(type)) renderBoard();
   // A playful "pop" the moment something new lands on the board — for every client,
   // local placer and remote viewers alike, since this runs from inside applyRoomEvent
   // itself rather than the call site. Only ever added to a piece/token/zone element
@@ -1271,8 +1361,9 @@ function popInEl(cssClass, id){
   setTimeout(()=> el.classList.remove('pop-in'), 380);
 }
 
-// Human-readable text for a synced event — used for real-time toasts (remote
-// events only) and for the on-demand full history fetch (see openHistory()).
+// Human-readable text for a synced event — used for the chat's history bubbles
+// (remote events only, see showHistoryBubble) and for the on-demand full
+// history flyout (see loadHistoryFlyout()).
 function describeEvent(type, payload, playerName){
   switch(type){
     case 'PLACE_PIECE': return payload.kind==='image' ? `${playerName} placed a custom piece` : `${playerName} placed a pile (${(payload.cardIds||[]).length} cards)`;
@@ -1297,6 +1388,9 @@ function describeEvent(type, payload, playerName){
     case 'DRAW_TOP': return `${playerName} took the top card of a pile`;
     case 'REMOVE_CARD': return `${playerName} removed a card from a pile`;
     case 'DEFINE_TOKEN_TYPE': return `${playerName} defined a "${payload.name}" token type`;
+    case 'EDIT_TOKEN_TYPE': return payload.oldName!==payload.name
+      ? `${playerName} renamed the "${payload.oldName}" token type to "${payload.name}"`
+      : `${playerName} edited the "${payload.name}" token type`;
     case 'PLACE_ZONE': return `${playerName} created a zone${payload.label?` "${payload.label}"`:''}`;
     case 'SET_ZONE_RECT': return `${playerName} resized/moved a zone`;
     case 'SET_ZONE_STYLE': return `${playerName} edited a zone`;
@@ -1393,6 +1487,7 @@ async function importDeckJson(deckJson, dropX, dropY){
 function applyView(){
   const world = document.getElementById('boardWorld');
   world.style.transform = `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.scale})`;
+  syncGridBackground();
 }
 // Rotation is a SEPARATE outer layer (#boardRotate) around the already-panned/zoomed
 // content, pivoting on the viewport's own visual center — this avoids needing to
@@ -1658,10 +1753,25 @@ function renderTurnTracker(){
 const LS_SHOW_GRID_KEY = 'eoo_show_grid';
 const LS_GRID_SIZE_KEY = 'eoo_grid_size';
 function applyGridDisplay(){
-  document.getElementById('boardWorld').classList.toggle('show-grid', state.showGrid);
-  document.documentElement.style.setProperty('--grid-size', state.gridSize+'px');
+  document.getElementById('boardGrid').classList.toggle('show-grid', state.showGrid);
   document.getElementById('showGridCheckbox').checked = state.showGrid;
   document.getElementById('gridSizeInput').value = state.gridSize;
+  document.getElementById('gridSizeInput').classList.toggle('hidden', !state.showGrid);
+  syncGridBackground();
+}
+// Keeps #boardGrid's own background-size/position lined up with the current
+// pan/zoom (state.view.x/y/scale) and with world coordinate (0,0), so the
+// grid lines land exactly on the multiples of state.gridSize that
+// snapCoord-style snapping would actually snap to, panning and zooming
+// smoothly along with everything else in #boardWorld even though the grid
+// itself lives on a separate, plainly-sized element (see the CSS comment on
+// #boardGrid for why it has to).
+function syncGridBackground(){
+  const grid = document.getElementById('boardGrid');
+  if(!grid) return;
+  const size = Math.max(1, state.gridSize * state.view.scale);
+  grid.style.backgroundSize = `${size}px ${size}px`;
+  grid.style.backgroundPosition = `${state.view.x}px ${state.view.y}px`;
 }
 function initGridDisplay(){
   const storedShow = localStorage.getItem(LS_SHOW_GRID_KEY);
@@ -1687,14 +1797,24 @@ document.getElementById('gridSizeInput').addEventListener('change', (e)=>{
    CHAT (no board mutation); shows as a fading bubble for everyone and is
    also captured in the full history like any other synced event.
    ========================================================================= */
-function showChatBubble(playerName, text){
+function showChatBubble(playerName, text, isHistory){
   const log = document.getElementById('chatLog');
   const bubble = document.createElement('div');
-  bubble.className = 'chat-bubble';
-  bubble.innerHTML = `<b>${escapeHtml(playerName)}:</b> ${escapeHtml(text)}`;
+  bubble.className = isHistory ? 'chat-bubble history-bubble' : 'chat-bubble';
+  bubble.innerHTML = playerName ? `<b>${escapeHtml(playerName)}:</b> ${escapeHtml(text)}` : escapeHtml(text);
   log.appendChild(bubble);
   setTimeout(()=> bubble.remove(), 6000);
   while(log.children.length>8) log.removeChild(log.firstChild);
+}
+// A synced game action (someone flipped a card, splayed a pile, etc.) — shown
+// as a bubble right in the chat feed instead of the old standalone toast, and
+// pops the chat panel open so it's never missed even while collapsed. The
+// "Show in chat" checkbox in the history flyout can hide just these bubbles
+// (see #chatPanel.hide-history) without touching real chat messages or the
+// on-demand full history in the flyout itself.
+function showHistoryBubble(text){
+  showChatBubble(null, text, true);
+  setChatCollapsed(false);
 }
 document.getElementById('chatInput').addEventListener('keydown', (e)=>{
   if(e.key!=='Enter') return;
@@ -1718,6 +1838,19 @@ document.getElementById('btnChatToggle').addEventListener('click', ()=>{
   setChatCollapsed(!document.getElementById('chatPanel').classList.contains('collapsed'));
 });
 setChatCollapsed(localStorage.getItem(LS_CHAT_COLLAPSED_KEY) === '1');
+
+// Whether game-action bubbles (see showHistoryBubble) show up in the chat feed
+// at all — on by default, since "pop the chat open on every game action" is
+// the whole point of task; turning it off just filters .history-bubble out of
+// #chatLog via CSS, real chat messages are never affected either way.
+const LS_SHOW_HISTORY_IN_CHAT_KEY = 'eoo_room_show_history_in_chat';
+function setShowHistoryInChat(show){
+  document.getElementById('chatPanel').classList.toggle('hide-history', !show);
+  document.getElementById('chkShowHistoryInChat').checked = show;
+  localStorage.setItem(LS_SHOW_HISTORY_IN_CHAT_KEY, show ? '1' : '0');
+}
+document.getElementById('chkShowHistoryInChat').addEventListener('change', (e)=> setShowHistoryInChat(e.target.checked));
+setShowHistoryInChat(localStorage.getItem(LS_SHOW_HISTORY_IN_CHAT_KEY) !== '0');
 
 function pieceTopFace(p){
   const idx = p.cardIds.length-1;
@@ -1892,12 +2025,11 @@ function renderBoard(){
         // never needed that class in the first place.
         // Every card — the anchor included — has at least one live,
         // draggable edge now (see wireSplayAdjustDrag/isOnAnchorSplayEdge);
-        // the anchor just gets BOTH edges along the axis instead of the one
-        // every other card is limited to.
-        const cls = 'splay-card splay-adjust-target';
-        const hint = i===topIndex ? anchorSplayEdgeHintHtml(dir) : splayEdgeHintHtml(dir);
+        // the anchor gets both edges along the axis instead of the one every
+        // other card is limited to. No visual decoration on any of it — see
+        // the CSS comment on .splay-card — just the cursor change on hover.
         const rotStyle = rot ? `transform:rotate(${rot}deg);` : '';
-        const cardHtml = `<div class="${cls}" data-i="${i}" style="left:${left}px;top:${top}px;${rotStyle}">${cardFaceHtml(cid, p.faceStates[i])}${hint}</div>`;
+        const cardHtml = `<div class="splay-card" data-i="${i}" style="left:${left}px;top:${top}px;${rotStyle}">${cardFaceHtml(cid, p.faceStates[i])}</div>`;
         if(preview && i>=preview.insertIndex) afterCards.push(cardHtml); else beforeCards.push(cardHtml);
       });
       let html = beforeCards.join('');
@@ -1959,7 +2091,10 @@ function renderBoard(){
       // on top of (and covering) the label anymore — see the CSS comment on
       // .piece-label.stack-handle.
       const labelHandle = el.querySelector('.piece-label.stack-handle');
-      if(labelHandle) wireGroupHandleDrag(labelHandle, p);
+      if(labelHandle){
+        wireGroupHandleDrag(labelHandle, p);
+        wireStackLabelHover(labelHandle, p.id); // see hoveredLabelId — scopes the R/F/S hotkeys to the whole pile
+      }
     }
     if(p.kind!=='image') el.addEventListener('dblclick', ()=> flipTopCard(p.id));
     wireHotkeyHint(el, p.id);
@@ -1967,6 +2102,7 @@ function renderBoard(){
     if(hoveredPieceId===p.id) showHotkeyHint(el); // re-anchor the hint to the freshly-rebuilt element
   });
   if(hoveredPieceId && !state.pieces.has(hoveredPieceId)){ hoveredPieceId = null; hoveredCardIndex = null; hideHotkeyHint(); }
+  if(hoveredLabelId && !state.pieces.has(hoveredLabelId)) hoveredLabelId = null;
   renderTokens();
   renderPlayerCounters();
 }
@@ -2415,12 +2551,14 @@ function wireWholeInteraction(el, p){
 }
 // The pile's label, doubling as its "move whole stack" handle — always a
 // whole-piece move (never a peel), and a plain click on it opens the STACK
-// radial menu (top-card actions plus the pile-wide ones — see
-// openPieceRadialMenu) rather than moving anything. This is the one way to
-// reach that menu on an already-SPLAYED pile, where every individual card
-// now opens its own single-card menu instead (see wirePeelInteraction/
-// wireSplayAdjustDrag) — the label handle is what still represents "the
-// pile as a whole" there.
+// radial menu (pile-wide actions only — Flip/Shuffle/Rotate/Label/Search/
+// Lock/Remove, no per-card items — see openPieceRadialMenu) rather than
+// moving anything. This is now the ONLY way to reach that menu: a click on
+// the card face itself — whether that's an unsplayed pile's own top card
+// (see wireStackInteraction) or any individual card picked out of a splay
+// (see wirePeelInteraction/wireSplayAdjustDrag) — always opens the
+// single-card menu instead, scoped to that one card. The label handle is
+// what still represents "the pile as a whole."
 function wireGroupHandleDrag(handleEl, p){
   let startX, startY, ghost=null;
   wirePressDragClick(handleEl, {
@@ -2748,12 +2886,16 @@ function toggleZoneLock(zoneId){
 
 /* =========================================================================
    HOTKEY HINT — while hovering a board piece with the mouse (desktop only),
-   F flips a card, R rotates it a quarter-turn, and D draws it into your hand.
-   For an unsplayed pile (or a single card) that's always the pile's own top
-   card / the one card there is; hovering a SPLAYED pile, all three instead
-   target specifically whichever card is under the cursor right now (see
-   hoveredCardIndex below) — same as picking that card's own single-card
-   radial menu action, just via the keyboard. A small reminder pill tracks
+   F flips a card, R rotates it a quarter-turn, D draws it into your hand, and
+   P peeks at it privately. For an unsplayed pile (or a single card) that's
+   always the pile's own top card / the one card there is; hovering a
+   SPLAYED pile, all four instead target specifically whichever card is under
+   the cursor right now (see hoveredCardIndex below) — same as picking that
+   card's own single-card radial menu action, just via the keyboard.
+   Hovering the pile's LABEL specifically (see hoveredLabelId) reuses R/F/S
+   for the STACK-wide equivalents instead (Rotate/Flip/Search the whole
+   pile) — same actions the label-click radial menu's stack-only items call.
+   A small reminder pill tracks
    the piece (and rewords itself for "this card only" — see showHotkeyHint)
    so the keys are discoverable without cluttering the radial menu.
    ========================================================================= */
@@ -2766,6 +2908,20 @@ let hoveredCardIndex = null;
 function wireCardHoverIndex(cardEl, i){
   cardEl.addEventListener('mouseenter', ()=>{ hoveredCardIndex = i; });
   cardEl.addEventListener('mouseleave', ()=>{ if(hoveredCardIndex===i) hoveredCardIndex = null; });
+}
+// Which pile's own LABEL (not just the pile in general) the mouse is
+// currently over — separate from hoveredPieceId because mouseenter/
+// mouseleave don't bubble: entering the label (a child of the piece `el`
+// wireHotkeyHint is attached to) never re-fires the piece's own mouseenter,
+// so hoveredPieceId alone can't tell "hovering the pile" apart from
+// "hovering its label specifically." The keydown handler below checks this
+// to scope R/F/S to the whole stack (matching the label-click radial menu —
+// see openPieceRadialMenu's stack-only branch) instead of the per-card
+// actions those same letters mean everywhere else on the pile.
+let hoveredLabelId = null;
+function wireStackLabelHover(labelEl, pieceId){
+  labelEl.addEventListener('mouseenter', ()=>{ hoveredLabelId = pieceId; });
+  labelEl.addEventListener('mouseleave', ()=>{ if(hoveredLabelId===pieceId) hoveredLabelId = null; });
 }
 function isTextEntryFocused(){
   const a = document.activeElement;
@@ -2793,12 +2949,14 @@ function showHotkeyHint(el){
   const rotateLabel = perCard ? 'Rotate card' : 'Rotate';
   const flipLabel = perCard ? 'Flip card' : 'Flip';
   const drawLabel = perCard ? 'Draw card' : 'Draw';
+  const peekLabel = perCard ? 'Peek card' : 'Peek';
   hint.innerHTML = (p && p.kind==='image')
-    ? `<div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> Rotate</div>` // an image piece has no card faces to flip or draw from
+    ? `<div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> Rotate</div>` // an image piece has no card faces to flip, draw, or peek at
     : `
     <div class="hk-item"><kbd>F</kbd> ${flipLabel}</div>
     <div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> ${rotateLabel}</div>
     <div class="hk-item"><kbd>D</kbd> ${drawLabel}</div>
+    <div class="hk-item"><kbd>P</kbd> ${peekLabel}</div>
   `;
   const rect = el.getBoundingClientRect();
   hint.classList.remove('hidden');
@@ -2822,9 +2980,24 @@ document.addEventListener('keydown', (e)=>{
   // flipTopCard/drawTopCard's own "no cardIndex given" default of the top
   // card, same as rotateCardAt/rotatePiece already does with null.
   const cardIdx = (p.splayed && p.cardIds.length>1 && hoveredCardIndex!=null && hoveredCardIndex<p.cardIds.length) ? hoveredCardIndex : undefined;
+  // Hovering the pile's own LABEL (rather than a card face) reuses these same
+  // letters for the STACK-wide equivalents instead — same actions the split
+  // radial menu's Rotate/Flip/Search stack-only items call (see
+  // openPieceRadialMenu) — so R/F/S never have to mean two different scopes
+  // depending on a pixel you can't see the boundary of; only a multi-card
+  // pile actually has a label to hover in the first place.
+  if(hoveredLabelId===hoveredPieceId && p.cardIds.length>1){
+    if(key==='r'){ e.preventDefault(); rotateCardAt(hoveredPieceId, null, e.shiftKey ? -1 : 1); return; }
+    if(key==='f'){ e.preventDefault(); flipStack(hoveredPieceId); return; }
+    if(key==='s'){ e.preventDefault(); openSearchModal(hoveredPieceId); return; }
+  }
   if(key==='r'){ e.preventDefault(); rotatePiece(hoveredPieceId, e.shiftKey ? -1 : 1); }
   else if(p.kind!=='image' && key==='f'){ e.preventDefault(); flipTopCard(hoveredPieceId, cardIdx); }
   else if(p.kind!=='image' && key==='d'){ e.preventDefault(); drawTopCard(hoveredPieceId, 'hand', cardIdx); }
+  // P hotkey (item 5): same hoveredPieceId/cardIdx targeting convention as
+  // F/D above — peeks at whichever card is under the cursor (the pile's own
+  // top card by default, or the specific splay card being hovered).
+  else if(p.kind!=='image' && key==='p'){ e.preventDefault(); peekTopCard(hoveredPieceId, cardIdx); }
 });
 
 // True when the cursor (in world coords) is over the BOTTOM THIRD of the
@@ -3004,27 +3177,6 @@ function splaySpacingForCursor(p, dir, clientX, clientY, depth){
   const spacing = raw / (depth||1);
   return Math.max(SPLAY_MIN, Math.min(splayMaxFor(dir), spacing));
 }
-// The thin accent bar drawn on the adjust-target card's one draggable edge
-// (see isOnSplayAdjustEdge) — a fixed 6px thick, running the full length of
-// that edge, so only what's actually live gets a visual cue instead of the
-// whole card.
-function splayEdgeHintHtml(dir){
-  const T = 6;
-  let style;
-  if(dir==='left') style = `left:0;top:0;bottom:0;width:${T}px;`;
-  else if(dir==='right') style = `right:0;top:0;bottom:0;width:${T}px;`;
-  else if(dir==='up') style = `left:0;right:0;top:0;height:${T}px;`;
-  else style = `left:0;right:0;bottom:0;height:${T}px;`; // 'down'
-  return `<div class="splay-edge-hint" style="${style}"></div>`;
-}
-// The anchor card gets BOTH bars along the splay's axis — see
-// isOnAnchorSplayEdge — since either edge is live for it, unlike every other
-// card which only ever has the one matching the current direction.
-function anchorSplayEdgeHintHtml(dir){
-  return (dir==='left'||dir==='right')
-    ? splayEdgeHintHtml('left')+splayEdgeHintHtml('right')
-    : splayEdgeHintHtml('up')+splayEdgeHintHtml('down');
-}
 // An UNSPLAYED multi-card pile: grabbing the thin border strip around its own
 // edge (stackEdgeAt) begins a splay in that edge's direction right away —
 // dragging further out grows the spacing exactly like wireSplayAdjustDrag
@@ -3073,7 +3225,11 @@ function wireStackInteraction(el, p){
       if(!ctx){ ctx = beginPeelAsPiece(p, p.cardIds.length-1, ev.clientX, ev.clientY); if(!ctx) return; }
       driveWholePieceDrag(ctx, ev.clientX-ctx.pickupClientX, ev.clientY-ctx.pickupClientY, ev);
     },
-    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
+    // Explicitly the TOP card's own index — not the combined stack menu — so
+    // clicking the card's own face always opens the single-card menu, same
+    // as picking any other card out of a splay does. The pile-wide menu now
+    // lives exclusively behind the label handle (see wireGroupHandleDrag).
+    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, p.cardIds.length-1),
     onDrop: (dx, dy, ev)=>{
       document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
       if(mode==='edge'){
@@ -3155,16 +3311,18 @@ function isOnAnchorSplayEdge(p, clientX, clientY){
 // consecutive outer edges equal no matter which card you dragged.
 //
 // The ANCHOR card (cardIndex === the pile's own top index) is the one
-// exception to all of that: it has no depth of its own (always 0 — it never
-// moves), so there's nothing to divide by. Grabbing one of ITS two edges
-// (see isOnAnchorSplayEdge) instead drives the spacing directly off the raw
-// cursor distance past that edge — exactly the same math the pile used the
-// very first time it was fanned out via wireStackInteraction (depth 1) —
-// which just happens to also be the most convenient card to grab, since
-// it's the one card in the pile that's always fully exposed regardless of
-// how tight the fan currently is.
+// exception to all of that: it has no depth of its own (always 0), so
+// there's no per-card spacing to set here at all. Grabbing one of ITS two
+// edges (see isOnAnchorSplayEdge) instead SLIDES THE WHOLE PILE along the
+// locked axis, 1:1 with the cursor, same as any other whole-piece move (just
+// constrained to one axis) — the anchor card itself visibly tracks the
+// cursor exactly, and since every other card's position is that same fixed
+// `spacing` away from the anchor (see renderBoard's offsetFor), they all
+// slide along with it, keeping the gaps between consecutive outer edges
+// exactly as they were — nothing about the fan's spacing changes, only
+// where the whole thing sits.
 function wireSplayAdjustDrag(cardEl, p, cardIndex){
-  let mode=null, old=null, ctx=null;
+  let mode=null, old=null, ctx=null, axis=null, startX=null, startY=null;
   const isAnchor = cardIndex === p.cardIds.length-1;
   const depthOf = ()=> Math.max(1, (p.cardIds.length-1) - cardIndex);
   const onEdgeAt = (clientX, clientY)=> isAnchor
@@ -3181,8 +3339,12 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
       if(p.locked) return false;
       if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
       const onEdge = onEdgeAt(e.clientX, e.clientY);
-      mode = onEdge ? 'adjust' : 'peel';
-      if(mode==='adjust'){
+      mode = !onEdge ? 'peel' : (isAnchor ? 'move-axis' : 'adjust');
+      if(mode==='move-axis'){
+        axis = (p.splayDir==='left'||p.splayDir==='right') ? 'x' : 'y';
+        startX = p.x; startY = p.y;
+        document.body.classList.add(axis==='x' ? 'force-cursor-ew' : 'force-cursor-ns');
+      } else if(mode==='adjust'){
         old = { splayed:true, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
         // Locked for the whole drag, same reasoning as wireStackInteraction's
         // own edge-drag lock — see the force-cursor-ew/ns CSS.
@@ -3190,11 +3352,17 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
       }
     },
     onMove: (dx, dy, ev)=>{
+      if(mode==='move-axis'){
+        const d = screenDeltaToWorldDelta(dx, dy);
+        if(axis==='x') p.x = startX+d.x; else p.y = startY+d.y;
+        const pieceEl = document.querySelector(`.piece[data-id="${p.id}"]`);
+        if(pieceEl){ pieceEl.style.left = p.x+'px'; pieceEl.style.top = p.y+'px'; }
+        repositionAttachedTokens(p.id);
+        return;
+      }
       if(mode==='adjust'){
         const dir = old.dir; // locked — never recomputed from the drag vector
-        const spacing = isAnchor
-          ? splaySpacingForCursor(p, dir, ev.clientX, ev.clientY) // depth 1 — see comment above
-          : splaySpacingForCursor(p, dir, ev.clientX, ev.clientY, depthOf());
+        const spacing = splaySpacingForCursor(p, dir, ev.clientX, ev.clientY, depthOf());
         previewSplay(p.id, true, dir, spacing);
         return;
       }
@@ -3203,6 +3371,17 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
     },
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, cardIndex), // single-card menu for THIS card specifically
     onDrop: (dx, dy, ev)=>{
+      if(mode==='move-axis'){
+        document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
+        p.x = snapCoord(p.x); p.y = snapCoord(p.y);
+        ({x:p.x, y:p.y} = applyZoneSnap(p.x, p.y, pieceW(p), pieceH(p)));
+        postRoomEvent('MOVE_PIECE', {id:p.id, x:p.x, y:p.y});
+        renderBoard();
+        if(p.x!==startX || p.y!==startY){
+          setUndo(()=> doAction('MOVE_PIECE', {id:p.id, x:startX, y:startY}));
+        }
+        return;
+      }
       if(mode==='adjust'){
         document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
         const p2 = state.pieces.get(p.id); if(!p2) return;
@@ -3425,29 +3604,30 @@ function singleCardMenuItems(p, cardIndex){
     {icon:'🗑', label:'Remove', action:()=>removeCard(p.id, cardIndex)},
   ];
 }
-// Two different menus, depending on WHAT was actually clicked:
+// Two different menus, depending on WHAT was actually clicked — no more
+// single combined menu mixing both scopes into one overloaded ring:
 //
-// - Any individual card — a genuinely standalone single-card piece, or ANY
-//   one card picked out of a splay (the anchor included) — gets just the 5
-//   single-card actions above, scoped to that one card. Pass `cardIndex`
-//   explicitly whenever the click landed on a specific splay card (see
-//   wirePeelInteraction/wireSplayAdjustDrag); it's what tells this apart
-//   from the stack case below even for a card that happens to be the pile's
-//   own top card. A genuinely standalone lone card (no stack to speak of at
-//   all) also gets a Lock/Unlock — there's no separate "stack handle" it
-//   could ever reach a Lock Stack option through, and pinning a single card
+// - Any individual card — a genuinely standalone single-card piece, ANY one
+//   card picked out of a splay (the anchor included), OR the top card's own
+//   face on an UNSPLAYED pile clicked directly (see wireStackInteraction,
+//   which now always passes the top index as `cardIndex` rather than leaving
+//   it null) — gets just the 5 single-card actions above, scoped to that one
+//   card. A genuinely standalone lone card (no stack to speak of at all)
+//   also gets a Lock/Unlock — there's no separate "stack handle" it could
+//   ever reach a stack-wide Lock option through, and pinning a single card
 //   in place is still a reasonable thing to want. It does NOT get a Label,
 //   though — that one's pile-flavored enough (labeling a specific card
 //   within a stack wouldn't make much sense either) that it stays exclusive
 //   to the Stack menu below.
-// - The STACK itself — an unsplayed pile's own single visible face (no
-//   individual cards to pick between), or the pile's "move whole stack"
-//   label handle clicked without dragging it (see wireGroupHandleDrag) —
-//   gets those same 5 actions for its top card PLUS the pile-wide ones
-//   (Flip/Shuffle/Label/Search/Lock/Remove Stack), visually set apart as a
-//   distinct accent-tinted cluster with a gap on each side (see
-//   openRadialMenu's divider support and .stack-action) rather than mixed
-//   into one undifferentiated ring.
+// - The STACK itself — reached ONLY through its "move whole stack" label
+//   handle clicked without dragging it (see wireGroupHandleDrag), never
+//   through the card face anymore — gets just the pile-wide actions
+//   (Flip/Shuffle/Rotate/Label/Search/Lock/Remove), no per-card items mixed
+//   in, since the label represents the pile as a whole rather than any one
+//   card. "Stack" is dropped from every label here — the whole ring is
+//   already, by construction, stack-scoped, so repeating it on every item
+//   would just be noise. Rotate reuses the exact same whole-piece rotation
+//   rotateCardAt already does for cardIndex===null (see its own comment).
 function openPieceRadialMenu(pieceId, clientX, clientY, cardIndex){
   openRadialMenu(()=>{
     const p = state.pieces.get(pieceId); if(!p) return null;
@@ -3464,22 +3644,22 @@ function openPieceRadialMenu(pieceId, clientX, clientY, cardIndex){
     const isStack = p.cardIds.length>1;
     const targetIndex = cardIndex!=null ? cardIndex : p.cardIds.length-1; // default: the top/anchor card
     const cardItems = singleCardMenuItems(p, targetIndex);
-    if(cardIndex!=null) return cardItems; // one specific card picked out of a splay
+    if(cardIndex!=null) return cardItems; // one specific card — a splay pick, or the stack's own top card face
     if(!isStack){
       // A genuinely standalone lone card — see the doc comment above for why
       // Lock (but not Label) still gets tacked on here.
       return [...cardItems, {icon: p.locked?'🔓':'🔒', label: p.locked?'Unlock':'Lock', action:()=>togglePieceLock(pieceId)}];
     }
+    // Only reachable via the label handle now (see the doc comment above) —
+    // stack-wide actions only, none of the per-card items.
     return [
-      ...cardItems,
-      {divider:true},
-      {icon:'🔃', label:'Flip Stack', group:'stack', action:()=>flipStack(pieceId)},
-      {icon:'🔀', label:'Shuffle Stack', group:'stack', action:()=>shufflePiece(pieceId)},
-      {icon:'🏷', label: p.label?'Rename Stack':'Label Stack', group:'stack', action:()=>setPieceLabel(pieceId)},
-      {icon:'🔍', label:'Search Stack', group:'stack', action:()=>openSearchModal(pieceId)},
-      {icon: p.locked?'🔓':'🔒', label: p.locked?'Unlock Stack':'Lock Stack', group:'stack', action:()=>togglePieceLock(pieceId)},
-      {icon:'🗑', label:'Remove Stack', group:'stack', action:()=>doAction('REMOVE_PIECE', {id:pieceId})},
-      {divider:true},
+      {icon:'🔃', label:'Flip', group:'stack', action:()=>flipStack(pieceId)},
+      {icon:'🔀', label:'Shuffle', group:'stack', action:()=>shufflePiece(pieceId)},
+      {icon:'↻', label:'Rotate', group:'stack', action:()=>rotateCardAt(pieceId, null, 1)},
+      {icon:'🏷', label: p.label?'Rename':'Label', group:'stack', action:()=>setPieceLabel(pieceId)},
+      {icon:'🔍', label:'Search', group:'stack', action:()=>openSearchModal(pieceId)},
+      {icon: p.locked?'🔓':'🔒', label: p.locked?'Unlock':'Lock', group:'stack', action:()=>togglePieceLock(pieceId)},
+      {icon:'🗑', label:'Remove', group:'stack', action:()=>doAction('REMOVE_PIECE', {id:pieceId})},
     ];
   }, clientX, clientY);
 }
@@ -3578,9 +3758,20 @@ function renderPlayerCounters(){
 function openTokenTypeMenu(){
   const menu = document.getElementById('tokenMenu');
   const types = [...state.tokenTypes.entries()];
+  // Each existing type gets its own small pencil (data-edit) alongside the
+  // dot+name (data-type) that places a token of it — a separate element
+  // (not the same click target) so "place a token" and "edit this type"
+  // stay two distinct, unambiguous gestures rather than overloading one
+  // click with a modifier key or a long-press.
   menu.innerHTML = types.map(([name,color])=>
-    `<div class="token-type-item" data-type="${escapeHtml(name)}"><span class="token-dot" style="background:${color}"></span>${escapeHtml(name)}</div>`
+    `<div class="token-type-item" data-type="${escapeHtml(name)}"><span class="token-dot" style="background:${color}"></span>${escapeHtml(name)}<span class="token-type-edit" data-edit="${escapeHtml(name)}" title="Edit this token type">✎</span></div>`
   ).join('') + `<div class="token-type-item" data-type="__new"><span class="token-dot" style="background:var(--surface-2);border:1px dashed var(--text-soft);"></span>New type…</div>`;
+  menu.querySelectorAll('[data-edit]').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      e.stopPropagation(); // don't also trigger the row's own data-type click (placeNewToken)
+      openEditTokenTypeForm(el.dataset.edit);
+    });
+  });
   menu.querySelectorAll('[data-type]').forEach(el=>{
     el.addEventListener('click', (e)=>{
       // Without this, the click bubbles up to the document-level outside-click
@@ -3614,6 +3805,29 @@ function openNewTokenTypeForm(){
   });
   // The form is taller than the plain type list it replaced — re-measure and
   // re-clamp now that the (bigger) content is actually in the DOM.
+  positionMenuNear(menu, document.getElementById('btnAddToken'));
+}
+// Same markup/logic as openNewTokenTypeForm above, in "edit" mode: prefilled
+// with the type's current name/color, saving edits an existing type in place
+// (EDIT_TOKEN_TYPE) instead of defining and immediately placing a new one —
+// see EDIT_TOKEN_TYPE's own comment in applyRoomEvent for exactly how a
+// rename propagates to already-placed tokens of this type.
+function openEditTokenTypeForm(oldName){
+  const oldColor = state.tokenTypes.get(oldName) || '#546178';
+  const menu = document.getElementById('tokenMenu');
+  menu.innerHTML = `
+    <div class="popover-row"><label>Name</label><input type="text" id="editTokenTypeName" value="${escapeHtml(oldName)}" style="flex:1;"></div>
+    <div class="popover-row"><label>Color</label><input type="color" id="editTokenTypeColor" value="${oldColor}"></div>
+    <div class="popover-actions"><div class="btn btn-accent btn-sm" id="btnSaveTokenType" style="flex:1;justify-content:center;">Save</div></div>
+  `;
+  document.getElementById('btnSaveTokenType').addEventListener('click', ()=>{
+    const name = document.getElementById('editTokenTypeName').value.trim();
+    const color = document.getElementById('editTokenTypeColor').value;
+    if(!name) return;
+    doAction('EDIT_TOKEN_TYPE', {oldName, name, color});
+    setUndo(()=> doAction('EDIT_TOKEN_TYPE', {oldName:name, name:oldName, color:oldColor}));
+    menu.classList.add('hidden');
+  });
   positionMenuNear(menu, document.getElementById('btnAddToken'));
 }
 document.getElementById('btnAddToken').addEventListener('click', (e)=>{
@@ -4106,10 +4320,17 @@ function renderZones(){
     el.style.border = `${z.strokeWidth!=null?z.strokeWidth:2}px solid ${z.strokeColor||'#3d7dca'}`;
     el.innerHTML = (z.label ? `<div class="zone-label">${escapeHtml(z.label)}</div>` : '') + (z.locked ? `<div class="lock-badge">🔒</div>` : '');
     if(state.zoneEditMode && !z.locked){
-      const handle = document.createElement('div');
-      handle.className = 'zone-handle br';
-      el.appendChild(handle);
-      wireZoneResize(handle, z);
+      // All 4 edges + all 4 corners (see wireZoneResize's own comment for how
+      // each direction maps to which of x/y/w/h it actually adjusts) —
+      // previously just the one bottom-right corner, which meant a zone
+      // could never be resized from its top or left side, or from a single
+      // edge alone, without first moving it to compensate.
+      ['nw','n','ne','e','se','s','sw','w'].forEach(dir=>{
+        const handle = document.createElement('div');
+        handle.className = 'zone-handle ' + dir;
+        el.appendChild(handle);
+        wireZoneResize(handle, z, dir);
+      });
     }
     wireZoneDrag(el, z);
     world.appendChild(el);
@@ -4147,21 +4368,37 @@ function wireZoneDrag(el, z){
     },
   });
 }
-function wireZoneResize(handleEl, z){
+// `dir` is which edge(s)/corner this particular handle drags — any
+// combination of 'n'/'s' (top/bottom) and 'e'/'w' (right/left). An 'e'/'s'
+// component just grows/shrinks w/h from the OPPOSITE (fixed) side, same as
+// the old bottom-right-only handle always did. An 'n'/'w' component instead
+// has to move x/y too, by exactly however much w/h actually changed (not by
+// the raw drag delta) — that's what keeps the FAR edge/corner fixed in place
+// while the near one tracks the cursor, rather than the whole zone sliding
+// along with the drag the way it would if only x/y moved and w/h didn't
+// compensate. Same Math.max(40, …) minimum as before, now applied per-axis.
+function wireZoneResize(handleEl, z, dir){
   handleEl.addEventListener('mousedown', (e)=>{
     e.stopPropagation();
-    const startClientX=e.clientX, startClientY=e.clientY, startW=z.w, startH=z.h;
+    const startClientX=e.clientX, startClientY=e.clientY;
+    const startX=z.x, startY=z.y, startW=z.w, startH=z.h;
     function onMove(ev){
       const d = screenDeltaToWorldDelta(ev.clientX-startClientX, ev.clientY-startClientY);
-      z.w = Math.max(40, startW+d.x); z.h = Math.max(40, startH+d.y);
+      let x=startX, y=startY, w=startW, h=startH;
+      if(dir.includes('e')) w = Math.max(40, startW + d.x);
+      if(dir.includes('s')) h = Math.max(40, startH + d.y);
+      if(dir.includes('w')){ w = Math.max(40, startW - d.x); x = startX + (startW - w); }
+      if(dir.includes('n')){ h = Math.max(40, startH - d.y); y = startY + (startH - h); }
+      z.x=x; z.y=y; z.w=w; z.h=h;
       const zoneEl = handleEl.closest('.zone');
+      zoneEl.style.left = z.x+'px'; zoneEl.style.top = z.y+'px';
       zoneEl.style.width = z.w+'px'; zoneEl.style.height = z.h+'px';
     }
     function onUp(){
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       doAction('SET_ZONE_RECT', {id:z.id, x:z.x, y:z.y, w:z.w, h:z.h});
-      setUndo(()=> doAction('SET_ZONE_RECT', {id:z.id, x:z.x, y:z.y, w:startW, h:startH}));
+      setUndo(()=> doAction('SET_ZONE_RECT', {id:z.id, x:startX, y:startY, w:startW, h:startH}));
     }
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -4343,9 +4580,12 @@ document.getElementById('peekPopup').addEventListener('click', ()=> document.get
    joined or refreshed, browsable all the way back to the start of the game.
    ========================================================================= */
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-async function openHistory(){
-  document.getElementById('historyModal').classList.remove('hidden');
-  const body = document.getElementById('historyBody');
+// The old top-toolbar History button opened this as a centered modal; it's
+// now a flyout anchored above the chat panel instead (see #historyFlyout),
+// opened from #btnChatHistory right next to the chat toggle — still fetched
+// fresh from the sheet every time it's opened, same as before.
+async function loadHistoryFlyout(){
+  const body = document.getElementById('historyFlyoutBody');
   body.innerHTML = 'Loading…';
   try{
     const url = `${ROOM_WEBAPP_URL}?pollRoom=${encodeURIComponent(state.sessionCode)}&sheetId=${encodeURIComponent(state.roomSheetId)}&since=0&_=${Date.now()}`;
@@ -4360,7 +4600,16 @@ async function openHistory(){
     body.innerHTML = 'Could not load history: '+escapeHtml(e.message);
   }
 }
-document.getElementById('btnHistory').addEventListener('click', openHistory);
+function toggleHistoryFlyout(){
+  const flyout = document.getElementById('historyFlyout');
+  const opening = flyout.classList.contains('hidden');
+  flyout.classList.toggle('hidden', !opening);
+  if(opening) loadHistoryFlyout();
+}
+document.getElementById('btnChatHistory').addEventListener('click', toggleHistoryFlyout);
+document.getElementById('btnCloseHistoryFlyout').addEventListener('click', ()=>{
+  document.getElementById('historyFlyout').classList.add('hidden');
+});
 
 /* =========================================================================
    LEAVE GAME — stops syncing and returns to setup. Purely local: nothing is
