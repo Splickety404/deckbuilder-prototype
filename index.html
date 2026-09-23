@@ -959,8 +959,12 @@ async function fetchWithTimeout(url, ms){
 
 // Fetches one authorized set's data given its root folder id — the server checks this
 // signed-in user's live Drive permission on that folder before returning anything.
-async function fetchSetData(folderId){
-  const url = `${WEBAPP_URL}?scanSet=${encodeURIComponent(folderId)}&idToken=${encodeURIComponent(state.idToken)}`;
+// `fast`: skips the server's live Drive art-folder scan so this returns as soon as the
+// sheet itself can be read, using whatever image URLs are already sitting in it from
+// the last sync — see fetchSetImages() below for the slower follow-up that catches
+// those URLs up in the background, without blocking on card text.
+async function fetchSetData(folderId, fast){
+  const url = `${WEBAPP_URL}?scanSet=${encodeURIComponent(folderId)}&idToken=${encodeURIComponent(state.idToken)}${fast?'&fast=1':''}`;
   let result;
   try{
     result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
@@ -978,6 +982,31 @@ async function fetchSetData(folderId){
   }
   if(!result.ok) throw new Error(result.error || 'Unknown error scanning that folder.');
   return result; // {ok:true, setName, sheetId, rows, genericBackUrl, genericBacks, pcio}
+}
+
+// The slow half a fast=true fetchSetData() skipped: runs that set's live Drive
+// art-folder scan and returns just the resulting id/front-image-url/back-image-url
+// triples (not full row data — the caller already has everything else). Meant to be
+// called once per set, right after that set's fast card data has already rendered.
+async function fetchSetImages(folderId){
+  const url = `${WEBAPP_URL}?syncSetImages=${encodeURIComponent(folderId)}&idToken=${encodeURIComponent(state.idToken)}`;
+  let result;
+  try{
+    result = await fetchWithTimeout(url + '&_=' + Date.now(), 30000);
+  }catch(fetchErr){
+    result = await new Promise((resolve,reject)=>{
+      const cbName = '__eooImgCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to sync art for that set.')); }, 45000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+  if(!result.ok) throw new Error(result.error || 'Unknown error syncing art for that set.');
+  return result; // {ok:true, sheetId, images:[{id,'front-image-url','back-image-url'}, ...]}
 }
 
 // Asks the server who this ID token belongs to, and which GAMES (each with only the
@@ -1034,7 +1063,10 @@ async function loadData(silent){
 
     for(const entry of state.authorizedSets){
       try{
-        const result = await fetchSetData(entry.folderId);
+        // fast=true: get card text back immediately without waiting on the slow
+        // live Drive art-folder scan — see the syncAllSetImages() call below, which
+        // catches art up per set in the background once the user can already work.
+        const result = await fetchSetData(entry.folderId, true);
         if(!state.headers.length && result.rows.length){
           state.headers = Object.keys(result.rows[0]);
           state.hasImages = state.headers.includes('front-image-url');
@@ -1075,18 +1107,61 @@ async function loadData(silent){
 
     state.cards = rows;
     state.byId = new Map(rows.map(r=>[r.id, r]));
-    setSyncStatus('synced ' + new Date().toLocaleTimeString() + (state.hasImages?'':' — no art columns found yet'));
     applyModeUI();
     applyPcioUI();
     computeAndCacheAspects();
     computeFieldDefs();
     renderAll();
+    // Card text is in and the grid is already rendered and usable — don't make the
+    // user wait on art too. hideLoadingOverlay() happens here, not after the image
+    // sync below, which runs in the background and pops each set's art in as its
+    // own scan finishes (see syncAllSetImages/applySetImages).
+    hideLoadingOverlay();
+    if(state.hasImages && rawSetResults.length){
+      setSyncStatus('synced ' + new Date().toLocaleTimeString() + ' — loading art…');
+      syncAllSetImages(rawSetResults);
+    } else {
+      setSyncStatus('synced ' + new Date().toLocaleTimeString() + (state.hasImages?'':' — no art columns found yet'));
+    }
   }catch(err){
     console.error(err);
     setSyncStatus('sync failed — check your connection ('+err.message+')');
     toast('Could not load card data: '+err.message);
+    hideLoadingOverlay();
   }
-  hideLoadingOverlay();
+}
+
+// Runs each authorized set's slow art-folder scan independently in the background —
+// as each one resolves, that set's cards update their art in place (see
+// applySetImages) rather than waiting for every set to finish first.
+function syncAllSetImages(rawSetResults){
+  let pending = rawSetResults.length;
+  rawSetResults.forEach(async (s)=>{
+    try{
+      const result = await fetchSetImages(s.folderId);
+      applySetImages(result.images || []);
+    }catch(e){
+      console.error('Could not sync art for set '+s.folderId+':', e);
+      toast(`Could not load art for "${s.setName}": ${e.message}`);
+    }
+    pending--;
+    if(pending<=0) setSyncStatus('synced ' + new Date().toLocaleTimeString());
+  });
+}
+
+// Merges freshly-synced image URLs (see the syncSetImages endpoint in Code.gs) into
+// already-loaded cards and re-renders anything currently showing art, so a card's
+// image "pops in" once it's ready without the user having to do anything.
+function applySetImages(images){
+  let changed = false;
+  images.forEach(img=>{
+    const c = state.byId.get(img.id);
+    if(!c) return;
+    const front = String(img['front-image-url']||'').trim();
+    const back = String(img['back-image-url']||'').trim();
+    if(c._front !== front || c._back !== back){ c._front = front; c._back = back; changed = true; }
+  });
+  if(changed) renderAll();
 }
 function setSyncStatus(s){ document.getElementById('sync-status').textContent = s; }
 function showLoadingOverlay(){ document.getElementById('loading-overlay').classList.add('active'); }
