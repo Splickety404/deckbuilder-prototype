@@ -920,11 +920,17 @@ function processRawRows(rawRows, setName, sheetId, isEchoMode){
 
 // Merges multiple sets' processed card lists into one, keeping exactly one entry per
 // id. When the same id appears in more than one set, the card with the NEWER
-// last-updated value wins (a missing/invalid last-updated loses to any real one).
+// last-updated value wins (a missing/invalid last-updated loses to any real one) and
+// becomes the displayed row (its own art, text, etc.) — but every set that id actually
+// appeared under is still recorded on _setNames (see below), not just the winner's.
 function mergeCardSets(setCardLists){
   const byId = new Map();
+  const setNamesById = new Map(); // id -> Set of every _setName this id appears under, across ALL loaded sets — not just whichever copy "wins" as the displayed row
   setCardLists.forEach(cards=>{
     cards.forEach(card=>{
+      if(!setNamesById.has(card.id)) setNamesById.set(card.id, new Set());
+      setNamesById.get(card.id).add(card._setName);
+
       const existing = byId.get(card.id);
       if(!existing){ byId.set(card.id, card); return; }
       const existingDate = new Date(existing['last-updated']);
@@ -936,6 +942,12 @@ function mergeCardSets(setCardLists){
       }
     });
   });
+  // A card that's the same id in more than one set (e.g. reprinted/shared into a
+  // later set) should stay visible under ANY of its sets' filters, not just whichever
+  // set's copy happened to win as the displayed row above — see cardMatchesFilters
+  // and generateSealedDeck's bySet(), both of which check the full list here rather
+  // than just the single primary _setName.
+  byId.forEach((card, id)=>{ card._setNames = [...setNamesById.get(id)]; });
   return [...byId.values()];
 }
 
@@ -1450,8 +1462,13 @@ document.getElementById('btnHelp').addEventListener('click', ()=>openHelpModal()
 function allSetNames(){
   // The filter UI needs the names actually attached to loaded cards (the server's
   // own setName for each folder), not just the authorized labels, so derive it from
-  // whatever _setName values are currently loaded.
-  return [...new Set(state.cards.map(c=>c._setName))];
+  // whatever _setName(s) values are currently loaded — the full _setNames list per
+  // card (see mergeCardSets), not just each card's single displayed/primary set.
+  const names = new Set();
+  state.cards.forEach(c=>{
+    ((c._setNames && c._setNames.length) ? c._setNames : [c._setName]).forEach(n=>names.add(n));
+  });
+  return [...names];
 }
 function renderSetFilterGroup(){
   const el = document.getElementById('setFilterGroup');
@@ -1648,7 +1665,10 @@ function generateSealedDeck(setName){
   const slot = freshDeckSlot();
   state.decks[deckType] = slot; // curDeck()/getLeader()/isAspectLegal below all read through this
 
-  const bySet = (c) => c._setName === setName;
+  // Same multi-set awareness as cardMatchesFilters: a card shared across sets is
+  // eligible for a sealed deck built from ANY set it belongs to, not only the set
+  // whose copy happens to be the displayed row.
+  const bySet = (c) => (c._setNames && c._setNames.length) ? c._setNames.includes(setName) : c._setName===setName;
 
   // 1. Leader
   const leader = weightedRandomPick(state.cards.filter(c=>c.type===leaderTypeName(deckType) && bySet(c)));
@@ -1862,7 +1882,14 @@ function cardMatchesFilters(c, exceptKey){
     const inDeck = activeIsSchemeMode() ? curDeck().schemeIds.includes(c.id) : curDeck().deckCards.has(c.id);
     if(!inDeck) return false;
   }
-  if(curFilters().hiddenSets && curFilters().hiddenSets.has(c._setName)) return false;
+  // A card that exists under more than one set (see mergeCardSets' _setNames) only
+  // gets filtered out here if EVERY set it belongs to is currently hidden — checking
+  // any one of its sets is enough to keep it visible, matching how set membership
+  // actually works rather than just whichever set's copy happens to be displayed.
+  if(curFilters().hiddenSets && curFilters().hiddenSets.size){
+    const names = (c._setNames && c._setNames.length) ? c._setNames : [c._setName];
+    if(names.every(n=>curFilters().hiddenSets.has(n))) return false;
+  }
   const s = curFilters().search.trim().toLowerCase();
   if(s && !( (c.name||'').toLowerCase().includes(s) || (c.ability||'').toLowerCase().includes(s) )) return false;
   for(const [key,set] of Object.entries(curFilters().multi)){
@@ -2108,10 +2135,22 @@ function computeCardStats(idCountPairs){
       const v = Number(c[key]);
       if(!isNaN(v)) skillTotals[key] += v*n;
     });
-    const checkType = String(c['skill-check-type']||'').trim();
-    if(SKILL_CHECK_TYPES.includes(checkType)){
+    // Matched case-insensitively and by substring rather than requiring an exact
+    // string — the sheet has used "Arcane type", "Arcane", and presumably other
+    // phrasings interchangeably, so any cell that MENTIONS one of the three skill
+    // names is enough (deliberately loose since this is free-text data entry, not a
+    // fixed dropdown). Also split on "/" the same way bonus-icons-scripted is below,
+    // so a card testing more than one skill (e.g. "Arcane / Stealth") counts its
+    // difficulty toward each type it lists.
+    const checkTypeRaw = String(c['skill-check-type']||'').trim();
+    if(checkTypeRaw){
       const diff = Number(c['difficulty']);
-      if(!isNaN(diff)) skillCheckDifficulty[checkType] += diff*n;
+      if(!isNaN(diff)){
+        checkTypeRaw.split('/').map(s=>s.trim().toLowerCase()).forEach(token=>{
+          const matchedType = SKILL_CHECK_TYPES.find(t=> token.includes(t.toLowerCase()));
+          if(matchedType) skillCheckDifficulty[matchedType] += diff*n;
+        });
+      }
     }
     // bonus-icons-scripted is "/"-delimited and can repeat (e.g. "Arcane / Arcane" is
     // 2 icons on one card) — each token counts once per copy in the weighted set.
