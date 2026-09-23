@@ -2006,9 +2006,17 @@ function renderDeckRulesChecklist(){
 
 // Shared by both stats panels (deck contents vs. currently-filtered view) — takes
 // [id, count] pairs so either caller can decide how "count" is determined.
+// Echo of Omens' three skill-check types — shared with the skill-check-type
+// column's own values, so a card's difficulty sums into the matching bucket.
+const SKILL_CHECK_TYPES = ['Arcane','Diplomacy','Stealth'];
+
 function computeCardStats(idCountPairs){
   const aspectCounts = {}, typeCounts = {}, iconCounts = {};
   const skillTotals = { 'inherent-arcane':0, 'inherent-diplomacy':0, 'inherent-stealth':0, 'attack':0, 'block':0 };
+  // Echo of Omens only: a skill-check card carries a Skill Check Type (Arcane/
+  // Diplomacy/Stealth) plus a separate Difficulty column — summed per type so a
+  // deck's checks can be compared at a glance (e.g. "this deck leans Stealth-heavy").
+  const skillCheckDifficulty = { 'Arcane':0, 'Diplomacy':0, 'Stealth':0 };
   let totalCost = 0, costedCount = 0, totalCards = 0;
   idCountPairs.forEach(([id,n])=>{
     if(n<=0) return;
@@ -2025,6 +2033,11 @@ function computeCardStats(idCountPairs){
       const v = Number(c[key]);
       if(!isNaN(v)) skillTotals[key] += v*n;
     });
+    const checkType = String(c['skill-check-type']||'').trim();
+    if(SKILL_CHECK_TYPES.includes(checkType)){
+      const diff = Number(c['difficulty']);
+      if(!isNaN(diff)) skillCheckDifficulty[checkType] += diff*n;
+    }
     // bonus-icons-scripted is "/"-delimited and can repeat (e.g. "Arcane / Arcane" is
     // 2 icons on one card) — each token counts once per copy in the weighted set.
     const iconsRaw = String(c['bonus-icons-scripted']||'').trim();
@@ -2035,11 +2048,14 @@ function computeCardStats(idCountPairs){
     }
   });
   const avgCost = costedCount ? (totalCost/costedCount).toFixed(2) : null;
-  return { aspectCounts, typeCounts, iconCounts, skillTotals, avgCost, totalCards };
+  return { aspectCounts, typeCounts, iconCounts, skillTotals, skillCheckDifficulty, avgCost, totalCards };
 }
 
 function statBarGroupHtml(title, counts){
-  const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]);
+  // A bar with value 0 (e.g. a deck with no Attack cards at all, under the fixed
+  // 'Stats'/'Skill Check Difficulty' keys below) is dropped entirely rather than
+  // shown as an empty/zero-width bar.
+  const entries = Object.entries(counts).filter(([,val])=>val!==0).sort((a,b)=>b[1]-a[1]);
   if(!entries.length) return `<div class="stat-group"><div class="stat-group-title">${escapeHtml(title)}</div><div class="stat-empty">—</div></div>`;
   const max = Math.max(1, ...entries.map(e=>e[1]));
   const rows = entries.map(([label,val])=>`
@@ -2065,6 +2081,7 @@ function renderStatsPanelHtml(stats){
     ${statBarGroupHtml('Aspects', stats.aspectCounts)}
     ${statBarGroupHtml('Types', stats.typeCounts)}
     ${statBarGroupHtml('Stats', skillCounts)}
+    ${statBarGroupHtml('Skill Check Difficulty', stats.skillCheckDifficulty)}
     ${statBarGroupHtml('Bonus Icons', stats.iconCounts)}
   `;
 }
@@ -3198,11 +3215,24 @@ function buildPrintList(){
 }
 
 const PDF_JPEG_QUALITY = 0.8; // genuine, controllable compression — this was the actual missing lever: previously we just embedded whatever raw bytes Google served (often PNG-ish for painted art, much larger than an equivalent JPEG at a quality difference nobody would notice in print)
+// A real card render off Google's CDN is always at least a few hundred px on
+// its short side. If the fetch/decode "succeeds" but hands back something
+// tiny — Google quietly substituting a small "can't preview this file" icon
+// for a request it won't actually serve, instead of a proper HTTP error — no
+// exception gets thrown anywhere, so the OLD code just embedded that little
+// icon as if it were the card's real art: no failure reported, no text
+// fallback, just a page of near-blank cards. Guarding on size turns that into
+// a normal, counted failure (text fallback + the "N image(s) failed" count)
+// instead of a silent blank export.
+const MIN_EMBEDDABLE_DIM = 100;
 async function urlToDataUrl(url){
   const res = await fetch(url, {mode:'cors'});
-  if(!res.ok) throw new Error('fetch failed');
+  if(!res.ok) throw new Error('fetch failed: HTTP '+res.status);
   const blob = await res.blob();
   const bitmap = await createImageBitmap(blob);
+  if(bitmap.width < MIN_EMBEDDABLE_DIM || bitmap.height < MIN_EMBEDDABLE_DIM){
+    throw new Error(`image came back suspiciously small (${bitmap.width}x${bitmap.height}) — likely a Drive "can't preview" placeholder, not real art`);
+  }
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width; canvas.height = bitmap.height;
   const ctx = canvas.getContext('2d');
@@ -3251,7 +3281,11 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
 
     let dataUrl=null;
     if(url){
-      try{ dataUrl = await urlToDataUrl(url); }catch(e){ failCount++; dataUrl=null; }
+      // Logged (not just counted) so an actual failure — a real CORS/network
+      // error vs. the "suspiciously small" placeholder guard above vs.
+      // something else entirely — is visible in the browser console instead
+      // of every failure looking identical from the outside.
+      try{ dataUrl = await urlToDataUrl(url); }catch(e){ failCount++; dataUrl=null; console.error('PDF export: art failed to embed for', card.name, `(${side})`, url, e); }
     }
     if(dataUrl){
       doc.addImage(dataUrl, 'JPEG', x, y, CARD_W, CARD_H);
