@@ -3155,18 +3155,21 @@ function cursorForSplayEdge(dir){ return (dir==='left'||dir==='right') ? 'ew-res
 // and it's also why a splay never "jumps" the instant a drag begins — the
 // very first tick already reflects the exact spacing implied by the actual
 // grab point, instead of snapping to whatever a fresh delta-from-zero would
-// give. Used both to begin a brand new splay (wireStackInteraction, where
-// the "2nd card" is really just the sliver of it about to peek out from
-// under the still-single anchor, always depth 1) and to adjust an existing
-// one (wireSplayAdjustDrag, any card at any depth) — geometrically identical
-// in both cases once `depth` is factored in: `raw` is the distance from the
-// anchor's own edge to the cursor, i.e. exactly depth*spacing for whichever
-// card was actually grabbed, so dividing it back down by that card's own
-// depth recovers the single per-card spacing that would put ITS edge there
-// — and since every other card's offset is that same spacing times ITS OWN
-// depth, the whole fan adjusts together, evenly, no matter which card in it
-// you happen to be holding. depth defaults to 1 (the ordinary "2nd card" /
-// begin-a-splay case, where the grabbed card IS one spacing-unit out).
+// give. Used both to begin a brand new splay (wireStackInteraction, which
+// passes depth = the LAST/bottom card's depth — cardIds.length-1 — so
+// grabbing the pile's edge feels like pulling out the bottom card and
+// fanning the whole pile open to wherever your cursor ends up, the far edge
+// of the fan tracking the cursor 1:1 rather than needing a much smaller,
+// twitchier motion to control one card's worth of spacing) and to adjust an
+// existing one (wireSplayAdjustDrag, any card at any depth) — geometrically
+// identical in both cases once `depth` is factored in: `raw` is the distance
+// from the anchor's own edge to the cursor, i.e. exactly depth*spacing for
+// whichever card was actually grabbed, so dividing it back down by that
+// card's own depth recovers the single per-card spacing that would put ITS
+// edge there — and since every other card's offset is that same spacing
+// times ITS OWN depth, the whole fan adjusts together, evenly, no matter
+// which card in it you happen to be holding. depth defaults to 1 only as a
+// fallback for a caller that doesn't pass one.
 function splaySpacingForCursor(p, dir, clientX, clientY, depth){
   const local = localOffsetInPiece(p, clientX, clientY);
   let raw;
@@ -3180,9 +3183,16 @@ function splaySpacingForCursor(p, dir, clientX, clientY, depth){
 // An UNSPLAYED multi-card pile: grabbing the thin border strip around its own
 // edge (stackEdgeAt) begins a splay in that edge's direction right away —
 // dragging further out grows the spacing exactly like wireSplayAdjustDrag
-// does for an already-splayed pile's 2nd card (same live preview, same
+// does for an already-splayed pile's cards (same live preview, same
 // snap-back-to-unsplayed-on-release-near-zero), just reached by a different
-// gesture since there's no fanned-out 2nd card to grab yet. The direction is
+// gesture since there's no fanned-out pile to grab a specific card of yet.
+// Treated as grabbing the LAST (bottom) card specifically — see
+// splaySpacingForCursor's own comment — so the cursor is really dragging out
+// the far edge of the whole fan, not just the sliver of a 2nd card peeking
+// out from under the anchor; this is what makes starting a splay feel like
+// fanning the whole pile open by its bottom card, matching how
+// wireSplayAdjustDrag already lets you grab ANY card (including the actual
+// bottom one) once a pile is already splayed. The direction is
 // locked to whichever edge was grabbed at mousedown; changing it means
 // dragging back to fully unsplayed first (see wireSplayAdjustDrag's own
 // snap-back), then starting a fresh drag from a different edge. Grabbing
@@ -3218,7 +3228,14 @@ function wireStackInteraction(el, p){
     },
     onMove: (dx, dy, ev)=>{
       if(mode==='edge'){
-        const spacing = splaySpacingForCursor(p, edgeDir, ev.clientX, ev.clientY);
+        // depth = the LAST card's own depth (cardIds.length-1), not the default
+        // 1 — see splaySpacingForCursor's comment: this makes the cursor track
+        // the far edge of the whole fan (as if you'd grabbed the bottom card),
+        // which feels far more natural than the old "you're holding the 2nd
+        // card" framing, where the same cursor motion produced a much bigger,
+        // twitchier swing in per-card spacing on a deep pile.
+        const depth = Math.max(1, p.cardIds.length-1);
+        const spacing = splaySpacingForCursor(p, edgeDir, ev.clientX, ev.clientY, depth);
         previewSplay(p.id, true, edgeDir, spacing);
         return;
       }
