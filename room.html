@@ -545,6 +545,13 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 #peekPopup.hidden{display:none;}
 .peek-box{background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius-lg);padding:16px;text-align:center;animation:bouncePopIn .28s var(--bounce);}
 .peek-box img{width:280px;border-radius:var(--radius);display:block;}
+/* #peekPopupClassified carries the .classified-face class (below) at all times
+   in markup, which sets display:flex unconditionally — its own .hidden class
+   toggle (openPeekPopup) needs an explicit rule here to actually hide it, or
+   it stays visibly stacked under the real card image every single peek, even
+   when the card isn't classified at all (this was the "I see two images"
+   bug: the placeholder was never really hidden, just visually below the img). */
+#peekPopupClassified.hidden{display:none;}
 
 /* ---------- Search modal ---------- */
 #searchModalList{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;max-height:50vh;overflow-y:auto;}
@@ -588,6 +595,11 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 /* ---------- History ---------- */
 .history-row{font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);}
 .history-time{color:var(--text-soft);margin-right:8px;font-variant-numeric:tabular-nums;}
+/* A row appended live while the flyout is already open (appendHistoryFlyoutRow)
+   rather than one of the plain rows loadHistoryFlyout fetched in bulk — same
+   playful pop as everything else in the app, so a live update actually reads
+   as "something just happened" instead of silently appearing. */
+.history-row-new{animation:bouncePopIn .3s var(--bounce);}
 </style>
 </head>
 <body>
@@ -908,6 +920,88 @@ function pieceBounds(p){
   }
   return {x, y, w, h};
 }
+// A single card's own full footprint within a pile, in the same unrotated
+// world-space frame pieceBounds/pieceW/pieceH already use (see pieceBounds'
+// own comment on why rotation is deliberately left out of this frame
+// app-wide) — for an unsplayed pile (or a lone card) that's just the whole
+// piece; for a splayed one it's that card's own depth*spacing offset from
+// the anchor along the splay axis (mirrors renderBoard's own offsetFor,
+// minus the small per-card-rotation centering nudge that only matters for
+// pixel-perfect rendering, not for picking a card or centering a token).
+function cardWorldRect(p, cardIndex){
+  const n = p.cardIds.length;
+  if(!p.splayed || n<=1) return {x:p.x, y:p.y, w:PIECE_W, h:PIECE_H};
+  const dir = p.splayDir || 'right';
+  const spacing = p.splaySpacing || 36;
+  const depth = (n-1) - cardIndex;
+  let x=p.x, y=p.y;
+  if(dir==='right') x = p.x + depth*spacing;
+  else if(dir==='left') x = p.x - depth*spacing;
+  else if(dir==='down') y = p.y + depth*spacing;
+  else if(dir==='up') y = p.y - depth*spacing;
+  return {x, y, w:PIECE_W, h:PIECE_H};
+}
+// The part of a card in a splay that ISN'T covered by the next card in the
+// fan (see cardWorldRect + renderBoard's own DOM-paint-order comment: each
+// card is covered by the one at the next depth down, except a `spacing`-wide
+// sliver at its own OUTER edge, away from the anchor) — the anchor itself
+// has nothing painted over it, so its whole rect is "visible". This is what
+// an attached token centers itself in (see attachedTokenPos), so it always
+// sits somewhere actually showing on that specific card rather than
+// disappearing under the card in front of it.
+function cardVisibleRect(p, cardIndex){
+  const rect = cardWorldRect(p, cardIndex);
+  const n = p.cardIds.length;
+  if(!p.splayed || n<=1 || cardIndex===n-1) return rect; // anchor, or not splayed: fully visible
+  const dir = p.splayDir || 'right';
+  const spacing = Math.max(1, Math.min(p.splaySpacing || 36, (dir==='left'||dir==='right') ? rect.w : rect.h));
+  if(dir==='right') return {x: rect.x+rect.w-spacing, y:rect.y, w:spacing, h:rect.h};
+  if(dir==='left')  return {x: rect.x, y:rect.y, w:spacing, h:rect.h};
+  if(dir==='down')  return {x: rect.x, y:rect.y+rect.h-spacing, w:rect.w, h:spacing};
+  /* up */          return {x: rect.x, y:rect.y, w:rect.w, h:spacing};
+}
+// Which card of a pile a world-space point actually lands ON, i.e. the same
+// card you'd visually see/click there — when a splay's cards overlap, that's
+// whichever one is painted on top (smallest depth, see renderBoard's DOM
+// order), not necessarily the first rect that happens to contain the point.
+// Returns null if the point isn't over the piece at all (or the piece has no
+// cards). Used when a token is dropped onto a pile, to attach it to the
+// specific card underneath rather than the pile as a whole (see
+// finishWholeTokenMove/attachedTokenPos).
+function cardIndexAtPoint(p, worldX, worldY){
+  if(!p.cardIds || !p.cardIds.length) return null;
+  const topIndex = p.cardIds.length-1;
+  if(!p.splayed || p.cardIds.length<=1){
+    const r = cardWorldRect(p, topIndex);
+    return (worldX>=r.x && worldX<=r.x+r.w && worldY>=r.y && worldY<=r.y+r.h) ? topIndex : null;
+  }
+  let best = null, bestDepth = Infinity;
+  for(let i=0;i<p.cardIds.length;i++){
+    const r = cardWorldRect(p, i);
+    if(worldX>=r.x && worldX<=r.x+r.w && worldY>=r.y && worldY<=r.y+r.h){
+      const depth = topIndex - i;
+      if(depth < bestDepth){ bestDepth = depth; best = i; }
+    }
+  }
+  return best;
+}
+// Where an ATTACHED token actually renders — centered in the specific card's
+// visible sliver (cardVisibleRect) when the host is a card pile and the
+// token remembers which card it's on; falls back to the host's own top-right
+// corner (the old whole-pile behavior) when there's no specific card to
+// place it on — an image piece, or a token attached before this existed /
+// whose remembered card index no longer exists (cards removed since).
+function attachedTokenPos(t){
+  const host = state.pieces.get(t.attachedTo);
+  if(!host) return null;
+  const size = tokenSize(t);
+  if(host.cardIds && host.cardIds.length && t.attachedCardIndex!=null && t.attachedCardIndex < host.cardIds.length){
+    const vis = cardVisibleRect(host, t.attachedCardIndex);
+    return { x: vis.x + vis.w/2 - size/2, y: vis.y + vis.h/2 - size/2 };
+  }
+  const hb = pieceBounds(host);
+  return { x: hb.x + hb.w - 14, y: hb.y - 14 };
+}
 
 /* =========================================================================
    CARD LIBRARY DATA — NO card-library sheet id is hardcoded here at all. Every
@@ -1038,7 +1132,7 @@ const state = {
   userEmail: '',
   lastSeq: 0,
   pieces: new Map(),   // id -> { id, x, y, cardIds:[...], faceStates:[bool,...], owner, splayed, splayDir, splaySpacing, label }
-  tokens: new Map(),   // id -> { id, x, y, type, count, attachedTo: pieceId|null }
+  tokens: new Map(),   // id -> { id, x, y, type, count, attachedTo: pieceId|null, attachedCardIndex: number|null }
   tokenTypes: new Map(), // name -> color (hex) — shared table-wide, user-defined; no built-in types
   zones: new Map(),    // id -> { id, x, y, w, h, color, strokeColor, strokeWidth, label, snapMode }
   theme: { boardColor:'#1a1c22', handColor:'#1c1f26' }, // shared table theme, synced
@@ -1093,9 +1187,14 @@ async function pollRoomOnce(){
     if(events && events.error) throw new Error(events.error);
     events.forEach(ev=>{
       state.lastSeq = Math.max(state.lastSeq, ev.seq);
-      if(ev.payload && ev.payload._origin===state.clientId) return; // already applied optimistically
+      if(ev.payload && ev.payload._origin===state.clientId) return; // already applied (and announced) optimistically — see announceLocalAction
       applyRoomEvent(ev.type, ev.payload, {remote:true});
-      showHistoryBubble(describeEvent(ev.type, ev.payload, ev.playerName));
+      // CHAT already gets its own immediate bubble (sender's name, un-narrated
+      // text) from inside applyRoomEvent's own CHAT case, right above — this
+      // generic history bubble was firing a SECOND time for it too, a
+      // pre-existing double-bubble for every remote chat message.
+      if(ev.type!=='CHAT') showHistoryBubble(describeEvent(ev.type, ev.payload, ev.playerName));
+      appendHistoryFlyoutRow(ev.type, ev.payload, ev.playerName, ev.ts);
     });
     setConnStatus(true);
   }catch(e){ setConnStatus(false, e.message); }
@@ -1115,9 +1214,28 @@ function setConnStatus(ok, errMsg){
 // One call does it all for a state-mutating action: apply locally (instant feel),
 // sync to the sheet, done. Every board-changing interaction in this app should
 // route through this rather than calling applyRoomEvent/postRoomEvent separately.
+// Mirrors what pollRoomOnce does for a REMOTE player's action (show a
+// history bubble) but fires the instant *I* act instead of waiting to see my
+// own event come back from a poll — which never actually happened before
+// this: pollRoomOnce deliberately skips re-applying (and re-announcing) any
+// event whose _origin is this very client (see its own _origin check, right
+// above where it used to be the ONLY place showHistoryBubble got called), so
+// the person actually doing something never saw so much as a bubble for
+// their own action, immediately or otherwise, while everyone else eventually
+// did (up to POLL_MS later) — this was the root of "doesn't really seem to
+// be up-to-date, I try taking actions and don't immediately see an update."
+// CHAT is the one exception: it already gets its own immediate bubble (with
+// the sender's name, un-narrated) from inside applyRoomEvent's own CHAT case
+// — a second, generic history bubble for it here would just double it up.
+function announceLocalAction(type, payload){
+  appendHistoryFlyoutRow(type, payload, state.playerName, Date.now());
+  if(type==='CHAT') return; // already gets its own bubble — see the matching comment in pollRoomOnce
+  showHistoryBubble(describeEvent(type, payload, state.playerName));
+}
 function doAction(type, payload){
   applyRoomEvent(type, payload, {remote:false});
   postRoomEvent(type, payload);
+  announceLocalAction(type, payload);
 }
 // Single-level undo for the local player's own last action. Every user-initiated
 // action function calls setUndo() right after performing itself, with a closure
@@ -1142,6 +1260,7 @@ document.getElementById('btnUndo').addEventListener('click', performUndo);
 // shows as a toast for other players and appears in the browsable history.
 function doNote(text){
   postRoomEvent('NOTE', {text});
+  announceLocalAction('NOTE', {text});
 }
 
 function setPieceCards(id, cardIds, faceStates, cardRotations){
@@ -1257,12 +1376,19 @@ function applyRoomEvent(type, payload){
     }
     case 'PLACE_TOKEN': {
       state.tokens.set(payload.id, {id:payload.id, x:payload.x, y:payload.y, type:payload.type, count:payload.count, attachedTo:payload.attachedTo||null,
+        attachedCardIndex: (payload.attachedTo && payload.attachedCardIndex!=null) ? payload.attachedCardIndex : null,
         splayed:false, splayDir:'right', splaySpacing:14});
       break;
     }
     case 'MOVE_TOKEN': {
       const t = state.tokens.get(payload.id);
-      if(t){ t.x=payload.x; t.y=payload.y; t.attachedTo=payload.attachedTo||null; }
+      if(t){
+        t.x=payload.x; t.y=payload.y; t.attachedTo=payload.attachedTo||null;
+        // Which specific card (within the host pile) this token rides —
+        // null for a lone freestanding token, or when attaching to a piece
+        // that isn't a card pile at all (e.g. an image). See attachedTokenPos.
+        t.attachedCardIndex = (payload.attachedTo && payload.attachedCardIndex!=null) ? payload.attachedCardIndex : null;
+      }
       break;
     }
     case 'SET_TOKEN_COUNT': {
@@ -2492,12 +2618,15 @@ function finishWholeMove(p, startX, startY, clientX, clientY){
 // when the drag ends and a real render takes over.
 function repositionAttachedTokens(pieceId){
   const host = state.pieces.get(pieceId); if(!host) return;
-  const hb = pieceBounds(host);
-  const tx = hb.x + hb.w - 14, ty = hb.y - 14;
   state.tokens.forEach(t=>{
     if(t.attachedTo !== pieceId) return;
+    // Each attached token rides its own specific card (attachedTokenPos), not
+    // a single shared corner — different tokens on the same splayed pile can
+    // land at different points along the fan.
+    const pos = attachedTokenPos(t);
+    if(!pos) return;
     const el = document.querySelector(`.token[data-id="${t.id}"]`);
-    if(el){ el.style.left = tx+'px'; el.style.top = ty+'px'; }
+    if(el){ el.style.left = pos.x+'px'; el.style.top = pos.y+'px'; }
   });
 }
 // Shared engine behind every "this is now a real, independent piece
@@ -3327,7 +3456,18 @@ function localAxisOffsetFromAnchor(p, dir, clientX, clientY){
 function splaySpacingForCursor(p, dir, clientX, clientY, depth){
   const raw = localAxisOffsetFromAnchor(p, dir, clientX, clientY);
   const spacing = raw / (depth||1);
-  return Math.max(SPLAY_MIN, Math.min(splayMaxFor(dir), spacing));
+  // Floor is 0, not SPLAY_MIN: SPLAY_MIN is a floor on what a *deliberately
+  // splayed* pile should render as (a bare sliver, never fully hidden), but
+  // enforcing that same floor on the LIVE per-tick preview meant a deep
+  // card's spacing hit that floor and visually froze while raw (the actual
+  // cursor-to-anchor distance the unsplay decision is based on — see
+  // SPLAY_UNSPLAY_PROXIMITY) was often still well above the auto-unsplay
+  // threshold. That's the "positions stop adjusting" bug: the drag looked
+  // stuck long before it was actually close enough to collapse. Letting the
+  // preview track raw continuously all the way down means it now visually
+  // closes up in step with the same distance the drop-time unsplay check
+  // uses, right up to the point it actually does unsplay.
+  return Math.max(0, Math.min(splayMaxFor(dir), spacing));
 }
 // An UNSPLAYED multi-card pile: grabbing the thin border strip around its own
 // edge (stackEdgeAt) begins a splay in that edge's direction right away —
@@ -3540,9 +3680,11 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
         const cursorCoord = (axis==='x' ? old.x+d.x : old.y+d.y); // where the anchor WOULD be, cursor-tracked 1:1
         // Solve for the spacing that puts the bottom card exactly at
         // bottomCoord if the anchor sat at cursorCoord, then clamp it to the
-        // same [SPLAY_MIN, splayMaxFor] range every other adjust-drag uses.
+        // same [0, splayMaxFor] range every other adjust-drag uses (see
+        // splaySpacingForCursor's own comment on why the floor is 0, not
+        // SPLAY_MIN, for a live preview).
         const rawSpacing = dirSign * (bottomCoord - cursorCoord) / maxDepth;
-        const spacing = Math.max(SPLAY_MIN, Math.min(splayMaxFor(old.dir), rawSpacing));
+        const spacing = Math.max(0, Math.min(splayMaxFor(old.dir), rawSpacing));
         // Re-derive the anchor's own position FROM the (possibly clamped)
         // spacing, rather than using cursorCoord directly — this is what
         // keeps the bottom card pinned exactly at bottomCoord even once the
@@ -3870,6 +4012,14 @@ function openPieceRadialMenu(pieceId, clientX, clientY, cardIndex){
       {icon:'🔃', label:'Flip', group:'stack', action:()=>flipStack(pieceId)},
       {icon:'🔀', label:'Shuffle', group:'stack', action:()=>shufflePiece(pieceId)},
       {icon:'↻', label:'Rotate', group:'stack', action:()=>rotateCardAt(pieceId, null, 1)},
+      // "Collapse" is just commitSplay(...,false,...) — i.e. exactly what
+      // dragging a splay's edge back to the anchor already does — surfaced
+      // as a menu item so a player doesn't have to know that dragging is how
+      // you undo a splay, or fight with a fiddly drag to get it exactly
+      // right. Only shown for a pile that's actually splayed right now; "un-
+      // splay" is deliberately never said in the UI (per the ask), only
+      // "Collapse".
+      ...(p.splayed ? [{icon:'⬇', label:'Collapse', group:'stack', action:()=>commitSplay(pieceId, false, p.splayDir, p.splaySpacing, { splayed:p.splayed, dir:p.splayDir, spacing:p.splaySpacing })}] : []),
       {icon:'🏷', label: p.label?'Rename':'Label', group:'stack', action:()=>setPieceLabel(pieceId)},
       {icon:'🔍', label:'Search', group:'stack', action:()=>openSearchModal(pieceId)},
       {icon: p.locked?'🔓':'🔒', label: p.locked?'Unlock':'Lock', group:'stack', action:()=>togglePieceLock(pieceId)},
@@ -4065,8 +4215,8 @@ function placeNewToken(type){
 // agree on exactly where a token is.
 function tokenRenderPos(t){
   if(t.attachedTo){
-    const host = state.pieces.get(t.attachedTo);
-    if(host) return {x: host.x+pieceW(host)-14, y: host.y-14};
+    const pos = attachedTokenPos(t);
+    if(pos) return pos;
   }
   return {x:t.x, y:t.y};
 }
@@ -4213,7 +4363,7 @@ function clearTokenMergeHighlight(){
 // one place. Mirrors finishWholeMove for pieces.
 function finishWholeTokenMove(t, dx, dy){
   const start = tokenRenderPos(t);
-  const oldX = t.x, oldY = t.y, oldAttached = t.attachedTo;
+  const oldX = t.x, oldY = t.y, oldAttached = t.attachedTo, oldCardIndex = t.attachedCardIndex;
   const d = screenDeltaToWorldDelta(dx, dy);
   let newX = snapCoord(start.x+d.x), newY = snapCoord(start.y+d.y);
   const mergeTarget = findTokenMergeTarget(t, newX+22, newY+22); // 22 = half the token's own size, so we test its CENTER
@@ -4223,8 +4373,14 @@ function finishWholeTokenMove(t, dx, dy){
   }
   const hostPiece = findPieceAtPoint(newX+22, newY+22);
   if(!hostPiece) ({x:newX, y:newY} = applyZoneSnap(newX, newY, 44, 44)); // attaching to a piece takes priority over zone snap
-  doAction('MOVE_TOKEN', {id:t.id, x:newX, y:newY, attachedTo:hostPiece?hostPiece.id:null});
-  setUndo(()=> doAction('MOVE_TOKEN', {id:t.id, x:oldX, y:oldY, attachedTo:oldAttached}));
+  // Which specific card (of a card pile) the drop point landed on — the
+  // token attaches to THAT card, not the pile as a whole (see
+  // attachedTokenPos/cardIndexAtPoint). Tested at the same drop-center point
+  // used to find hostPiece itself, so "which piece" and "which card of it"
+  // always agree.
+  const cardIndex = hostPiece ? cardIndexAtPoint(hostPiece, newX+22, newY+22) : null;
+  doAction('MOVE_TOKEN', {id:t.id, x:newX, y:newY, attachedTo:hostPiece?hostPiece.id:null, attachedCardIndex:cardIndex});
+  setUndo(()=> doAction('MOVE_TOKEN', {id:t.id, x:oldX, y:oldY, attachedTo:oldAttached, attachedCardIndex:oldCardIndex}));
 }
 // Same click-opens-menu / drag-moves model as pieces (see wirePressDragClick):
 // a plain click opens the token's radial menu — +1 lives there now rather
@@ -4814,6 +4970,26 @@ async function loadHistoryFlyout(){
   }catch(e){
     body.innerHTML = 'Could not load history: '+escapeHtml(e.message);
   }
+}
+// Live-appends a single new row to the history flyout if it's currently
+// open, instead of leaving it as a snapshot frozen at whatever moment it was
+// opened — previously the only way to see a new event in it was to close and
+// reopen it (loadHistoryFlyout always refetches from scratch). Mirrors
+// loadHistoryFlyout's own row markup exactly, so a live row is
+// indistinguishable from one that was fetched normally, and is called for
+// BOTH the local player's own actions (announceLocalAction) and everyone
+// else's (pollRoomOnce) — the same two call sites that feed the chat bubbles.
+function appendHistoryFlyoutRow(type, payload, playerName, ts){
+  const flyout = document.getElementById('historyFlyout');
+  if(!flyout || flyout.classList.contains('hidden')) return;
+  const body = document.getElementById('historyFlyoutBody');
+  const emptyMsg = body.querySelector('p');
+  if(emptyMsg) body.innerHTML = ''; // "No events yet." placeholder, still showing because this is the very first event since it opened
+  const row = document.createElement('div');
+  row.className = 'history-row history-row-new';
+  row.innerHTML = `<span class="history-time">${new Date(ts||Date.now()).toLocaleTimeString()}</span> ${escapeHtml(describeEvent(type, payload, playerName))}`;
+  body.appendChild(row);
+  body.scrollTop = body.scrollHeight;
 }
 function toggleHistoryFlyout(){
   const flyout = document.getElementById('historyFlyout');
