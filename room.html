@@ -1963,11 +1963,24 @@ function renderBoard(){
     const el = document.createElement('div');
     el.className='piece' + (p.splayed?' splayed':'') + (state.selectedIds.has(p.id)?' selected':'') + (p.kind==='image'?' image-piece':'');
     el.style.left = p.x+'px'; el.style.top = p.y+'px';
-    // A SPLAYED multi-card pile doesn't rotate as a container at all — see
-    // effectivePieceRotation — since its individual cards rotate on their
-    // own instead (see the splayed-pile branch below and rotatePiece).
     const containerRotation = effectivePieceRotation(p);
     el.style.transform = containerRotation ? `rotate(${containerRotation}deg)` : '';
+    // .piece's own CSS pivots rotation on its own box center (transform-
+    // origin:center center) — correct for an ordinary card, whose box IS
+    // just the one card. A SPLAYED pile's box is much bigger (it balloons
+    // out to fit the whole fan — see pieceW/pieceH) and, for a 'left'/'up'
+    // splay, isn't even centered on the anchor at all (the fan grows
+    // backward out of it — see pieceBounds). Rotating around ITS center
+    // would make the anchor visibly swing around the screen instead of
+    // staying put. Overriding the pivot to the anchor's own center instead —
+    // always exactly PIECE_W/2,PIECE_H/2 in the container's local frame,
+    // since the anchor always sits at local (0,0)-(PIECE_W,PIECE_H)
+    // regardless of splay direction/spacing/card count (see offsetFor's
+    // depth-0 case) — keeps the anchor visually fixed while the fan swings
+    // around it. This is also exactly the pivot localOffsetInPiece already
+    // uses (p.x+PIECE_W/2, p.y+PIECE_H/2), so every splay-edge/peel hit-test
+    // already agrees with this rotation with no further changes needed.
+    el.style.transformOrigin = (p.splayed && p.cardIds && p.cardIds.length>1) ? `${PIECE_W/2}px ${PIECE_H/2}px` : '';
     // --counter-rotate (read by .piece-label's own transform — see applyRotation's
     // matching comment) normally just cancels the BOARD's rotation, inherited down
     // from #boardRotate. A piece with its own rotation adds a second, per-piece
@@ -3183,13 +3196,18 @@ const SPLAY_UNSPLAY_PROXIMITY = SPLAY_MIN + 4;
 // zoomed out, which felt backwards).
 const SPLAY_EDGE_ZONE = 20;
 // The rotation actually applied to a piece's own CONTAINER element (see
-// renderBoard) — ordinarily just p.rotation, but a SPLAYED multi-card pile
-// rotates its individual cards independently instead (see rotatePiece /
-// ROTATE_CARD), so the container itself never rotates in that case, no
-// matter what p.rotation happens to still hold from before it was splayed.
-function effectivePieceRotation(p){
-  return (p.splayed && p.cardIds && p.cardIds.length>1) ? 0 : (p.rotation||0);
-}
+// renderBoard) — just p.rotation, full stop, whether or not the pile is
+// splayed. A splayed pile's container rotates around its ANCHOR card's own
+// center rather than the container's own (much larger, often off-center)
+// box center — see renderBoard's transformOrigin comment — so rotating it
+// swings the whole fan around the anchor while the anchor itself stays
+// visually planted in place, exactly like spinning a real fanned hand of
+// cards around its top card. Individual cards can ALSO carry their own
+// separate rotation on top of this (see rotateCardAt/ROTATE_CARD) — CSS
+// transforms nest, so a card's own rotStyle transform (set in the splayed-
+// pile branch below) composes with this container-level one for free,
+// without either needing to know about the other.
+function effectivePieceRotation(p){ return p.rotation||0; }
 // Undoes both the board's own rotation (state.viewRotation, via clientToWorld)
 // and this particular piece's own CONTAINER rotation (effectivePieceRotation —
 // always a multiple of 90°, same as the board's, so this is exact, never
@@ -3223,10 +3241,48 @@ function stackEdgeAt(p, clientX, clientY){
   margins.forEach(([dir,val])=>{ if(val<=zone && val<bestVal){ best=dir; bestVal=val; } });
   return best;
 }
-// The resize-style cursor a given edge direction should show — left/right
-// edges get the horizontal resize cursor, up/down edges the vertical one,
-// matching the axis that edge's splay actually fans out along.
-function cursorForSplayEdge(dir){ return (dir==='left'||dir==='right') ? 'ew-resize' : 'ns-resize'; }
+// Whether dragging this pile's `dir` edge — a LOGICAL direction in the
+// piece's own unrotated local frame, same as p.splayDir/stackEdgeAt's return
+// value — reads as a horizontal or vertical drag ON SCREEN, once this piece's
+// own rotation (effectivePieceRotation, now real for splayed piles too — see
+// its own comment) and the board's current view rotation are both accounted
+// for. Both are always exact multiples of 90°, so the left/right-vs-up/down
+// axis either stays put (0°/180°) or swaps outright (90°/270°), never skews
+// in between — this is what cursorForSplayEdge and the locked body-cursor
+// classes (force-cursor-ew/ns) both key off, so the resize cursor always
+// points the way the edge will actually move on screen instead of the way it
+// moves in the pile's own unrotated design space.
+function splayEdgeIsHorizontalOnScreen(p, dir){
+  const total = ((effectivePieceRotation(p) + (state.viewRotation||0)) % 360 + 360) % 360;
+  const swapped = total===90 || total===270;
+  const horizontalLocal = dir==='left' || dir==='right';
+  return horizontalLocal !== swapped;
+}
+function cursorForSplayEdge(p, dir){ return splayEdgeIsHorizontalOnScreen(p, dir) ? 'ew-resize' : 'ns-resize'; }
+function lockSplayEdgeCursor(p, dir){
+  document.body.classList.add(splayEdgeIsHorizontalOnScreen(p, dir) ? 'force-cursor-ew' : 'force-cursor-ns');
+}
+// wireSplayAdjustDrag's anchor-adjust mode drags the ANCHOR directly in WORLD
+// space (setting p.x/p.y every tick — see its own onMove), constrained to a
+// single axis, same as every other splay-edge drag. Which WORLD axis (and
+// which sign along it counts as "further out") that is used to just be
+// whichever axis p.splayDir itself named ('right'/'left' -> world x, 'up'/
+// 'down' -> world y) — true only while the pile's own rotation was always 0.
+// Now that a splayed pile's container can rotate (see effectivePieceRotation),
+// the pile's LOCAL splay direction and the WORLD direction it actually points
+// on screen can differ: rotating 90°/270° swaps the x/y axis outright (never
+// skews, since rotation is always a multiple of 90°) — same reasoning as
+// splayEdgeIsHorizontalOnScreen, just producing an axis+sign for direct
+// position math instead of a cursor name. rotateVector(v, -rot) is the
+// FORWARD local->world rotation (rotateVector(v, rot) is what localOffsetInPiece
+// uses to undo it, i.e. world->local, so this is deliberately the negated angle).
+function worldAxisForSplayDir(p, dir){
+  const lx = dir==='right' ? 1 : dir==='left' ? -1 : 0;
+  const ly = dir==='down' ? 1 : dir==='up' ? -1 : 0;
+  const w = rotateVector(lx, ly, -effectivePieceRotation(p));
+  const wx = Math.round(w.x), wy = Math.round(w.y);
+  return wx!==0 ? {axis:'x', sign:wx} : {axis:'y', sign:wy};
+}
 // The spacing value that puts the GRABBED card's own OUTER (far-from-anchor)
 // edge — the exact edge isOnSplayAdjustEdge/stackEdgeAt check for a grab —
 // precisely under the cursor's CURRENT position, computed fresh each tick
@@ -3301,7 +3357,7 @@ function wireStackInteraction(el, p){
   el.addEventListener('mousemove', (e)=>{
     if(mode) return;
     const dir = stackEdgeAt(p, e.clientX, e.clientY);
-    el.style.cursor = dir ? cursorForSplayEdge(dir) : '';
+    el.style.cursor = dir ? cursorForSplayEdge(p, dir) : '';
   });
   el.addEventListener('mouseleave', ()=>{ if(!mode) el.style.cursor = ''; });
   wirePressDragClick(el, {
@@ -3315,8 +3371,10 @@ function wireStackInteraction(el, p){
         old = { splayed:false, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
         // Locked for the whole drag (not just while hovering the edge strip)
         // so the cursor doesn't flicker to whatever's under the pointer as
-        // you drag further out — see the force-cursor-ew/ns CSS.
-        document.body.classList.add(edgeDir==='left'||edgeDir==='right' ? 'force-cursor-ew' : 'force-cursor-ns');
+        // you drag further out — see the force-cursor-ew/ns CSS. Rotation-
+        // aware (see lockSplayEdgeCursor) so a rotated pile's edge still gets
+        // the cursor matching how it actually moves ON SCREEN.
+        lockSplayEdgeCursor(p, edgeDir);
       }
     },
     onMove: (dx, dy, ev)=>{
@@ -3446,7 +3504,7 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
     : isOnSplayAdjustEdge(p, clientX, clientY, depthOf());
   cardEl.addEventListener('mousemove', (e)=>{
     if(mode) return;
-    cardEl.style.cursor = onEdgeAt(e.clientX, e.clientY) ? cursorForSplayEdge(p.splayDir||'right') : '';
+    cardEl.style.cursor = onEdgeAt(e.clientX, e.clientY) ? cursorForSplayEdge(p, p.splayDir||'right') : '';
   });
   cardEl.addEventListener('mouseleave', ()=>{ if(!mode) cardEl.style.cursor = ''; });
   wirePressDragClick(cardEl, {
@@ -3459,19 +3517,21 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
       if(mode==='anchor-adjust'){
         const dir = p.splayDir || 'right';
         old = { x:p.x, y:p.y, splayed:true, dir, spacing:p.splaySpacing||36 };
-        axis = (dir==='left'||dir==='right') ? 'x' : 'y';
-        dirSign = (dir==='right'||dir==='down') ? 1 : -1;
+        // See worldAxisForSplayDir's own comment — dir names a LOCAL axis,
+        // which only equals the WORLD x/y axis while the pile isn't rotated.
+        const w = worldAxisForSplayDir(p, dir);
+        axis = w.axis; dirSign = w.sign;
         maxDepth = Math.max(1, p.cardIds.length-1);
         // The bottom card's own ABSOLUTE coordinate along the locked axis,
         // captured once, right now, before anything moves — this is the
         // fixed point every subsequent tick solves spacing around.
         bottomCoord = (axis==='x' ? p.x : p.y) + dirSign*maxDepth*old.spacing;
-        document.body.classList.add(axis==='x' ? 'force-cursor-ew' : 'force-cursor-ns');
+        lockSplayEdgeCursor(p, dir);
       } else if(mode==='adjust'){
         old = { splayed:true, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
         // Locked for the whole drag, same reasoning as wireStackInteraction's
         // own edge-drag lock — see the force-cursor-ew/ns CSS.
-        document.body.classList.add((old.dir==='left'||old.dir==='right') ? 'force-cursor-ew' : 'force-cursor-ns');
+        lockSplayEdgeCursor(p, old.dir);
       }
     },
     onMove: (dx, dy, ev)=>{
