@@ -463,6 +463,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
    entirely rather than leaving them visible-but-inert. */
 body.generic-mode #deckTypeTabs,
 body.generic-mode #btnSealedDeck,
+body.generic-mode #btnSealedDecks,
 body.generic-mode #overlordModeToggle,
 body.generic-mode #deckSetupPanel,
 body.generic-mode #btnClearIllegal,
@@ -525,6 +526,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     <input type="text" id="deckNameInput" placeholder="Deck name...">
     <div class="btn" id="btnNewDeck">New</div>
     <div class="btn" id="btnSealedDeck" title="Randomly build a full deck from scratch, following the sealed-deck rules">Get Sealed Deck</div>
+    <div class="btn" id="btnSealedDecks" title="Randomly build BOTH the Overlord and Champion decks (plus the scheme deck) from a single shared card pool">Get Sealed Decks</div>
     <div class="btn" id="btnSaveDeck">Save</div>
     <div class="btn" id="btnLoadDeck">Load ▾</div>
     <div class="btn btn-accent" id="btnExport">Export ▾</div>
@@ -1769,6 +1771,96 @@ function generateSealedDeck(setName){
   toast(`Sealed deck generated from "${setName}": ${deckTotalCount()} main-deck card(s)${isOverlord?`, ${slot.schemeIds.length} scheme(s)`:''}.`);
 }
 
+// Standalone version of isAspectLegal that doesn't read through curDeck()/getLeader() —
+// needed because generateSealedDecks (below) builds the Overlord and Champion decks
+// side by side in one pass, so "the current deck's leader" isn't a meaningful concept
+// while it's running; this takes the leader/bonusAspect to check against explicitly.
+function isAspectLegalFor(card, leader, bonusAspect){
+  if(!leader) return false;
+  if(isNeutral(card)) return true;
+  if(card.loyalty==='Loyal') return card.aspect===leader.aspect;
+  return card.aspect===leader.aspect || (bonusAspect && card.aspect===bonusAspect);
+}
+
+function deckCountOf(slot){ let n=0; for(const v of slot.deckCards.values()) n+=v; return n; }
+
+/* "Get Sealed Decks" (plural) — builds the Overlord deck, the Champion deck, and the
+   scheme deck all in one shot, from a SINGLE shared pool of aspect-legal O- and C-
+   cards (confirmed with Seth): leader/Domination-or-Quest/Stronghold-or-Resistance/
+   lieutenant-or-ally selection for each side mirrors generateSealedDeck's own steps
+   1/2/2.5/3 exactly, run once per side. The 25 non-scheme cards then come from one
+   combined pool of both sides' aspect-legal cards, drawn by rarity tier (4 rare-or-
+   legendary, 6 uncommon, 15 common; each card lands in the Overlord or Champion deck
+   according to its own O-/C- prefix — so the two decks aren't guaranteed to be the same
+   size). Schemes are drawn separately: 7 total, rarity-weighted, from the Overlord-side
+   scheme pool (schemes are always Overlord-only, exactly as in generateSealedDeck). */
+function generateSealedDecks(setName){
+  const bySet = (c) => (c._setNames && c._setNames.length) ? c._setNames.includes(setName) : c._setName===setName;
+  const overlordSlot = freshDeckSlot();
+  const championSlot = freshDeckSlot();
+
+  // 1. Leaders
+  const overlordLeader = weightedRandomPick(state.cards.filter(c=>c.type===leaderTypeName('overlord') && bySet(c)));
+  if(overlordLeader) overlordSlot.leaderId = overlordLeader.id;
+  const championLeader = weightedRandomPick(state.cards.filter(c=>c.type===leaderTypeName('champion') && bySet(c)));
+  if(championLeader) championSlot.leaderId = championLeader.id;
+
+  // 2. Domination/Quest, excluding the matching leader's own aspect
+  let dominationPool = state.cards.filter(c=>c.type===bonusCardTypeName('overlord') && bySet(c));
+  if(overlordLeader) dominationPool = dominationPool.filter(c=>c.aspect!==overlordLeader.aspect);
+  const domination = weightedRandomPick(dominationPool);
+  if(domination){ overlordSlot.bonusCardId = domination.id; overlordSlot.bonusAspect = domination.aspect||''; }
+
+  let questPool = state.cards.filter(c=>c.type===bonusCardTypeName('champion') && bySet(c));
+  if(championLeader) questPool = questPool.filter(c=>c.aspect!==championLeader.aspect);
+  const quest = weightedRandomPick(questPool);
+  if(quest){ championSlot.bonusCardId = quest.id; championSlot.bonusAspect = quest.aspect||''; }
+
+  // 2.5. Stronghold/Resistance — see extraCardPool's own comment on the Z-Custom fallback
+  const stronghold = weightedRandomPick(extraCardPool('overlord').filter(c=>bySet(c) || c.type==='Z - Custom'));
+  if(stronghold) overlordSlot.extraCardId = stronghold.id;
+  const resistance = weightedRandomPick(extraCardPool('champion').filter(c=>bySet(c) || c.type==='Z - Custom'));
+  if(resistance) championSlot.extraCardId = resistance.id;
+
+  const overlordAspectLegal = (pool) => overlordLeader ? pool.filter(c=>isAspectLegalFor(c, overlordLeader, overlordSlot.bonusAspect)) : [];
+  const championAspectLegal = (pool) => championLeader ? pool.filter(c=>isAspectLegalFor(c, championLeader, championSlot.bonusAspect)) : [];
+
+  // 3. Two lieutenants/allies costing 9 or 10 combined, respecting aspect
+  const lieutenantPoolLegal = overlordAspectLegal(state.cards.filter(c=>c.type==='O - Lieutenant' && bySet(c)));
+  pickPairWithCostSum(lieutenantPoolLegal, [9,10]).forEach(c=> sealedIncrementDeckCard(overlordSlot, c.id));
+  const allyPoolLegal = championAspectLegal(state.cards.filter(c=>c.type==='C - Ally' && bySet(c)));
+  pickPairWithCostSum(allyPoolLegal, [9,10]).forEach(c=> sealedIncrementDeckCard(championSlot, c.id));
+
+  // Shared main-deck pool — every O- and C- non-scheme card that's both in this set and
+  // aspect-legal for ITS OWN side's leader/bonus card (an O-card checked against the
+  // Overlord leader+Domination, a C-card checked against the Champion leader+Quest).
+  // Cards are drawn from this ONE combined pool by rarity tier and routed to whichever
+  // deck their own O-/C- prefix names, so the two decks aren't guaranteed to come out
+  // the same size.
+  const overlordMainPool = overlordAspectLegal(state.cards.filter(c=>isMainDeckEligibleType(c,'overlord') && bySet(c)));
+  const championMainPool = championAspectLegal(state.cards.filter(c=>isMainDeckEligibleType(c,'champion') && bySet(c)));
+  const combinedMainPool = overlordMainPool.concat(championMainPool);
+  const routeMainCard = (c) => sealedIncrementDeckCard(c.type.startsWith('O - ') ? overlordSlot : championSlot, c.id);
+
+  // Rarity-tier guarantees confirmed with Seth: 4 rare-or-legendary, 6 uncommon, 15
+  // common — each tier drawn (with replacement) from just that tier's own slice of the
+  // combined pool.
+  const tierPool = (tiers) => combinedMainPool.filter(c=>tiers.includes(rarityTier(c)));
+  weightedRandomPickMany(tierPool(['rare','legendary']), 4).forEach(routeMainCard);
+  weightedRandomPickMany(tierPool(['uncommon']), 6).forEach(routeMainCard);
+  weightedRandomPickMany(tierPool(['common']), 15).forEach(routeMainCard);
+
+  // Schemes: 7 total, rarity-weighted, with replacement (confirmed with Seth — not
+  // required to be distinct, unlike generateSealedDeck's own 5-distinct-schemes step).
+  const schemePoolLegal = overlordAspectLegal(state.cards.filter(c=>c.type==='O - Scheme' && bySet(c)));
+  weightedRandomPickMany(schemePoolLegal, 7).forEach(c=> overlordSlot.schemeIds.push(c.id));
+
+  state.decks.overlord = overlordSlot;
+  state.decks.champion = championSlot;
+  renderAll();
+  toast(`Sealed decks generated from "${setName}": Overlord ${deckCountOf(overlordSlot)} card(s), Champion ${deckCountOf(championSlot)} card(s), ${overlordSlot.schemeIds.length} scheme(s).`);
+}
+
 /* =========================================================================
    DYNAMIC SCHEMA — filter/detail fields are derived from whatever columns the
    sheet actually has, so adding/removing a (non-structural) column just works.
@@ -1920,19 +2012,27 @@ function poolForCurrentMode(){
 /* =========================================================================
    FILTERS
    ========================================================================= */
+// A card that exists under more than one set (see mergeCardSets' _setNames) only
+// counts as hidden here if EVERY set it belongs to is currently unchecked — checking
+// any one of its sets is enough to keep it visible, matching how set membership
+// actually works rather than just whichever set's copy happens to be displayed.
+// Factored out of cardMatchesFilters so the Leader/Domination-Quest/Stronghold-
+// Resistance pickers (openLeaderModal/openBonusCardModal/openExtraCardModal below —
+// none of which go through cardMatchesFilters or poolForCurrentMode at all, since
+// they build their own one-card-only pools) can apply the exact same set-checkbox
+// rule the main card grid does, instead of silently ignoring it.
+function cardVisibleBySet(c){
+  if(!(curFilters().hiddenSets && curFilters().hiddenSets.size)) return true;
+  const names = (c._setNames && c._setNames.length) ? c._setNames : [c._setName];
+  return !names.every(n=>curFilters().hiddenSets.has(n));
+}
+
 function cardMatchesFilters(c, exceptKey){
   if(curFilters().deckViewOnly){
     const inDeck = activeIsSchemeMode() ? curDeck().schemeIds.includes(c.id) : curDeck().deckCards.has(c.id);
     if(!inDeck) return false;
   }
-  // A card that exists under more than one set (see mergeCardSets' _setNames) only
-  // gets filtered out here if EVERY set it belongs to is currently hidden — checking
-  // any one of its sets is enough to keep it visible, matching how set membership
-  // actually works rather than just whichever set's copy happens to be displayed.
-  if(curFilters().hiddenSets && curFilters().hiddenSets.size){
-    const names = (c._setNames && c._setNames.length) ? c._setNames : [c._setName];
-    if(names.every(n=>curFilters().hiddenSets.has(n))) return false;
-  }
+  if(!cardVisibleBySet(c)) return false;
   const s = curFilters().search.trim().toLowerCase();
   if(s && !( (c.name||'').toLowerCase().includes(s) || (c.ability||'').toLowerCase().includes(s) )) return false;
   for(const [key,set] of Object.entries(curFilters().multi)){
@@ -2994,7 +3094,7 @@ function openCardPickerModal({title, pool, currentId, onPick}){
 function openLeaderModal(){
   openCardPickerModal({
     title: 'Choose your leader',
-    pool: state.cards.filter(c=>c.type===leaderTypeName(state.deckType)),
+    pool: state.cards.filter(c=>c.type===leaderTypeName(state.deckType) && cardVisibleBySet(c)),
     currentId: curDeck().leaderId,
     onPick: (id) => { curDeck().leaderId = id; },
   });
@@ -3004,7 +3104,7 @@ function openBonusCardModal(){
   const isOverlord = state.deckType==='overlord';
   openCardPickerModal({
     title: isOverlord ? 'Choose your Domination card' : 'Choose your Quest card',
-    pool: state.cards.filter(c=>c.type===bonusCardTypeName(state.deckType)),
+    pool: state.cards.filter(c=>c.type===bonusCardTypeName(state.deckType) && cardVisibleBySet(c)),
     currentId: curDeck().bonusCardId,
     onPick: (id) => {
       curDeck().bonusCardId = id;
@@ -3016,9 +3116,13 @@ function openBonusCardModal(){
 
 function openExtraCardModal(){
   const isOverlord = state.deckType==='overlord';
+  // Same allowance the sealed-deck generator uses: a Z-Custom placeholder isn't
+  // tagged with any real set, so it stays available regardless of which set(s) are
+  // checked — otherwise checking only a set with no real Stronghold/Resistance card
+  // yet would leave this picker empty for no good reason.
   openCardPickerModal({
     title: isOverlord ? 'Choose your Stronghold' : 'Choose your Resistance',
-    pool: extraCardPool(state.deckType),
+    pool: extraCardPool(state.deckType).filter(c=>cardVisibleBySet(c) || c.type==='Z - Custom'),
     currentId: curDeck().extraCardId,
     onPick: (id) => { curDeck().extraCardId = id; },
   });
@@ -3085,15 +3189,22 @@ document.getElementById('btnNewDeck').addEventListener('click', ()=>{
 });
 document.getElementById('btnSealedDeck').addEventListener('click', ()=>{
   if(!confirm('Generate a sealed deck? This replaces your current '+(state.deckType==='overlord'?'Overlord':'Champion')+' deck — unsaved changes will be lost.')) return;
-  openSealedSetPicker();
+  openSealedSetPicker(generateSealedDeck);
 });
-function openSealedSetPicker(){
+document.getElementById('btnSealedDecks').addEventListener('click', ()=>{
+  if(!confirm('Generate sealed Overlord AND Champion decks (plus the scheme deck) from one shared pool? This replaces BOTH your current Overlord and Champion decks — unsaved changes will be lost.')) return;
+  openSealedSetPicker(generateSealedDecks);
+});
+// Shared by both "Get Sealed Deck" (single, currently-active deck) and "Get Sealed
+// Decks" (both decks at once) — generatorFn is whichever of generateSealedDeck /
+// generateSealedDecks the triggering button wants run once a set is chosen.
+function openSealedSetPicker(generatorFn){
   const listEl = document.getElementById('sealedSetList');
   listEl.innerHTML = allSetNames().map(n=>`<div class="row-item" data-set="${escapeHtml(n)}">${escapeHtml(n)}</div>`).join('');
   listEl.querySelectorAll('[data-set]').forEach(el=>{
     el.addEventListener('click', ()=>{
       document.getElementById('sealedSetModal').classList.add('hidden');
-      generateSealedDeck(el.dataset.set);
+      generatorFn(el.dataset.set);
       openHelpModal('Sealed Deck Construction');
     });
   });
