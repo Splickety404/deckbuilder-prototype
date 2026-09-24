@@ -3164,11 +3164,16 @@ function previewSplay(pieceId, splayed, dir, spacing){
 // out at its HEIGHT, since that's the axis the pile is actually growing along.
 const SPLAY_MIN = 6;
 function splayMaxFor(dir){ return (dir==='left'||dir==='right') ? PIECE_W : PIECE_H; }
-// Dropping the adjust-drag at or below this spacing collapses the splay
-// entirely instead of committing a barely-open fan (see wireSplayAdjustDrag /
-// wireTokenSplayAdjustDrag) — a small buffer above the bare minimum so "let go
-// right as it gets tight" reliably reads as "close it", not just an exact 6px.
-const SPLAY_UNSPLAY_THRESHOLD = SPLAY_MIN + 4;
+// A splay ends when the card whose edge you're dragging gets dropped nearly
+// on top of the pile's TOP (anchor) card — i.e. when the RAW cursor distance
+// from the anchor's own edge (see localAxisOffsetFromAnchor) gets this small,
+// not when the resulting PER-CARD spacing does. Those aren't the same thing:
+// spacing is raw/depth, so a fixed spacing threshold let a deep card (high
+// depth) end the splay while it still visually sat far from the anchor, and
+// made a shallow card (low depth) need to get closer than it looked like it
+// should. Checking raw directly instead means "drag it back to where the top
+// card is" behaves the same regardless of which card in the pile you grabbed.
+const SPLAY_UNSPLAY_PROXIMITY = SPLAY_MIN + 4;
 // How wide a border strip around an UNSPLAYED pile's own edge counts as
 // "grabbing the edge" (see stackEdgeAt) rather than an ordinary peel-drag on
 // the card itself. SCREEN px, not board-space — divided by state.view.scale
@@ -3248,13 +3253,23 @@ function cursorForSplayEdge(dir){ return (dir==='left'||dir==='right') ? 'ew-res
 // times ITS OWN depth, the whole fan adjusts together, evenly, no matter
 // which card in it you happen to be holding. depth defaults to 1 only as a
 // fallback for a caller that doesn't pass one.
-function splaySpacingForCursor(p, dir, clientX, clientY, depth){
+// The raw, undivided cursor distance from the anchor's own edge along the
+// splay axis — this is what "how close is the dragged card to the top
+// card's position" actually means, independent of which card (which depth)
+// is being dragged: depth*spacing (a card's own rendered offset from the
+// anchor) always equals exactly this raw value by construction (see
+// splaySpacingForCursor below), so comparing THIS to a small threshold — not
+// the post-division per-card spacing — is what SPLAY_UNSPLAY_PROXIMITY checks
+// against.
+function localAxisOffsetFromAnchor(p, dir, clientX, clientY){
   const local = localOffsetInPiece(p, clientX, clientY);
-  let raw;
-  if(dir==='right') raw = local.x - PIECE_W;
-  else if(dir==='left') raw = -local.x;
-  else if(dir==='down') raw = local.y - PIECE_H;
-  else raw = -local.y; // 'up'
+  if(dir==='right') return local.x - PIECE_W;
+  if(dir==='left') return -local.x;
+  if(dir==='down') return local.y - PIECE_H;
+  return -local.y; // 'up'
+}
+function splaySpacingForCursor(p, dir, clientX, clientY, depth){
+  const raw = localAxisOffsetFromAnchor(p, dir, clientX, clientY);
   const spacing = raw / (depth||1);
   return Math.max(SPLAY_MIN, Math.min(splayMaxFor(dir), spacing));
 }
@@ -3329,10 +3344,13 @@ function wireStackInteraction(el, p){
       document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
       if(mode==='edge'){
         const p2 = state.pieces.get(p.id); if(!p2) return;
-        // Same "let go near-zero = cancel back to unsplayed" rule as
-        // wireSplayAdjustDrag — here it also covers simply never having
-        // dragged far enough to leave SPLAY_MIN in the first place.
-        if(p2.splaySpacing <= SPLAY_UNSPLAY_THRESHOLD){
+        // Same "let go with the dragged edge back near the top card = cancel
+        // back to unsplayed" rule as wireSplayAdjustDrag — here it also covers
+        // simply never having dragged far enough out in the first place. See
+        // SPLAY_UNSPLAY_PROXIMITY's comment for why this checks the raw cursor
+        // distance from the anchor rather than the resulting spacing value.
+        const raw = localAxisOffsetFromAnchor(p2, edgeDir, ev.clientX, ev.clientY);
+        if(raw <= SPLAY_UNSPLAY_PROXIMITY){
           commitSplay(p.id, false, p2.splayDir, p2.splaySpacing, old);
         } else {
           commitSplay(p.id, true, p2.splayDir, p2.splaySpacing, old);
@@ -3391,8 +3409,8 @@ function isOnAnchorSplayEdge(p, clientX, clientY){
 // edge that began the splay (matching p.splayDir, see isOnSplayAdjustEdge)
 // extends or collapses the existing fan along that one LOCKED axis — it can
 // never switch axis or flip direction mid-adjust; to change direction,
-// first collapse fully back to unsplayed (drag that edge back past
-// SPLAY_UNSPLAY_THRESHOLD), then start a fresh splay from a different edge
+// first collapse fully back to unsplayed (drag that edge back within
+// SPLAY_UNSPLAY_PROXIMITY of the anchor), then start a fresh splay from a different edge
 // via wireStackInteraction. Grabbing anywhere else on this card is an
 // ordinary peel — see beginPeelAsPiece/driveWholePieceDrag.
 //
@@ -3489,8 +3507,18 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
         document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
         const p2 = state.pieces.get(p.id); if(!p2) return;
         // Same "dragged back in close = just unsplay" rule as the ordinary
-        // adjust-drag below — see its own comment.
-        const stillSplayed = p2.splaySpacing > SPLAY_UNSPLAY_THRESHOLD;
+        // adjust-drag below, but mirrored: here the ANCHOR is the card being
+        // dragged (it's the pile's own top card, so it can't be compared to
+        // itself), and the BOTTOM card is the fixed end instead of the
+        // anchor — so this checks the raw, unclamped gap between the
+        // dragged anchor and that fixed bottom position, recomputed from the
+        // actual drop point rather than the already-clamped p2.x/y (which
+        // would reintroduce the same depth-dependent bug SPLAY_UNSPLAY_PROXIMITY
+        // fixes elsewhere).
+        const d = screenDeltaToWorldDelta(dx, dy);
+        const cursorCoord = (axis==='x' ? old.x+d.x : old.y+d.y);
+        const rawGap = dirSign * (bottomCoord - cursorCoord);
+        const stillSplayed = rawGap > SPLAY_UNSPLAY_PROXIMITY;
         p2.x = snapCoord(p2.x); p2.y = snapCoord(p2.y);
         ({x:p2.x, y:p2.y} = applyZoneSnap(p2.x, p2.y, pieceW(p2), pieceH(p2)));
         p2.splayed = stillSplayed;
@@ -3506,12 +3534,17 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
       if(mode==='adjust'){
         document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
         const p2 = state.pieces.get(p.id); if(!p2) return;
-        // Letting go with the fan dragged back in close to the anchor would
-        // otherwise leave a nearly-closed fan where that same card is almost
-        // entirely covered by the top card next time — effectively untouchable.
-        // Reading that gesture as "close it" and just unsplaying is both what the
-        // player usually means and the only way to keep every card reachable.
-        if(p2.splaySpacing <= SPLAY_UNSPLAY_THRESHOLD){
+        // Letting go with the dragged card back in close to the anchor's own
+        // position would otherwise leave a nearly-closed fan where that same
+        // card is almost entirely covered by the top card next time —
+        // effectively untouchable. Reading that gesture as "close it" and
+        // just unsplaying is both what the player usually means and the only
+        // way to keep every card reachable. See SPLAY_UNSPLAY_PROXIMITY's
+        // comment for why this is the raw cursor distance from the anchor,
+        // not the resulting per-card spacing — the same raw value regardless
+        // of which card's edge was actually grabbed.
+        const raw = localAxisOffsetFromAnchor(p2, p2.splayDir||'right', ev.clientX, ev.clientY);
+        if(raw <= SPLAY_UNSPLAY_PROXIMITY){
           commitSplay(p.id, false, p2.splayDir, p2.splaySpacing, old);
         } else {
           commitSplay(p.id, true, p2.splayDir, p2.splaySpacing, old);
