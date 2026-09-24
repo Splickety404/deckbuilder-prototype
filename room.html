@@ -194,10 +194,18 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    via the transform) so it grows outward evenly as its text gets longer,
    rather than being pinned to a fixed 140px box; sits slightly HIGH, overlapping
    up onto the bottom of the top card itself, rather than hanging fully below it. */
-.piece .piece-label.stack-handle{cursor:move;min-width:26px;min-height:14px;transition:filter .15s var(--bounce),background .1s,color .1s;
-  left:70px;right:auto;bottom:auto;top:180px;width:max-content;max-width:260px;
+.piece .piece-label.stack-handle{cursor:move;min-width:26px;min-height:14px;transition:filter .15s var(--bounce),transform .15s var(--bounce),background .1s,color .1s;
+  left:70px;right:auto;bottom:auto;top:202px;width:max-content;max-width:260px;
   transform:translateX(-50%) rotate(var(--counter-rotate,0deg));}
-.piece .piece-label.stack-handle:hover{filter:brightness(1.15);}
+/* Floats just below the anchor (top) card by default. A 'down' splay fans its
+   own cards out into exactly that space, so a below-docked label would sit
+   on top of (or under) the fanned cards — flipped to the polar opposite side
+   (above the anchor) instead in that one case. Every other splay direction,
+   including 'up' (whose fan grows the opposite way), leaves the space below
+   the anchor clear, so only 'down' needs the flip — see the labelFlip check
+   in renderBoard. */
+.piece .piece-label.stack-handle.label-flip{top:auto;bottom:202px;}
+.piece .piece-label.stack-handle:hover{filter:brightness(1.35);transform:translateX(-50%) rotate(var(--counter-rotate,0deg)) scale(1.16);}
 
 /* Ghost/silhouette preview shown while dragging a piece or token — a faint
    outline at the snapped position it will actually land at if released right
@@ -205,6 +213,17 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    snapCoord/applyZoneSnap math the drop itself uses. Purely visual. */
 .drag-ghost{position:absolute;border:2px dashed rgba(255,255,255,.55);border-radius:var(--radius-sm);
   background:rgba(255,255,255,.08);pointer-events:none;z-index:1;}
+
+/* Outline of a pile's TRUE visual footprint (per pieceBounds — the same
+   rectangle a drag-ghost would use, and correct for 'left'/'up' splays whose
+   fan grows backward out of the piece's own x/y origin), shown while
+   hovering that pile's stack-handle label so it's obvious exactly how far
+   the fan actually reaches. Purely visual, like .drag-ghost, and lives in
+   #boardWorld for the same reason. */
+.stack-perimeter{position:absolute;border:2px solid var(--accent);border-radius:var(--radius-sm);
+  box-shadow:0 0 0 3px rgba(255,255,255,.06);pointer-events:none;z-index:1;
+  opacity:0;transition:opacity .15s var(--bounce);}
+.stack-perimeter.visible{opacity:1;}
 
 /* Token color comes entirely from its user-defined type (state.tokenTypes) and is
    applied inline per-instance in renderTokens() — there are no more fixed built-in
@@ -861,6 +880,33 @@ function pieceH(p){
     if(dir==='up' || dir==='down') return PIECE_H + (p.cardIds.length-1)*(p.splaySpacing||36);
   }
   return PIECE_H;
+}
+// A piece's own p.x/p.y is always where its ANCHOR (the top card, for a
+// splayed pile) sits — but that's only the same thing as the visual TOP-LEFT
+// corner of its full footprint for a 'right'/'down' splay, where the fan
+// grows in the positive x/y direction away from the anchor. A 'left' or 'up'
+// splay grows BACKWARDS from the anchor (see renderBoard's offsetFor, which
+// gives those directions a NEGATIVE offset), so the pile's real visual
+// footprint actually starts up to pieceW(p)-PIECE_W / pieceH(p)-PIECE_H px
+// BEFORE p.x/p.y, not at it. That's invisible for the pile's own on-screen
+// rendering (an absolutely-positioned card can render outside its container's
+// own box just fine), but anything that needs this piece's real bounding
+// box — the drag ghost, click/overlap hit-testing, an attached token's
+// corner, zoom-to-fit — was quietly using p.x/p.y as if it were always that
+// box's top-left, putting all of those in the wrong place for any
+// 'left'/'up' splay. This is the one place that correction lives, so every
+// consumer of "this piece's real footprint" agrees with what's actually on
+// screen. (Rotation needs no equivalent correction here: a splayed pile's
+// CONTAINER never rotates — see effectivePieceRotation — only its individual
+// cards do, and that's compensated for per-card, inside the fan itself.)
+function pieceBounds(p){
+  const w = pieceW(p), h = pieceH(p);
+  let x = p.x, y = p.y;
+  if(p.splayed && p.cardIds && p.cardIds.length>1){
+    if(p.splayDir==='left') x = p.x - (w-PIECE_W);
+    else if(p.splayDir==='up') y = p.y - (h-PIECE_H);
+  }
+  return {x, y, w, h};
 }
 
 /* =========================================================================
@@ -2051,7 +2097,8 @@ function renderBoard(){
         html += `<div class="${cls}" style="left:${left}px;top:${top}px;${rotStyle}">${inner}</div>`;
       }
       html += afterCards.join('');
-      el.innerHTML = html + `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`;
+      const labelFlip = dir==='down'; // see the CSS comment on .piece-label.stack-handle.label-flip
+      el.innerHTML = html + `<div class="piece-label stack-handle${labelFlip?' label-flip':''}" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`;
       topCardOffset = {left:0, top:0}; // the top card is always the anchor now
       [...el.querySelectorAll('.splay-card:not(.splay-gap)')].forEach(cardEl=>{
         const i = Number(cardEl.dataset.i);
@@ -2103,6 +2150,7 @@ function renderBoard(){
   });
   if(hoveredPieceId && !state.pieces.has(hoveredPieceId)){ hoveredPieceId = null; hoveredCardIndex = null; hideHotkeyHint(); }
   if(hoveredLabelId && !state.pieces.has(hoveredLabelId)) hoveredLabelId = null;
+  refreshStackPerimeter();
   renderTokens();
   renderPlayerCounters();
 }
@@ -2110,8 +2158,9 @@ function boardBounds(){
   if(!state.pieces.size && !state.tokens.size && !state.zones.size) return {minX:-400,minY:-400,maxX:400,maxY:400};
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   state.pieces.forEach(p=>{
-    minX=Math.min(minX,p.x); minY=Math.min(minY,p.y);
-    maxX=Math.max(maxX,p.x+pieceW(p)); maxY=Math.max(maxY,p.y+pieceH(p));
+    const b = pieceBounds(p);
+    minX=Math.min(minX,b.x); minY=Math.min(minY,b.y);
+    maxX=Math.max(maxX,b.x+b.w); maxY=Math.max(maxY,b.y+b.h);
   });
   state.tokens.forEach(t=>{
     if(t.attachedTo) return; // covered by its host piece's own bounds
@@ -2430,7 +2479,8 @@ function finishWholeMove(p, startX, startY, clientX, clientY){
 // when the drag ends and a real render takes over.
 function repositionAttachedTokens(pieceId){
   const host = state.pieces.get(pieceId); if(!host) return;
-  const tx = host.x + pieceW(host) - 14, ty = host.y - 14;
+  const hb = pieceBounds(host);
+  const tx = hb.x + hb.w - 14, ty = hb.y - 14;
   state.tokens.forEach(t=>{
     if(t.attachedTo !== pieceId) return;
     const el = document.querySelector(`.token[data-id="${t.id}"]`);
@@ -2500,7 +2550,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   ctx.el.classList.add('dragging-piece');
   ctx.el.style.left=p.x+'px'; ctx.el.style.top=p.y+'px';
   ctx.el.classList.toggle('insert-below', !!target && shouldInsertBelow(target, world.y));
-  updateDragGhost(ctx.ghost, p.x, p.y, pieceW(p), pieceH(p));
+  { const b = pieceBounds(p); updateDragGhost(ctx.ghost, b.x, b.y, b.w, b.h); }
   repositionAttachedTokens(p.id);
 }
 // Lands a drag driven by driveWholePieceDrag, whichever gesture started it —
@@ -2595,7 +2645,7 @@ function wireGroupHandleDrag(handleEl, p){
         pieceEl.style.left=p.x+'px'; pieceEl.style.top=p.y+'px';
         pieceEl.classList.toggle('insert-below', !!target && !splayTarget && shouldInsertBelow(target, world.y));
       }
-      updateDragGhost(ghost, p.x, p.y, pieceW(p), pieceH(p));
+      { const b = pieceBounds(p); updateDragGhost(ghost, b.x, b.y, b.w, b.h); }
       repositionAttachedTokens(p.id);
     },
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY), // the Stack menu — see comment above
@@ -2694,7 +2744,8 @@ function findOverlapTarget(draggedPiece, clientX, clientY){
   const worldY = (clientY-rect.top - state.view.y)/state.view.scale;
   for(const p of state.pieces.values()){
     if(p.id===draggedPiece.id || p.kind==='image') continue; // custom images are never a merge target
-    if(worldX>=p.x && worldX<=p.x+pieceW(p) && worldY>=p.y && worldY<=p.y+pieceH(p)) return p;
+    const b = pieceBounds(p);
+    if(worldX>=b.x && worldX<=b.x+b.w && worldY>=b.y && worldY<=b.y+b.h) return p;
   }
   return null;
 }
@@ -2920,8 +2971,35 @@ function wireCardHoverIndex(cardEl, i){
 // actions those same letters mean everywhere else on the pile.
 let hoveredLabelId = null;
 function wireStackLabelHover(labelEl, pieceId){
-  labelEl.addEventListener('mouseenter', ()=>{ hoveredLabelId = pieceId; });
-  labelEl.addEventListener('mouseleave', ()=>{ if(hoveredLabelId===pieceId) hoveredLabelId = null; });
+  labelEl.addEventListener('mouseenter', ()=>{ hoveredLabelId = pieceId; refreshStackPerimeter(); });
+  labelEl.addEventListener('mouseleave', ()=>{ if(hoveredLabelId===pieceId) hoveredLabelId = null; refreshStackPerimeter(); });
+}
+// The dashed outline shown while hovering a stack's label (see the CSS on
+// .stack-perimeter) — a single shared element, repositioned to match
+// whichever pile's label is currently hovered (or hidden if none is).
+// renderBoard calls this again after every rebuild (see its own tail) so the
+// outline stays correctly placed even while a hovered pile is actively being
+// resplayed/dragged/edited by someone else, without needing its own
+// mouseenter/mouseleave to survive the DOM nodes being replaced out from
+// under it.
+let stackPerimeterEl = null;
+function refreshStackPerimeter(){
+  const p = hoveredLabelId ? state.pieces.get(hoveredLabelId) : null;
+  if(!p){
+    if(stackPerimeterEl) stackPerimeterEl.classList.remove('visible');
+    return;
+  }
+  if(!stackPerimeterEl){
+    stackPerimeterEl = document.createElement('div');
+    stackPerimeterEl.className = 'stack-perimeter';
+    document.getElementById('boardWorld').appendChild(stackPerimeterEl);
+  }
+  const b = pieceBounds(p);
+  stackPerimeterEl.style.left = b.x+'px';
+  stackPerimeterEl.style.top = b.y+'px';
+  stackPerimeterEl.style.width = b.w+'px';
+  stackPerimeterEl.style.height = b.h+'px';
+  stackPerimeterEl.classList.add('visible');
 }
 function isTextEntryFocused(){
   const a = document.activeElement;
@@ -3329,17 +3407,20 @@ function isOnAnchorSplayEdge(p, clientX, clientY){
 //
 // The ANCHOR card (cardIndex === the pile's own top index) is the one
 // exception to all of that: it has no depth of its own (always 0), so
-// there's no per-card spacing to set here at all. Grabbing one of ITS two
-// edges (see isOnAnchorSplayEdge) instead SLIDES THE WHOLE PILE along the
-// locked axis, 1:1 with the cursor, same as any other whole-piece move (just
-// constrained to one axis) — the anchor card itself visibly tracks the
-// cursor exactly, and since every other card's position is that same fixed
-// `spacing` away from the anchor (see renderBoard's offsetFor), they all
-// slide along with it, keeping the gaps between consecutive outer edges
-// exactly as they were — nothing about the fan's spacing changes, only
-// where the whole thing sits.
+// there's no per-card spacing to set relative to itself the way every other
+// card has. Grabbing one of ITS two edges (see isOnAnchorSplayEdge) instead
+// treats the BOTTOM card (the pile's other extreme — maximum depth) as the
+// one that stays put: the anchor tracks the cursor exactly like any other
+// whole-piece move (constrained to the locked axis), while `spacing` itself
+// is continuously recomputed so that the bottom card's own ABSOLUTE board
+// position never moves. Every other card sits at its own depth*spacing away
+// from the anchor as always (see renderBoard's offsetFor), so they all
+// redistribute evenly between the two ends as the anchor moves — the same
+// "grab one end, the other end anchors, everything between fans out evenly"
+// feel as grabbing the bottom card directly (isOnSplayAdjustEdge) or
+// starting a fresh splay (wireStackInteraction), just from the opposite end.
 function wireSplayAdjustDrag(cardEl, p, cardIndex){
-  let mode=null, old=null, ctx=null, axis=null, startX=null, startY=null;
+  let mode=null, old=null, ctx=null, axis=null, dirSign=null, maxDepth=null, bottomCoord=null;
   const isAnchor = cardIndex === p.cardIds.length-1;
   const depthOf = ()=> Math.max(1, (p.cardIds.length-1) - cardIndex);
   const onEdgeAt = (clientX, clientY)=> isAnchor
@@ -3356,10 +3437,17 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
       if(p.locked) return false;
       if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
       const onEdge = onEdgeAt(e.clientX, e.clientY);
-      mode = !onEdge ? 'peel' : (isAnchor ? 'move-axis' : 'adjust');
-      if(mode==='move-axis'){
-        axis = (p.splayDir==='left'||p.splayDir==='right') ? 'x' : 'y';
-        startX = p.x; startY = p.y;
+      mode = !onEdge ? 'peel' : (isAnchor ? 'anchor-adjust' : 'adjust');
+      if(mode==='anchor-adjust'){
+        const dir = p.splayDir || 'right';
+        old = { x:p.x, y:p.y, splayed:true, dir, spacing:p.splaySpacing||36 };
+        axis = (dir==='left'||dir==='right') ? 'x' : 'y';
+        dirSign = (dir==='right'||dir==='down') ? 1 : -1;
+        maxDepth = Math.max(1, p.cardIds.length-1);
+        // The bottom card's own ABSOLUTE coordinate along the locked axis,
+        // captured once, right now, before anything moves — this is the
+        // fixed point every subsequent tick solves spacing around.
+        bottomCoord = (axis==='x' ? p.x : p.y) + dirSign*maxDepth*old.spacing;
         document.body.classList.add(axis==='x' ? 'force-cursor-ew' : 'force-cursor-ns');
       } else if(mode==='adjust'){
         old = { splayed:true, dir:p.splayDir||'right', spacing:p.splaySpacing||36 };
@@ -3369,12 +3457,21 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
       }
     },
     onMove: (dx, dy, ev)=>{
-      if(mode==='move-axis'){
+      if(mode==='anchor-adjust'){
         const d = screenDeltaToWorldDelta(dx, dy);
-        if(axis==='x') p.x = startX+d.x; else p.y = startY+d.y;
-        const pieceEl = document.querySelector(`.piece[data-id="${p.id}"]`);
-        if(pieceEl){ pieceEl.style.left = p.x+'px'; pieceEl.style.top = p.y+'px'; }
-        repositionAttachedTokens(p.id);
+        const cursorCoord = (axis==='x' ? old.x+d.x : old.y+d.y); // where the anchor WOULD be, cursor-tracked 1:1
+        // Solve for the spacing that puts the bottom card exactly at
+        // bottomCoord if the anchor sat at cursorCoord, then clamp it to the
+        // same [SPLAY_MIN, splayMaxFor] range every other adjust-drag uses.
+        const rawSpacing = dirSign * (bottomCoord - cursorCoord) / maxDepth;
+        const spacing = Math.max(SPLAY_MIN, Math.min(splayMaxFor(old.dir), rawSpacing));
+        // Re-derive the anchor's own position FROM the (possibly clamped)
+        // spacing, rather than using cursorCoord directly — this is what
+        // keeps the bottom card pinned exactly at bottomCoord even once the
+        // drag has gone past either end of the clampable range.
+        const anchorCoord = bottomCoord - dirSign*maxDepth*spacing;
+        if(axis==='x') p.x = anchorCoord; else p.y = anchorCoord;
+        previewSplay(p.id, true, old.dir, spacing); // re-renders the whole fan, anchor position included
         return;
       }
       if(mode==='adjust'){
@@ -3388,15 +3485,22 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
     },
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, cardIndex), // single-card menu for THIS card specifically
     onDrop: (dx, dy, ev)=>{
-      if(mode==='move-axis'){
+      if(mode==='anchor-adjust'){
         document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
-        p.x = snapCoord(p.x); p.y = snapCoord(p.y);
-        ({x:p.x, y:p.y} = applyZoneSnap(p.x, p.y, pieceW(p), pieceH(p)));
-        postRoomEvent('MOVE_PIECE', {id:p.id, x:p.x, y:p.y});
+        const p2 = state.pieces.get(p.id); if(!p2) return;
+        // Same "dragged back in close = just unsplay" rule as the ordinary
+        // adjust-drag below — see its own comment.
+        const stillSplayed = p2.splaySpacing > SPLAY_UNSPLAY_THRESHOLD;
+        p2.x = snapCoord(p2.x); p2.y = snapCoord(p2.y);
+        ({x:p2.x, y:p2.y} = applyZoneSnap(p2.x, p2.y, pieceW(p2), pieceH(p2)));
+        p2.splayed = stillSplayed;
+        postRoomEvent('MOVE_PIECE', {id:p2.id, x:p2.x, y:p2.y});
+        postRoomEvent('SET_SPLAY', {id:p2.id, splayed:stillSplayed, dir:p2.splayDir, spacing:p2.splaySpacing});
         renderBoard();
-        if(p.x!==startX || p.y!==startY){
-          setUndo(()=> doAction('MOVE_PIECE', {id:p.id, x:startX, y:startY}));
-        }
+        setUndo(()=>{
+          doAction('MOVE_PIECE', {id:p2.id, x:old.x, y:old.y});
+          doAction('SET_SPLAY', {id:p2.id, splayed:old.splayed, dir:old.dir, spacing:old.spacing});
+        });
         return;
       }
       if(mode==='adjust'){
@@ -4121,7 +4225,8 @@ function peelTokenToBoard(tokenId, clientX, clientY){
 }
 function findPieceAtPoint(worldX, worldY){
   for(const p of state.pieces.values()){
-    if(worldX>=p.x && worldX<=p.x+pieceW(p) && worldY>=p.y && worldY<=p.y+pieceH(p)) return p;
+    const b = pieceBounds(p);
+    if(worldX>=b.x && worldX<=b.x+b.w && worldY>=b.y && worldY<=b.y+b.h) return p;
   }
   return null;
 }
