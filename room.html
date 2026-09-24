@@ -7,6 +7,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<!-- Optional live-presence layer (cursors, "holding a card" indicators) — see
+     the LIVE PRESENCE section further down. Safe to leave FIREBASE_CONFIG
+     blank; these scripts loading with nothing configured is a no-op. -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
 :root{
   --bg:#14161b; --surface:#1c1f26; --surface-2:#242830; --border:#333844;
@@ -600,6 +605,22 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    playful pop as everything else in the app, so a live update actually reads
    as "something just happened" instead of silently appearing. */
 .history-row-new{animation:bouncePopIn .3s var(--bounce);}
+
+/* ---------- Live presence (other players' cursors) ---------- */
+/* Lives inside #boardWorld (see LIVE PRESENCE section in the script) so it
+   inherits the shared pan/zoom/rotation transform for free, exactly like
+   pieces and tokens — no per-viewer math needed here. */
+.presence-cursor{position:absolute;top:0;left:0;pointer-events:none;z-index:500;
+  transform:translate(-2px,-2px);transition:left .08s linear, top .08s linear;}
+.presence-cursor .dot{width:14px;height:14px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);
+  box-shadow:0 1px 4px rgba(0,0,0,.45);}
+.presence-cursor.holding .dot{animation:presencePulse .9s ease-in-out infinite;}
+@keyframes presencePulse{0%,100%{transform:rotate(-45deg) scale(1);}50%{transform:rotate(-45deg) scale(1.4);}}
+.presence-cursor .tag{position:absolute;left:16px;top:-2px;font-size:11px;font-weight:700;white-space:nowrap;
+  padding:2px 7px;border-radius:var(--radius);color:#0a0b0f;box-shadow:0 1px 4px rgba(0,0,0,.35);}
+.presence-cursor .chip{position:absolute;left:16px;top:17px;font-size:10.5px;padding:2px 7px;border-radius:var(--radius);
+  background:var(--surface);border:1px solid var(--accent);color:var(--text);white-space:nowrap;
+  box-shadow:0 1px 4px rgba(0,0,0,.35);animation:bouncePopIn .2s var(--bounce);}
 </style>
 </head>
 <body>
@@ -5009,6 +5030,7 @@ document.getElementById('btnCloseHistoryFlyout').addEventListener('click', ()=>{
    pre-filled via localStorage for exactly that).
    ========================================================================= */
 function leaveGame(){
+  teardownPresence();
   state.polling = false;
   state.roomSheetId = '';
   state.sessionCode = '';
@@ -5327,6 +5349,136 @@ document.getElementById('btnEnterRoom').addEventListener('click', async ()=>{
 });
 
 /* =========================================================================
+   LIVE PRESENCE — an OPTIONAL real-time layer (Firebase Realtime Database)
+   layered on top of the room's actual sync, which stays exactly as it was
+   (Sheets + Apps Script polling, POLL_MS above, is still what carries real
+   game state — pieces, tokens, hands, turn order — and remains the source
+   of truth). This layer carries nothing but ephemeral, cosmetic presence:
+   where each connected player's cursor currently is, and whether they're
+   holding/dragging something right now. It's what makes the room feel
+   "live" between polls, without changing how anything is actually synced.
+
+   Every function below no-ops safely if FIREBASE_CONFIG is left blank (the
+   default) or if the SDK script tags fail to load for any reason — so nothing
+   else in the app depends on this being set up. See the setup checklist
+   wherever this file's README/instructions live for the handful of manual
+   steps (create a free Firebase project, enable Realtime Database, paste
+   the project's web config below).
+   ========================================================================= */
+const FIREBASE_CONFIG = {
+  // Paste your Firebase project's own web app config here — from the
+  // Firebase console: Project settings → General → "Your apps" → the </>
+  // (web) app → SDK setup and configuration → Config. Something like:
+  // apiKey: "AIza...", authDomain: "your-app.firebaseapp.com",
+  // databaseURL: "https://your-app-default-rtdb.firebaseio.com",
+  // projectId: "your-app", storageBucket: "your-app.appspot.com",
+  // messagingSenderId: "...", appId: "1:...:web:..."
+};
+function firebaseConfigured(){ return !!(FIREBASE_CONFIG && FIREBASE_CONFIG.databaseURL); }
+
+let presenceDb = null;
+let presenceRoomRef = null;
+let presenceOwnRef = null;
+const presenceCursors = new Map(); // playerId -> DOM element in #boardWorld
+let presenceLastSent = 0;
+const PRESENCE_SEND_MS = 100; // ~10 updates/sec — smooth without hammering the free tier
+let presenceHolding = false;
+let presenceHeldLabel = null;
+
+function ensureFirebase(){
+  if(!firebaseConfigured()) return false;
+  if(presenceDb) return true;
+  try{
+    if(!window.firebase || !firebase.apps) return false; // SDK <script> tags didn't load (offline, blocked, etc.)
+    if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    presenceDb = firebase.database();
+    return true;
+  }catch(err){ console.warn('Live presence disabled — Firebase init failed:', err); return false; }
+}
+// Deterministic per-player color, derived purely from the id — every viewer
+// lands on the same color for the same player with nothing to sync.
+function presenceColorFor(id){
+  let hash = 0;
+  for(let i=0;i<id.length;i++) hash = (hash*31 + id.charCodeAt(i)) | 0;
+  return `hsl(${Math.abs(hash)%360}, 80%, 64%)`;
+}
+function renderPresenceSnapshot(snap){
+  const data = snap.val() || {};
+  const world = document.getElementById('boardWorld');
+  const seen = new Set();
+  Object.entries(data).forEach(([pid, p])=>{
+    if(pid === state.playerId || !p) return; // never render our own cursor back at ourselves
+    seen.add(pid);
+    let el = presenceCursors.get(pid);
+    if(!el){
+      el = document.createElement('div');
+      el.className = 'presence-cursor';
+      const color = presenceColorFor(pid);
+      el.innerHTML = `<div class="dot" style="background:${color};border:2px solid rgba(255,255,255,.85);"></div>`+
+        `<div class="tag" style="background:${color};">${escapeHtml(p.name||'Player')}</div>`+
+        `<div class="chip" style="display:none;"></div>`;
+      world.appendChild(el);
+      presenceCursors.set(pid, el);
+    }
+    el.style.left = (p.x||0)+'px';
+    el.style.top = (p.y||0)+'px';
+    el.classList.toggle('holding', !!p.holding);
+    const chip = el.querySelector('.chip');
+    if(p.holding && p.heldLabel){ chip.style.display=''; chip.textContent = '✋ '+p.heldLabel; }
+    else chip.style.display = 'none';
+  });
+  // Anyone no longer in the snapshot (left, disconnected) loses their cursor —
+  // onDisconnect().remove() (set up in initPresence) is what makes this
+  // happen automatically even if they close the tab without warning.
+  presenceCursors.forEach((el, pid)=>{ if(!seen.has(pid)){ el.remove(); presenceCursors.delete(pid); } });
+}
+function initPresence(){
+  if(!ensureFirebase()) return;
+  presenceRoomRef = presenceDb.ref(`rooms/${state.sessionCode}/presence`);
+  presenceOwnRef = presenceRoomRef.child(state.playerId);
+  presenceOwnRef.onDisconnect().remove();
+  presenceOwnRef.set({ name: state.playerName, x:0, y:0, holding:false, heldLabel:null, ts: Date.now() });
+  presenceRoomRef.on('value', renderPresenceSnapshot);
+}
+function teardownPresence(){
+  if(presenceRoomRef) presenceRoomRef.off('value', renderPresenceSnapshot);
+  if(presenceOwnRef) presenceOwnRef.remove();
+  presenceRoomRef = null; presenceOwnRef = null;
+  presenceCursors.forEach(el=>el.remove());
+  presenceCursors.clear();
+}
+function sendPresence(clientX, clientY, forceNow){
+  if(!presenceOwnRef) return;
+  const now = Date.now();
+  if(!forceNow && now - presenceLastSent < PRESENCE_SEND_MS) return;
+  presenceLastSent = now;
+  const w = clientToWorld(clientX, clientY);
+  presenceOwnRef.update({ x: Math.round(w.x), y: Math.round(w.y), holding: presenceHolding, heldLabel: presenceHeldLabel, ts: now });
+}
+window.addEventListener('mousemove', (e)=>{ sendPresence(e.clientX, e.clientY); });
+// A generic "is this player currently holding/dragging something" signal —
+// deliberately kept independent of the board's many individual drag handlers
+// (pieces, splayed stacks, tokens) rather than threading a broadcast call
+// into each one, so this can't regress any of them. It just watches, at the
+// document level, whether the mouse went down on something draggable and
+// hasn't come back up yet, and grabs a human-readable label for it (a
+// piece's label/top-card name if it has one) along the way.
+document.addEventListener('mousedown', (e)=>{
+  const target = e.target.closest('.piece, .token');
+  if(!target) return;
+  presenceHolding = true;
+  presenceHeldLabel = target.querySelector('.piece-label')?.textContent?.trim() || target.getAttribute('title') || 'a card';
+  sendPresence(e.clientX, e.clientY, true);
+}, true);
+document.addEventListener('mouseup', (e)=>{
+  if(!presenceHolding) return;
+  presenceHolding = false;
+  presenceHeldLabel = null;
+  sendPresence(e.clientX, e.clientY, true);
+}, true);
+window.addEventListener('beforeunload', ()=>{ if(presenceOwnRef) presenceOwnRef.remove(); });
+
+/* =========================================================================
    CONNECTING A ROOM — open it up to others once you're happy with your local
    board (pushes it as the shared starting layout), or join one already
    underway (adopts its shared board in place of your local one). Either way
@@ -5350,6 +5502,7 @@ function connectToRoom({code, isHost}){
   }
   doAction('PLAYER_JOINED', {playerId: state.playerId, playerName: state.playerName});
   startPolling();
+  initPresence();
   updateConnectionUI();
   toast(isHost ? `Room open — session code ${code}` : `Joined session ${code}`);
 }
