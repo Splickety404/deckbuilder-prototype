@@ -474,9 +474,40 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   100%{transform:scale(2.6);opacity:0;}
 }
 
-/* ---------- Multi-select rubber-band + selected pieces ---------- */
-#selectionBox{position:absolute;background:rgba(80,150,255,0.16);border:1px dashed var(--accent);pointer-events:none;}
-.piece.selected{outline:2px solid var(--accent);outline-offset:2px;}
+/* ---------- Multi-select rubber-band + selected pieces/tokens ----------
+   Right-click-drag (or shift+left-drag) over empty board space draws this
+   box; anything whose footprint touches it gets selected — see
+   beginBoxSelect. Marching-ants stripes + a little spring-in pop are purely
+   for feel; the actual hit-testing only ever looks at the final rectangle
+   on release. */
+#selectionBox{position:absolute;pointer-events:none;border-radius:6px;
+  border:2px dashed var(--accent);
+  background-image:repeating-linear-gradient(-45deg, rgba(131,133,245,.20) 0 10px, rgba(131,133,245,.32) 10px 20px);
+  background-size:28px 28px;
+  box-shadow:0 0 16px rgba(131,133,245,.28);
+  animation:selectionBoxIn .15s var(--bounce), marchingAnts .6s linear infinite;}
+@keyframes selectionBoxIn{0%{opacity:0;filter:brightness(1.6);}100%{opacity:1;filter:none;}}
+@keyframes marchingAnts{ from{background-position:0 0;} to{ background-position:28px 0; } }
+/* Live "N selected" pill that follows the box while dragging it — see
+   beginBoxSelect. */
+#selectionCount{position:fixed;z-index:95;pointer-events:none;background:var(--accent);color:var(--accent-contrast);
+  font-weight:700;font-size:12px;padding:4px 11px;border-radius:var(--radius-pill);box-shadow:var(--shadow);
+  animation:popIn .2s var(--bounce);white-space:nowrap;}
+.piece.selected, .token.selected{outline:2px solid var(--accent);outline-offset:3px;
+  box-shadow:0 0 0 6px rgba(131,133,245,.18),var(--shadow);animation:selectedGlow 1.8s ease-in-out infinite;}
+@keyframes selectedGlow{0%,100%{box-shadow:0 0 0 6px rgba(131,133,245,.18),var(--shadow);}50%{box-shadow:0 0 0 10px rgba(131,133,245,.05),var(--shadow);}}
+/* One-shot bounce for an item the INSTANT it becomes selected — added
+   transiently by JS right after a selection change (see selectPop), never
+   baked into the class renderBoard()/renderTokens() build from state, or
+   it'd replay on every unrelated re-render while the item stayed selected. */
+.select-pop{animation:selectPopBounce .4s var(--bounce);}
+@keyframes selectPopBounce{0%{filter:brightness(1.6) saturate(1.5);}100%{filter:none;}}
+/* A selected item that's part of a group actively being dragged lifts a
+   little brighter above its neighbors; letting go gives the whole group a
+   satisfying settle-bounce (see beginGroupDrag). */
+.group-lifted{filter:brightness(1.18) !important;z-index:6 !important;}
+.group-settle{animation:groupSettleBounce .35s var(--bounce);}
+@keyframes groupSettleBounce{0%{box-shadow:0 0 0 10px rgba(131,133,245,.45),var(--shadow);}100%{box-shadow:0 0 0 0 rgba(131,133,245,0),var(--shadow);}}
 
 /* ---------- Lock badge (pieces + zones) ---------- */
 .lock-badge{position:absolute;top:-8px;right:-8px;width:20px;height:20px;border-radius:50%;background:var(--surface);
@@ -1350,6 +1381,7 @@ const state = {
   turnOrder: [],         // array of playerIds — synced via SET_TURN, built lazily from state.players
   turnIndex: -1,          // index into turnOrder of whoever's turn it is; -1 = not started
   selectedIds: new Set(), // piece ids currently multi-selected — local per-viewer, never synced
+  selectedTokenIds: new Set(), // token ids currently multi-selected — mirrors selectedIds, local per-viewer, never synced
   showGrid: false,       // local per-viewer, persisted in localStorage
   gridSize: 80,          // px (world-space), local per-viewer, persisted in localStorage
 };
@@ -2123,8 +2155,31 @@ function firePing(clientX, clientY){
   const world = clientToWorld(clientX, clientY);
   doAction('PING', {x:world.x, y:world.y});
 }
+// Right-click alone still pings (below) — but right-click-and-DRAG instead
+// draws the multi-select box (see beginBoxSelect), exactly like holding
+// shift and left-dragging does. Tracked here (rather than in beginBoxSelect
+// itself) purely to tell the two right-button gestures apart: a plain right
+// click never moves past DRAG_THRESHOLD before its mouseup/contextmenu, a
+// box-select always does. Shift+right-drag adds to whatever's already
+// selected instead of replacing it, same "shift adds" convention as the
+// left-drag version.
+let rightDragState = null;
+document.getElementById('boardViewport').addEventListener('mousedown', (e)=>{
+  if(e.button!==2) return;
+  rightDragState = {startX:e.clientX, startY:e.clientY, dragging:false};
+});
+window.addEventListener('mousemove', (e)=>{
+  if(!rightDragState || rightDragState.dragging) return;
+  if(Math.hypot(e.clientX-rightDragState.startX, e.clientY-rightDragState.startY) >= DRAG_THRESHOLD){
+    rightDragState.dragging = true;
+    beginBoxSelect(rightDragState.startX, rightDragState.startY, e.shiftKey);
+  }
+});
 document.getElementById('boardViewport').addEventListener('contextmenu', (e)=>{
   e.preventDefault();
+  const wasDragging = rightDragState && rightDragState.dragging;
+  rightDragState = null;
+  if(wasDragging) return; // the drag itself already did its thing — no ping on top of it
   firePing(e.clientX, e.clientY);
 });
 // Long-press: held on the CAPTURE phase so it still fires even when the press
@@ -2653,39 +2708,87 @@ let panDrag = null;
 document.getElementById('boardViewport').addEventListener('mousedown', (e)=>{
   if(e.button!==0) return;
   if(state.zoneEditMode && !e.target.closest('.piece') && !e.target.closest('.token') && !e.target.closest('.zone')){ startZoneDraw(e); return; }
-  if(e.shiftKey && !e.target.closest('.piece') && !e.target.closest('.token') && !e.target.closest('.zone')){ startSelectionDrag(e); return; }
-  if(e.target.closest('.piece')) return;
+  if(e.shiftKey && !e.target.closest('.piece') && !e.target.closest('.token') && !e.target.closest('.zone')){ beginBoxSelect(e.clientX, e.clientY, true); return; }
+  if(e.target.closest('.piece') || e.target.closest('.token')) return; // each one's own onDown (see handlePieceSelectionOnDown/handleTokenSelectionOnDown) already decided what a plain click here means
   if(e.target.closest('.zone') && state.zoneEditMode) return; // the zone's own drag handler moves it instead
   clearSelection();
   panDrag = { startX:e.clientX, startY:e.clientY, viewX:state.view.x, viewY:state.view.y };
   document.getElementById('boardViewport').classList.add('panning');
 });
-// Shift-drag over empty board space draws a rubber-band selection rectangle;
-// every piece whose footprint intersects it becomes multi-selected.
-function startSelectionDrag(e){
-  const start = clientToWorld(e.clientX, e.clientY);
+// Rubber-band box-select: right-click-drag (see the PING/POINT TOOL section
+// further down, which is what actually triggers this — a plain right-click
+// with no real movement still pings as always) or shift+left-drag over empty
+// board space draws this box; on release, every UNLOCKED piece and every
+// UNATTACHED token whose footprint touches even a little of it gets
+// selected (a stack, a splayed stack, a single card, a token — never a zone,
+// and never anything locked). `additive` (shift held) unions onto whatever
+// was already selected instead of replacing it — the usual "shift adds"
+// convention. A live "N selected" pill rides along next to the cursor the
+// whole time, and every item that's newly swept in gets a little one-shot
+// bounce the instant the box closes (see selectPop) — both purely for feel.
+function beginBoxSelect(startClientX, startClientY, additive){
+  const start = clientToWorld(startClientX, startClientY);
   const box = document.createElement('div');
   box.id = 'selectionBox';
   document.getElementById('boardWorld').appendChild(box);
+  const countEl = document.createElement('div');
+  countEl.id = 'selectionCount';
+  document.body.appendChild(countEl);
   function rectFrom(ev){
     const cur = clientToWorld(ev.clientX, ev.clientY);
     return { x:Math.min(start.x,cur.x), y:Math.min(start.y,cur.y), w:Math.abs(cur.x-start.x), h:Math.abs(cur.y-start.y) };
   }
+  function countInRect(r){
+    let n = additive ? totalSelectedCount() : 0;
+    state.pieces.forEach(p=>{
+      if(p.locked) return;
+      const b = pieceBounds(p); // a left/up-splayed pile's true footprint isn't anchored at p.x/p.y — see pieceBounds
+      if(b.x < r.x+r.w && b.x+b.w > r.x && b.y < r.y+r.h && b.y+b.h > r.y && !(additive && state.selectedIds.has(p.id))) n++;
+    });
+    state.tokens.forEach(t=>{
+      if(t.attachedTo) return;
+      const size = tokenSize(t);
+      if(t.x < r.x+r.w && t.x+size > r.x && t.y < r.y+r.h && t.y+size > r.y && !(additive && state.selectedTokenIds.has(t.id))) n++;
+    });
+    return n;
+  }
   function onMove(ev){
     const r = rectFrom(ev);
     box.style.left=r.x+'px'; box.style.top=r.y+'px'; box.style.width=r.w+'px'; box.style.height=r.h+'px';
+    const n = countInRect(r);
+    countEl.textContent = n===1 ? '1 selected' : `${n} selected`;
+    countEl.style.left = (ev.clientX+18)+'px';
+    countEl.style.top = (ev.clientY+18)+'px';
   }
   function onUp(ev){
     window.removeEventListener('mousemove', onMove);
     window.removeEventListener('mouseup', onUp);
     box.remove();
+    countEl.remove();
     const r = rectFrom(ev);
-    const ids = new Set();
+    const ids = additive ? new Set(state.selectedIds) : new Set();
+    const tokenIds = additive ? new Set(state.selectedTokenIds) : new Set();
+    const newPieceIds = [], newTokenIds = [];
     state.pieces.forEach(p=>{
-      if(p.x < r.x+r.w && p.x+pieceW(p) > r.x && p.y < r.y+r.h && p.y+pieceH(p) > r.y) ids.add(p.id);
+      if(p.locked) return; // never selectable — see the feature comment above
+      const b = pieceBounds(p); // a left/up-splayed pile's true footprint isn't anchored at p.x/p.y — see pieceBounds
+      if(b.x < r.x+r.w && b.x+b.w > r.x && b.y < r.y+r.h && b.y+b.h > r.y){
+        if(!ids.has(p.id)) newPieceIds.push(p.id);
+        ids.add(p.id);
+      }
+    });
+    state.tokens.forEach(t=>{
+      if(t.attachedTo) return; // rides its host piece's corner — not independently selectable
+      const size = tokenSize(t);
+      if(t.x < r.x+r.w && t.x+size > r.x && t.y < r.y+r.h && t.y+size > r.y){
+        if(!tokenIds.has(t.id)) newTokenIds.push(t.id);
+        tokenIds.add(t.id);
+      }
     });
     state.selectedIds = ids;
+    state.selectedTokenIds = tokenIds;
     renderBoard();
+    selectPop(newPieceIds, newTokenIds);
   }
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
@@ -2699,18 +2802,67 @@ window.addEventListener('mousemove', (e)=>{
 });
 window.addEventListener('mouseup', ()=>{ panDrag=null; document.getElementById('boardViewport').classList.remove('panning'); });
 
-// Multi-select — shift-click toggles a piece in/out of state.selectedIds (local
-// only, never synced); dragging any piece that's part of a >1-piece selection
-// moves the whole group together instead of just itself (see wirePieceDrag).
+// Multi-select — shift-click toggles a piece/token in/out of state.selectedIds/
+// selectedTokenIds (local only, never synced); dragging any piece or token
+// that's part of a >1-item selection moves the whole mixed group together
+// instead of just itself (see beginGroupDrag). Zones are never selectable
+// this way, and neither is a locked piece (a locked token doesn't exist —
+// see PLACE_TOKEN — so every token is always eligible).
+function totalSelectedCount(){ return state.selectedIds.size + state.selectedTokenIds.size; }
 function toggleSelectPiece(pieceId){
   if(state.selectedIds.has(pieceId)) state.selectedIds.delete(pieceId);
-  else state.selectedIds.add(pieceId);
+  else { state.selectedIds.add(pieceId); selectPop([pieceId], []); }
+  renderBoard();
+}
+function toggleSelectToken(tokenId){
+  if(state.selectedTokenIds.has(tokenId)) state.selectedTokenIds.delete(tokenId);
+  else { state.selectedTokenIds.add(tokenId); selectPop([], [tokenId]); }
   renderBoard();
 }
 function clearSelection(){
-  if(!state.selectedIds.size) return;
+  if(!state.selectedIds.size && !state.selectedTokenIds.size) return;
   state.selectedIds.clear();
+  state.selectedTokenIds.clear();
   renderBoard();
+}
+// Shared front half of every piece-drag onDown: shift toggles just this one
+// piece in/out of the selection (vetoing the rest of the gesture — the press
+// was "select", not "move"); already being part of a >1-item mixed selection
+// hands off to the whole-group drag instead; otherwise, if some OTHER
+// selection is active, a plain click/drag-start on a piece that ISN'T in it
+// deselects everything first — "clicking on any piece not in the selection
+// deselects" — before falling through to that piece's own normal one-piece
+// interaction. Returns true when the caller should veto the gesture (return
+// false from its own onDown), false to keep going.
+function handlePieceSelectionOnDown(p, e){
+  if(e.shiftKey){ toggleSelectPiece(p.id); return true; }
+  if(state.selectedIds.has(p.id) && totalSelectedCount()>1){ beginGroupDrag({kind:'piece', id:p.id}, e); return true; }
+  if((state.selectedIds.size||state.selectedTokenIds.size) && !state.selectedIds.has(p.id)) clearSelection();
+  return false;
+}
+// Token equivalent of handlePieceSelectionOnDown — see its comment.
+function handleTokenSelectionOnDown(t, e){
+  if(e.shiftKey){ toggleSelectToken(t.id); return true; }
+  if(state.selectedTokenIds.has(t.id) && totalSelectedCount()>1){ beginGroupDrag({kind:'token', id:t.id}, e); return true; }
+  if((state.selectedIds.size||state.selectedTokenIds.size) && !state.selectedTokenIds.has(t.id)) clearSelection();
+  return false;
+}
+// A little one-shot bounce (see .select-pop) for whichever pieces/tokens just
+// NEWLY joined the selection — called right as they're added, before the
+// renderBoard() that follows has necessarily run yet, so it waits a tick for
+// the (freshly rebuilt) elements to actually exist in the DOM.
+function selectPop(pieceIds, tokenIds){
+  if(!pieceIds.length && !tokenIds.length) return;
+  requestAnimationFrame(()=>{
+    pieceIds.forEach(id=>{
+      const el = document.querySelector(`.piece[data-id="${id}"]`);
+      if(el) el.classList.add('select-pop');
+    });
+    tokenIds.forEach(id=>{
+      const el = document.querySelector(`.token[data-id="${id}"]`);
+      if(el) el.classList.add('select-pop');
+    });
+  });
 }
 /* =========================================================================
    PIECE INTERACTION MODEL
@@ -3071,9 +3223,8 @@ function wireWholeInteraction(el, p){
   let ctx = null;
   wirePressDragClick(el, {
     onDown: (e)=>{
-      if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
+      if(handlePieceSelectionOnDown(p, e)) return false;
       if(p.locked) return false;
-      if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
       ctx = { p, el, ghost:null, tucked:false, startX:p.x, startY:p.y };
     },
     onMove: (dx, dy, ev)=> driveWholePieceDrag(ctx, dx, dy, ev),
@@ -3098,8 +3249,8 @@ function wireGroupHandleDrag(handleEl, p){
   let startX, startY, ghost=null;
   wirePressDragClick(handleEl, {
     onDown: (e)=>{
+      if(handlePieceSelectionOnDown(p, e)) return false;
       if(p.locked) return false;
-      if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
       startX = p.x; startY = p.y;
     },
     onMove: (dx, dy, ev)=>{
@@ -3160,9 +3311,8 @@ function wirePeelInteraction(cardEl, p, cardIndex){
   let ctx = null;
   wirePressDragClick(cardEl, {
     onDown: (e)=>{
-      if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
+      if(handlePieceSelectionOnDown(p, e)) return false;
       if(p.locked) return false;
-      if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
     },
     onMove: (dx, dy, ev)=>{
       if(!ctx){ ctx = beginPeelAsPiece(p, cardIndex, ev.clientX, ev.clientY); if(!ctx) return; }
@@ -3176,45 +3326,86 @@ function wirePeelInteraction(cardEl, p, cardIndex){
     },
   });
 }
-// Moves every currently-selected (and unlocked) piece by the same delta as the
-// one being dragged. No merge-onto-target and no zone-snap for group moves —
-// keeps the interaction predictable when several pieces are involved at once.
-// A plain click (no real movement) opens the clicked piece's own radial menu,
-// same as clicking any piece outside a multi-selection does.
-function wireGroupDrag(anchorPiece, downEvent){
-  const members = [...state.selectedIds].map(id=>state.pieces.get(id)).filter(m=>m && !m.locked);
-  if(!members.length) return;
-  const startPositions = members.map(m=>({id:m.id, x:m.x, y:m.y}));
+// Moves every currently-selected (and unlocked) piece PLUS every currently-
+// selected (and unattached) token by the same screen delta as whichever one
+// was actually grabbed — a mixed piece+token selection always moves as one
+// unit. No merge-onto-target and no zone-snap for group moves — keeps the
+// interaction predictable when several things are involved at once. A plain
+// click (no real movement) opens the grabbed item's own radial menu, same as
+// clicking it alone (outside any selection) does. `anchor` is {kind:'piece'|
+// 'token', id} — whichever element the press actually started on.
+function beginGroupDrag(anchor, downEvent){
+  const pieceMembers = [...state.selectedIds].map(id=>state.pieces.get(id)).filter(m=>m && !m.locked);
+  const tokenMembers = [...state.selectedTokenIds].map(id=>state.tokens.get(id)).filter(m=>m && !m.attachedTo);
+  if(!pieceMembers.length && !tokenMembers.length) return;
+  const startPositions = pieceMembers.map(m=>({kind:'piece', id:m.id, x:m.x, y:m.y}))
+    .concat(tokenMembers.map(m=>({kind:'token', id:m.id, x:m.x, y:m.y})));
   const startClientX=downEvent.clientX, startClientY=downEvent.clientY;
   let moved=false;
+  // Purely a feel thing (see .group-lifted): every member glows a bit
+  // brighter and rises above its neighbors for as long as the group is
+  // actually being dragged around.
+  function setLifted(on){
+    startPositions.forEach(sp=>{
+      const el = document.querySelector(sp.kind==='piece' ? `.piece[data-id="${sp.id}"]` : `.token[data-id="${sp.id}"]`);
+      if(el) el.classList.toggle('group-lifted', on);
+    });
+  }
   function onMove(ev){
     const dx=ev.clientX-startClientX, dy=ev.clientY-startClientY;
     if(!moved){
       if(Math.hypot(dx,dy) < DRAG_THRESHOLD) return;
       moved = true;
+      setLifted(true);
     }
     const d = screenDeltaToWorldDelta(dx, dy);
     startPositions.forEach(sp=>{
-      const mp = state.pieces.get(sp.id); if(!mp) return;
-      mp.x = sp.x+d.x; mp.y = sp.y+d.y;
-      const elm = document.querySelector(`.piece[data-id="${sp.id}"]`);
-      if(elm){ elm.style.left=mp.x+'px'; elm.style.top=mp.y+'px'; }
-      repositionAttachedTokens(sp.id);
+      if(sp.kind==='piece'){
+        const mp = state.pieces.get(sp.id); if(!mp) return;
+        mp.x = sp.x+d.x; mp.y = sp.y+d.y;
+        const elm = document.querySelector(`.piece[data-id="${sp.id}"]`);
+        if(elm){ elm.style.left=mp.x+'px'; elm.style.top=mp.y+'px'; }
+        repositionAttachedTokens(sp.id);
+      } else {
+        const mt = state.tokens.get(sp.id); if(!mt) return;
+        mt.x = sp.x+d.x; mt.y = sp.y+d.y;
+        const elm = document.querySelector(`.token[data-id="${sp.id}"]`);
+        if(elm){ elm.style.left=mt.x+'px'; elm.style.top=mt.y+'px'; }
+      }
     });
   }
   function onUp(ev){
     window.removeEventListener('mousemove', onMove);
     window.removeEventListener('mouseup', onUp);
-    if(!moved){ openPieceRadialMenu(anchorPiece.id, downEvent.clientX, downEvent.clientY); return; }
+    if(!moved){
+      if(anchor.kind==='piece') openPieceRadialMenu(anchor.id, downEvent.clientX, downEvent.clientY);
+      else openTokenRadialMenu(anchor.id, downEvent.clientX, downEvent.clientY);
+      return;
+    }
     const d = screenDeltaToWorldDelta(ev.clientX-startClientX, ev.clientY-startClientY);
     startPositions.forEach(sp=>{
-      const mp = state.pieces.get(sp.id); if(!mp) return;
-      mp.x = snapCoord(sp.x+d.x); mp.y = snapCoord(sp.y+d.y);
-      postRoomEvent('MOVE_PIECE', {id:mp.id, x:mp.x, y:mp.y});
+      if(sp.kind==='piece'){
+        const mp = state.pieces.get(sp.id); if(!mp) return;
+        mp.x = snapCoord(sp.x+d.x); mp.y = snapCoord(sp.y+d.y);
+        postRoomEvent('MOVE_PIECE', {id:mp.id, x:mp.x, y:mp.y});
+      } else {
+        const mt = state.tokens.get(sp.id); if(!mt) return;
+        mt.x = snapCoord(sp.x+d.x); mt.y = snapCoord(sp.y+d.y);
+        postRoomEvent('MOVE_TOKEN', {id:mt.id, x:mt.x, y:mt.y, attachedTo:null});
+      }
     });
-    renderBoard();
+    renderBoard(); // rebuilds every element fresh, so setLifted(false) would be a no-op — skipped
+    // One satisfying little settle-bounce (see .group-settle) once everything
+    // has actually landed in its new spot.
+    startPositions.forEach(sp=>{
+      const el = document.querySelector(sp.kind==='piece' ? `.piece[data-id="${sp.id}"]` : `.token[data-id="${sp.id}"]`);
+      if(el) el.classList.add('group-settle');
+    });
     setUndo(()=>{
-      startPositions.forEach(sp=> doAction('MOVE_PIECE', {id:sp.id, x:sp.x, y:sp.y}));
+      startPositions.forEach(sp=>{
+        if(sp.kind==='piece') doAction('MOVE_PIECE', {id:sp.id, x:sp.x, y:sp.y});
+        else doAction('MOVE_TOKEN', {id:sp.id, x:sp.x, y:sp.y, attachedTo:null});
+      });
     });
   }
   window.addEventListener('mousemove', onMove);
@@ -3573,6 +3764,14 @@ document.addEventListener('keydown', (e)=>{
   // F/D above — peeks at whichever card is under the cursor (the pile's own
   // top card by default, or the specific splay card being hovered).
   else if(p.kind!=='image' && key==='p'){ e.preventDefault(); peekTopCard(hoveredPieceId, cardIdx); }
+});
+// Escape clears the current multi-selection — a quick, always-available "never
+// mind" independent of hovering anything in particular (unlike the R/F/D/P
+// hotkeys above).
+document.addEventListener('keydown', (e)=>{
+  if(e.key!=='Escape') return;
+  if(isTextEntryFocused()) return;
+  clearSelection();
 });
 
 // True when the cursor is over the BOTTOM THIRD of the target's own top-card
@@ -3977,9 +4176,8 @@ function wireStackInteraction(el, p){
   el.addEventListener('mouseleave', ()=>{ if(!mode) el.style.cursor = ''; });
   wirePressDragClick(el, {
     onDown: (e)=>{
-      if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
+      if(handlePieceSelectionOnDown(p, e)) return false;
       if(p.locked) return false;
-      if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
       edgeDir = stackEdgeAt(p, e.clientX, e.clientY);
       mode = edgeDir ? 'edge' : 'peel';
       if(mode==='edge'){
@@ -4124,9 +4322,8 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
   cardEl.addEventListener('mouseleave', ()=>{ if(!mode) cardEl.style.cursor = ''; });
   wirePressDragClick(cardEl, {
     onDown: (e)=>{
-      if(e.shiftKey){ toggleSelectPiece(p.id); return false; }
+      if(handlePieceSelectionOnDown(p, e)) return false;
       if(p.locked) return false;
-      if(state.selectedIds.has(p.id) && state.selectedIds.size>1){ wireGroupDrag(p, e); return false; }
       const onEdge = onEdgeAt(e.clientX, e.clientY);
       mode = !onEdge ? 'peel' : (isAnchor ? 'anchor-adjust' : 'adjust');
       if(mode==='anchor-adjust'){
@@ -4730,7 +4927,7 @@ function renderTokens(){
     const bg = state.tokenTypes.get(t.type) || '#546178';
     const letter = escapeHtml((t.type[0]||'?').toUpperCase());
     el.style.left = pos.x+'px'; el.style.top = pos.y+'px';
-    el.className = 'token' + (t.attachedTo?' attached':'');
+    el.className = 'token' + (t.attachedTo?' attached':'') + (state.selectedTokenIds.has(t.id)?' selected':'');
     el.style.background = bg;
     // The type letter always stays put — the quantity shows as its own small
     // bubble in the top-right corner instead, rather than replacing the
@@ -4855,6 +5052,7 @@ function finishWholeTokenMove(t, dx, dy){
 function wireTokenDrag(el, t){
   let ghost=null;
   wirePressDragClick(el, {
+    onDown: (e)=>{ if(handleTokenSelectionOnDown(t, e)) return false; },
     onMove: (dx, dy)=>{
       const start = tokenRenderPos(t);
       const d = screenDeltaToWorldDelta(dx, dy);
@@ -4879,7 +5077,7 @@ function wireTokenDrag(el, t){
 function wireTokenGroupHandleDrag(handleEl, t){
   let startPos, ghost=null;
   wirePressDragClick(handleEl, {
-    onDown: ()=>{ startPos = tokenRenderPos(t); },
+    onDown: (e)=>{ if(handleTokenSelectionOnDown(t, e)) return false; startPos = tokenRenderPos(t); },
     onMove: (dx, dy)=>{
       const d = screenDeltaToWorldDelta(dx, dy);
       const nx = startPos.x+d.x, ny = startPos.y+d.y;
@@ -4906,6 +5104,7 @@ function wireTokenGroupHandleDrag(handleEl, t){
 function wireTokenPeelInteraction(faceEl, t){
   let ghost=null;
   wirePressDragClick(faceEl, {
+    onDown: (e)=>{ if(handleTokenSelectionOnDown(t, e)) return false; },
     onMove: (dx, dy, ev)=>{
       if(!ghost) ghost = createDragGhost();
       const world = clientToWorld(ev.clientX, ev.clientY);
