@@ -238,8 +238,13 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    hovering that pile's stack-handle label so it's obvious exactly how far
    the fan actually reaches. Purely visual, like .drag-ghost, and lives in
    #boardWorld for the same reason. */
-.stack-perimeter{position:absolute;border:2px solid var(--accent);border-radius:var(--radius-sm);
-  box-shadow:0 0 0 3px rgba(255,255,255,.06);pointer-events:none;z-index:1;
+/* Seth: make this read as an obvious "this whole stack" highlight, not a
+   faint sliver — a thicker, brighter accent-colored border plus a real glow
+   in the same color (rgba here is just --accent's own #8385f5 broken into
+   its r,g,b — CSS can't tint box-shadow off a color var directly) rather than
+   the old barely-visible white sliver. */
+.stack-perimeter{position:absolute;border:3px solid var(--accent);border-radius:var(--radius-sm);
+  box-shadow:0 0 0 4px rgba(131,133,245,.35), 0 0 18px 3px rgba(131,133,245,.5);pointer-events:none;z-index:1;
   opacity:0;transition:opacity .15s var(--bounce);}
 .stack-perimeter.visible{opacity:1;}
 
@@ -268,17 +273,6 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   transition:transform .15s var(--bounce),filter .15s;z-index:2;}
 .token:hover{transform:scale(1.18);filter:brightness(1.1);}
 .token.attached{width:28px;height:28px;font-size:11px;}
-/* A splayed token stack turns .token itself into a plain, invisible positioning
-   container (sized to the whole fanned-out bounding box, like a splayed .piece)
-   and moves all the actual circular visuals onto per-token .token-face children
-   — the same anchor-is-the-top-face / "2nd token down" is the adjust-target
-   pattern used for splayed card piles (see .splay-card). */
-.token.splayed{width:auto;height:auto;border-radius:0;background:none!important;box-shadow:none;border:none;cursor:default;}
-.token.splayed:hover{transform:none;filter:none;}
-.token-face{position:absolute;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  font-weight:700;font-size:14px;color:#fff;cursor:grab;box-shadow:var(--shadow);border:2px solid rgba(255,255,255,.3);user-select:none;}
-.token-face:hover{filter:brightness(1.1);}
-.token-face.splay-adjust-target{outline:2px solid var(--accent);outline-offset:2px;box-shadow:0 0 0 5px var(--accent-soft),var(--shadow);cursor:move;}
 /* The type letter never changes; a stack's quantity (when >1) shows as its
    own small bubble instead of replacing the letter (unlike a card pile,
    whose count now lives right inside its label text — see pieceLabelText).
@@ -1106,6 +1100,13 @@ async function fetchSheetCards(sheetId){
         r._doubleSided = String(r.is_double_sided).trim().toUpperCase()==='TRUE';
         r._sheetId = sheetId; // so a piece's cards can be traced back to their sheet when exporting a layout
         if(r.id) cardsById.set(r.id, r);
+        // Preload both faces right away — see preloadCardFace's own comment —
+        // so flipping a card for the first time doesn't have to wait on a
+        // fresh network fetch. The back only ever gets shown for a genuinely
+        // double-sided card (see cardFaceHtml); everything else just shows a
+        // plain cardback, nothing to preload.
+        preloadCardFace(r._front);
+        if(r._doubleSided) preloadCardFace(r._back);
       });
       return;
     }catch(e){ lastErr = e; }
@@ -1146,6 +1147,22 @@ function sizedUrl(url, w){
   const isImage = url.includes('#img-src');
   const base = url.split('#')[0];
   return isImage ? base : (base + '=w' + w);
+}
+// Warms the browser's image cache for a card face the instant its URL is
+// known (see fetchSheetCards), rather than waiting for the first time a
+// player actually flips to it — that first flip used to be the first time
+// the browser ever requested the image at all, so it visibly popped in a
+// beat late. Preloads at both sizes actually used to display a card: 320px
+// (an ordinary board/hand face — see cardFaceHtml/pieceFaceHtml) and 700px
+// (the larger hover preview — see showHoverPreview). A bare `new Image()`
+// with its `src` set is the standard way to get the browser to fetch and
+// cache a URL without putting anything on screen; nothing here holds a
+// reference to the Image past this call because nothing needs to — once
+// the browser has it cached, the real <img> tag rendered later reuses it.
+function preloadCardFace(url){
+  if(!url) return;
+  new Image().src = sizedUrl(url, 320);
+  new Image().src = sizedUrl(url, 700);
 }
 
 /* =========================================================================
@@ -1429,8 +1446,7 @@ function applyRoomEvent(type, payload){
     }
     case 'PLACE_TOKEN': {
       state.tokens.set(payload.id, {id:payload.id, x:payload.x, y:payload.y, type:payload.type, count:payload.count, attachedTo:payload.attachedTo||null,
-        attachedCardIndex: (payload.attachedTo && payload.attachedCardIndex!=null) ? payload.attachedCardIndex : null,
-        splayed:false, splayDir:'right', splaySpacing:14});
+        attachedCardIndex: (payload.attachedTo && payload.attachedCardIndex!=null) ? payload.attachedCardIndex : null});
       break;
     }
     case 'MOVE_TOKEN': {
@@ -1444,18 +1460,13 @@ function applyRoomEvent(type, payload){
       }
       break;
     }
+    // Seth: tokens can now sit at zero or go negative (a damage/life counter,
+    // not just a physical stack of chips) — count is no longer auto-deleted
+    // just for reaching zero or below. A token is only ever actually removed
+    // by an explicit REMOVE_TOKEN (the radial menu's "Remove All").
     case 'SET_TOKEN_COUNT': {
       const t = state.tokens.get(payload.id);
-      if(t){ if(payload.count<=0) state.tokens.delete(payload.id); else t.count = payload.count; }
-      break;
-    }
-    case 'SET_TOKEN_SPLAY': {
-      const t = state.tokens.get(payload.id);
-      if(t){
-        t.splayed = payload.splayed;
-        if(payload.dir) t.splayDir = payload.dir;
-        if(payload.spacing) t.splaySpacing = payload.spacing;
-      }
+      if(t) t.count = payload.count;
       break;
     }
     case 'REMOVE_TOKEN': {
@@ -1664,7 +1675,6 @@ function describeEvent(type, payload, playerName){
     case 'PLACE_TOKEN': return `${playerName} placed a ${payload.type} token`;
     case 'MOVE_TOKEN': return `${playerName} moved a token`;
     case 'SET_TOKEN_COUNT': return `${playerName} set a token count to ${payload.count}`;
-    case 'SET_TOKEN_SPLAY': return `${playerName} ${payload.splayed?`splayed a token stack (${payload.dir||'right'})`:'unsplayed a token stack'}`;
     case 'REMOVE_TOKEN': return `${playerName} removed a token`;
     case 'HAND_COUNT': return `${playerName} now has ${payload.count} card(s) in hand`;
     case 'SEARCH_REMOVE': return `${playerName} searched a pile and took ${payload.removedCount} card(s)`;
@@ -1939,6 +1949,13 @@ function openDicePopover(){
     if(custom>1){ rollDice(custom); el.classList.add('hidden'); }
   });
   el.classList.remove('hidden');
+  // Was relying on wherever #dicePopover happened to land in the toolbar's
+  // own flex flow (position:absolute with no left/top ever set) — fine near
+  // the left edge, but popped off the right/bottom of the screen for anyone
+  // whose toolbar put the Dice button further along the row. positionMenuNear
+  // (see its own comment, already used by the token/theme menus for the same
+  // reason) clamps it to the actual viewport instead.
+  positionMenuNear(el, document.getElementById('btnDice'));
 }
 document.getElementById('btnDice').addEventListener('click', (e)=>{
   e.stopPropagation();
@@ -2730,18 +2747,26 @@ function finishWholeMove(p, startX, startY, clientX, clientY){
     // singleOverSingleSplayPreview/driveWholePieceDrag's newSplay branch)
     // creates that splay in the same merge, rather than an ordinary
     // top/bottom placement.
-    const newSplay = (target.splayed && target.cardIds.length>1) ? null : singleOverSingleSplayPreview(target, p.cardIds.length, clientX, clientY);
+    const newSplay = (target.splayed && target.cardIds.length>1) ? null : singleOverSingleSplayPreview(target, p.cardIds.length, p.x+PIECE_W/2, p.y+PIECE_H/2);
     if(newSplay){
       mergePieceOntoTarget(p.id, target.id, 0, newSplay);
       return;
     }
     // A SPLAYED target inserts at the exact fanned position it was
     // previewing (see splayInsertIndex — keyed off the dragged piece's OWN
-    // board position, p.x/p.y, not the cursor); any other target uses the
-    // coarser cursor-based top/bottom-only rule.
+    // board position, p.x/p.y, not the cursor); an actual unsplayed STACK
+    // (2+ cards) uses the coarser cursor-based top/bottom-only rule
+    // (shouldInsertBelow). A lone single card is neither of those — it's
+    // governed entirely by singleOverSingleSplayPreview above, so outside
+    // its splay zone the only outcome is an ordinary on-top merge (see that
+    // function's own comment on why shouldInsertBelow's much smaller
+    // threshold must NOT also apply here — it used to fire first and made
+    // this look identical to hovering a real stack).
     const insertIndex = (target.splayed && target.cardIds.length>1)
       ? splayInsertIndex(target, p.x, p.y)
-      : (shouldInsertBelow(target, world.x, world.y) ? 0 : target.cardIds.length);
+      : (target.cardIds.length>1)
+        ? (shouldInsertBelow(target, world.x, world.y) ? 0 : target.cardIds.length)
+        : target.cardIds.length;
     mergePieceOntoTarget(p.id, target.id, insertIndex); // re-renders the board itself, sets its own undo
     return;
   }
@@ -2812,7 +2837,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   // — see singleOverSingleSplayPreview's own comment. null while still close
   // to center (ordinary stack-on-top merge) or when either side isn't a lone
   // single card.
-  const newSplay = splayTarget ? null : singleOverSingleSplayPreview(target, p.cardIds.length, ev.clientX, ev.clientY);
+  const newSplay = splayTarget ? null : singleOverSingleSplayPreview(target, p.cardIds.length, p.x+PIECE_W/2, p.y+PIECE_H/2);
   const world = clientToWorld(ev.clientX, ev.clientY);
   if(splayTarget){
     // Close enough to tuck: preview it with this piece's OWN card face (it's
@@ -2854,7 +2879,13 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   if(!ctx.ghost) ctx.ghost = createDragGhost();
   ctx.el.classList.add('dragging-piece');
   ctx.el.style.left=p.x+'px'; ctx.el.style.top=p.y+'px';
-  ctx.el.classList.toggle('insert-below', !!target && shouldInsertBelow(target, world.x, world.y));
+  // Only a real multi-card STACK gets the bottom-third "insert below" hint —
+  // a lone single-card target is governed entirely by singleOverSingleSplayPreview
+  // above (which already returned null here, meaning plain stack-on-top), so
+  // it must never also show this hint (see that function's comment on why
+  // its old, much-smaller threshold used to leak through and make this look
+  // identical to hovering a real stack).
+  ctx.el.classList.toggle('insert-below', !!target && target.cardIds.length>1 && shouldInsertBelow(target, world.x, world.y));
   { const b = pieceBounds(p); updateDragGhost(ctx.ghost, b.x, b.y, b.w, b.h); }
   repositionAttachedTokens(p.id);
 }
@@ -3565,11 +3596,19 @@ function effectivePieceRotation(p){ return p.rotation||0; }
 // top-left corner, (PIECE_W, PIECE_H) at its bottom-right — i.e. genuinely
 // "which part of THIS card, as drawn before any rotation was applied, is the
 // cursor over."
+// World-space version of the same conversion — for a caller that already has
+// a board-space (world) point rather than raw screen coordinates (e.g. a
+// dragged piece's own current center, per the "keyed off the dragged piece's
+// OWN board position, not the cursor" convention used elsewhere — see
+// singleOverSingleSplayPreview).
+function localOffsetInPieceFromWorld(p, worldX, worldY){
+  const cx = p.x + PIECE_W/2, cy = p.y + PIECE_H/2;
+  const rel = rotateVector(worldX-cx, worldY-cy, effectivePieceRotation(p));
+  return { x: rel.x + PIECE_W/2, y: rel.y + PIECE_H/2 };
+}
 function localOffsetInPiece(p, clientX, clientY){
   const world = clientToWorld(clientX, clientY);
-  const cx = p.x + PIECE_W/2, cy = p.y + PIECE_H/2;
-  const rel = rotateVector(world.x-cx, world.y-cy, effectivePieceRotation(p));
-  return { x: rel.x + PIECE_W/2, y: rel.y + PIECE_H/2 };
+  return localOffsetInPieceFromWorld(p, world.x, world.y);
 }
 // Which edge (if any) of an UNSPLAYED multi-card pile a mousedown landed in —
 // null means it landed in the middle, an ordinary peel-drag zone. The live
@@ -3692,15 +3731,21 @@ function splaySpacingForCursor(p, dir, clientX, clientY, depth){
   // uses, right up to the point it actually does unsplay.
   return Math.max(0, Math.min(splayMaxFor(dir), spacing));
 }
-// How far (in local axis units, past the center of a single unsplayed card)
-// a single dragged card has to be nudged before hovering it over another
-// single, unsplayed card switches from previewing an ordinary "stack on top"
-// merge to previewing a brand-new 2-card splay instead. Deliberately a much
-// bigger gesture than SPLAY_UNSPLAY_PROXIMITY (which governs the much finer
-// "let go near zero to collapse" snap-back while already adjusting an
-// existing fan) — this is a coarser choice between two visually different
-// outcomes, so it needs a nudge that reads as clearly deliberate.
-const SINGLE_STACK_TO_SPLAY_NUDGE = PIECE_W * 0.5;
+// What fraction of the target's own extent (PIECE_W for a horizontal nudge,
+// PIECE_H for a vertical one) a single dragged card has to be nudged off
+// center before hovering it over another single, unsplayed card switches
+// from previewing an ordinary "stack on top" merge to previewing a brand-new
+// 2-card splay instead. A FRACTION of each axis's own dimension, not a flat
+// px value: PIECE_H and PIECE_W differ (a card is taller than it is wide —
+// see PIECE_W/PIECE_H), so a flat threshold either made the vertical nudge
+// trivial to reach and the horizontal one nearly impossible (needing the
+// cursor within a pixel of the card's own edge) or vice versa. This is also
+// deliberately a much bigger gesture than SPLAY_UNSPLAY_PROXIMITY (which
+// governs the much finer "let go near zero to collapse" snap-back while
+// already adjusting an existing fan) — this is a coarser choice between two
+// visually different outcomes, so it needs a nudge that reads as clearly
+// deliberate.
+const SINGLE_STACK_TO_SPLAY_NUDGE_FRACTION = 0.5;
 // Distinct from the tuck-under-a-PILE behavior (shouldInsertBelow/
 // splayInsertIndex — those apply once a target is already a multi-card or
 // splayed pile): this is specifically for a single dragged card hovering a
@@ -3717,22 +3762,37 @@ const SINGLE_STACK_TO_SPLAY_NUDGE = PIECE_W * 0.5;
 // is always the anchor and the dragged card always the 2nd/last card, so the
 // insert is always at index 0 (same convention as splayInsertIndex/
 // MERGE_PIECES: 0 = underneath everything, i.e. away from the anchor here).
+// pieceCenterX/Y are WORLD coordinates of the DRAGGED piece's own current
+// center — same "keyed off the dragged piece's OWN board position, not the
+// cursor" convention splayInsertIndex already uses, and for good reason
+// here too: findOverlapTarget only recognizes a target while the raw CURSOR
+// is literally over that target's small footprint, but the piece being
+// dragged can sit well away from the cursor (however far off-center it was
+// originally grabbed), so measuring from the piece's own position — not a
+// cursor position trapped inside the target's box — is what actually lets
+// this nudge gesture be reached at all. (A hand card has no real board
+// position yet, so by the same convention its caller passes the cursor's
+// own world point, which stands in for the card's would-be center.)
 // Returns null when this interaction doesn't apply at all (either side isn't
-// a genuine lone single card) or the cursor's still in the "stack on top"
-// zone; otherwise {dir, spacing} for the tuck/splay preview — spacing scales
-// with how far past the nudge threshold the cursor has moved (same
-// cursor-tracks-the-grabbed-edge convention as splaySpacingForCursor, reused
-// here directly since the target itself IS the anchor being measured from).
-function singleOverSingleSplayPreview(target, sourceCardCount, clientX, clientY){
+// a genuine lone single card) or the piece is still in the "stack on top"
+// zone; otherwise {dir, spacing} for the tuck/splay preview — spacing is 0
+// right at the threshold and grows with how much further past it the piece
+// has moved, same "0 at the boundary, growing from there" convention as
+// splaySpacingForCursor.
+function singleOverSingleSplayPreview(target, sourceCardCount, pieceCenterX, pieceCenterY){
   if(!target || target.splayed || target.cardIds.length!==1) return null;
   if(sourceCardCount!==1) return null;
-  const local = localOffsetInPiece(target, clientX, clientY);
+  const local = localOffsetInPieceFromWorld(target, pieceCenterX, pieceCenterY);
   const dx = local.x - PIECE_W/2, dy = local.y - PIECE_H/2;
-  const horizontal = Math.abs(dx) >= Math.abs(dy);
+  // Compared as a FRACTION of each axis's own extent, not raw px, so the
+  // taller (Y) axis doesn't dominate just because PIECE_H > PIECE_W.
+  const horizontal = Math.abs(dx)/PIECE_W >= Math.abs(dy)/PIECE_H;
+  const extent = horizontal ? PIECE_W : PIECE_H;
   const mag = horizontal ? Math.abs(dx) : Math.abs(dy);
-  if(mag < SINGLE_STACK_TO_SPLAY_NUDGE) return null; // still close to center: ordinary stack-on-top
+  const threshold = extent * SINGLE_STACK_TO_SPLAY_NUDGE_FRACTION;
+  if(mag < threshold) return null; // still close to center: ordinary stack-on-top
   const dir = horizontal ? (dx>=0 ? 'right':'left') : (dy>=0 ? 'down':'up');
-  const spacing = splaySpacingForCursor(target, dir, clientX, clientY, 1);
+  const spacing = Math.max(0, Math.min(splayMaxFor(dir), mag - threshold));
   return { dir, spacing };
 }
 // An UNSPLAYED multi-card pile: grabbing the thin border strip around its own
@@ -4177,6 +4237,13 @@ document.getElementById('btnSearchCancel').addEventListener('click', ()=>{
 // claims its own slot in the ring, so items on either side of it read as two
 // separate clusters instead of one continuous loop (see openPieceRadialMenu,
 // which brackets its stack-action group with one on each side).
+// An item may also carry an explicit `angle` (radians, same 12-o'clock-is-
+// zero/clockwise convention as the default placement below) to pin it to a
+// specific spot instead of taking its turn in the even (i/n) spacing — see
+// openTokenRadialMenu, which needs its positive/negative increments to land
+// in the top/bottom HALVES specifically (something the plain even-spacing-
+// by-index formula can't express: that formula only ever splits a ring into
+// left/right halves by index, never top/bottom).
 function openRadialMenu(itemsSource, clientX, clientY){
   const getItems = typeof itemsSource==='function' ? itemsSource : ()=>itemsSource;
   const menu = document.getElementById('radialMenu');
@@ -4186,7 +4253,7 @@ function openRadialMenu(itemsSource, clientX, clientY){
     const n = items.length;
     const radius = Math.min(160, 78 + n*7);
     menu.innerHTML = items.map((it,i)=>{
-      const angle = (i/n)*Math.PI*2 - Math.PI/2; // start at 12 o'clock, clockwise
+      const angle = it.angle!=null ? it.angle : (i/n)*Math.PI*2 - Math.PI/2; // start at 12 o'clock, clockwise (unless pinned — see the comment above)
       const x = Math.round(Math.cos(angle)*radius), y = Math.round(Math.sin(angle)*radius);
       if(it.divider){
         return `<div class="radial-divider" style="left:${x}px;top:${y}px;"></div>`;
@@ -4514,54 +4581,22 @@ function renderTokens(){
     const bg = state.tokenTypes.get(t.type) || '#546178';
     const letter = escapeHtml((t.type[0]||'?').toUpperCase());
     el.style.left = pos.x+'px'; el.style.top = pos.y+'px';
-    if(t.splayed && t.count>1){
-      // Fanned out, mirroring a splayed card pile: the TOP token is the fixed
-      // anchor (depth 0, sits exactly at the stack's own x/y) and every token
-      // beneath it fans out away from that anchor. Since every token in a
-      // stack looks identical, "which face is which" doesn't matter the way
-      // it does for cards — only the fan itself and the "2nd token down"
-      // adjust-target (see wireTokenSplayAdjustDrag).
-      el.className = 'token splayed' + (t.attachedTo?' attached':'');
-      const dir = t.splayDir || 'right';
-      const spacing = t.splaySpacing || 14;
-      const horizontal = dir==='left' || dir==='right';
-      const topIndex = t.count-1;
-      const extent = topIndex*spacing;
-      el.style.width = (size + (horizontal?extent:0)) + 'px';
-      el.style.height = (size + (horizontal?0:extent)) + 'px';
-      const adjustIndex = topIndex-1; // "2nd token down" — depth 1 from the top
-      el.innerHTML = Array.from({length:t.count}, (_,i)=>{
-        const depth = topIndex-i;
-        let left=0, top=0;
-        if(dir==='right') left = depth*spacing;
-        else if(dir==='left') left = -depth*spacing;
-        else if(dir==='down') top = depth*spacing;
-        else if(dir==='up') top = -depth*spacing;
-        const cls = 'token-face' + (i===adjustIndex ? ' splay-adjust-target' : '');
-        return `<div class="${cls}" data-i="${i}" style="left:${left}px;top:${top}px;width:${size}px;height:${size}px;background:${bg};"><span class="token-letter">${letter}</span></div>`;
-      }).join('') + `<div class="token-count">${t.count}</div>`;
-      [...el.querySelectorAll('.token-face')].forEach(faceEl=>{
-        const i = Number(faceEl.dataset.i);
-        if(i===adjustIndex){
-          faceEl.title = 'Drag to set splay direction and spacing';
-          wireTokenSplayAdjustDrag(faceEl, t);
-        } else {
-          faceEl.title = 'Drag to peel one off';
-          wireTokenPeelInteraction(faceEl, t);
-        }
-      });
-      wireTokenPeelInteraction(el, t); // fallback for gaps between fanned faces
-    } else {
-      el.className = 'token' + (t.attachedTo?' attached':'');
-      el.style.background = bg;
-      // The type letter always stays put — the quantity (when >1) shows as its
-      // own small bubble in the top-right corner instead, rather than replacing
-      // the letter (a token has no label text to fold a count into).
-      el.innerHTML = `<span class="token-letter">${letter}</span>` +
-        (t.count>1 ? `<div class="token-count">${t.count}</div>` : '');
-      if(t.count>1) wireTokenPeelInteraction(el, t); // more than one — dragging the face peels the top one off
-      else wireTokenDrag(el, t); // a lone token just moves as a whole
-    }
+    el.className = 'token' + (t.attachedTo?' attached':'');
+    el.style.background = bg;
+    // The type letter always stays put — the quantity shows as its own small
+    // bubble in the top-right corner instead, rather than replacing the
+    // letter (a token has no label text to fold a count into). The bubble
+    // shows whenever the count ISN'T exactly 1 — a token can now sit at zero
+    // or go negative (see SET_TOKEN_COUNT), so "count!==1" (not "count>1") is
+    // what actually means "this needs its number called out."
+    el.innerHTML = `<span class="token-letter">${letter}</span>` +
+      (t.count!==1 ? `<div class="token-count">${t.count}</div>` : '');
+    // Exactly 1 just moves as a whole (Seth: "it is not a stack to be
+    // peeled"); anything else — 2+, or zero/negative — drags via the peel
+    // interaction instead (peelTokenToBoard itself decides what a "peel"
+    // means for a non-positive stack: see its own comment).
+    if(t.count!==1) wireTokenPeelInteraction(el, t);
+    else wireTokenDrag(el, t);
     el.title = `${t.type} (${t.count})`;
     world.appendChild(el);
     // Whichever branch rendered it, the quantity bubble (when present) is
@@ -4737,10 +4772,22 @@ function wireTokenPeelInteraction(faceEl, t){
 }
 // Pulls exactly one token off a stack and drops it as its own new lone token
 // at the given screen point, decrementing the stack's count by one. Mirrors
-// placePeeledCardToBoard for card piles.
+// placePeeledCardToBoard for card piles — but only while the stack still has
+// a real, positive unit to physically pull off (count>1). A stack that's
+// already at zero or negative (a damage/life counter that's been drawn down
+// — see SET_TOKEN_COUNT) has no such unit: there's nothing there to become a
+// new token, so the same drag gesture instead just pushes the ORIGINAL
+// stack's own count one further down, exactly like an extra "-1" (Seth: "if
+// you try to peel a token off a stack that is zero or negative, simply
+// reduce the amount even more from the original stack").
 function peelTokenToBoard(tokenId, clientX, clientY){
-  const t = state.tokens.get(tokenId); if(!t || t.count<=1) return;
+  const t = state.tokens.get(tokenId); if(!t || t.count===1) return; // exactly 1 is wireTokenDrag's job, not peeling
   const oldCount = t.count;
+  if(t.count<=0){
+    doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount-1});
+    setUndo(()=> doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount}));
+    return;
+  }
   const world = clientToWorld(clientX, clientY);
   let dropX = snapCoord(world.x - 22), dropY = snapCoord(world.y - 22);
   ({x:dropX, y:dropY} = applyZoneSnap(dropX, dropY, 44, 44));
@@ -4759,80 +4806,43 @@ function findPieceAtPoint(worldX, worldY){
   }
   return null;
 }
-function incrementToken(tokenId){
+// Adjusts a token's count by any signed amount (the radial menu's +1/+3/+5/
+// +10 and -1/-3/-5/-10 items — see openTokenRadialMenu — all funnel through
+// this one function). No floor at zero: a token can sit at zero or go
+// negative now (a life/damage counter, not just a stack of physical chips —
+// see SET_TOKEN_COUNT's own comment).
+function incrementToken(tokenId, delta){
   const t = state.tokens.get(tokenId); if(!t) return;
   const oldCount = t.count;
-  doAction('SET_TOKEN_COUNT', {id:tokenId, count:t.count+1});
+  doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount+delta});
   setUndo(()=> doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount}));
 }
-// Commits a token-splay change (direction/spacing/on-off) as a real
-// synced+undoable action. Mirrors commitSplay for card piles.
-function commitTokenSplay(tokenId, splayed, dir, spacing, old){
-  doAction('SET_TOKEN_SPLAY', { id:tokenId, splayed, dir, spacing });
-  setUndo(()=> doAction('SET_TOKEN_SPLAY', {id:tokenId, splayed:old.splayed, dir:old.dir, spacing:old.spacing}));
-}
-// Local-only live preview while dragging the adjust-target face — no network
-// round-trip per tick, and no undo entry until the drag is released.
-function previewTokenSplay(tokenId, splayed, dir, spacing){
-  const t = state.tokens.get(tokenId); if(!t) return;
-  t.splayed = splayed; t.splayDir = dir; t.splaySpacing = spacing;
-  renderBoard();
-}
-const TOKEN_SPLAY_MIN = 6;
-// Mirrors SPLAY_UNSPLAY_THRESHOLD for token stacks.
-const TOKEN_SPLAY_UNSPLAY_THRESHOLD = TOKEN_SPLAY_MIN + 4;
-// Toggling Splay on/off from the radial menu — turning it on keeps whatever
-// direction/spacing this stack last had (or the default, for one that's never
-// been splayed before); drag the highlighted 2nd token afterward to actually
-// set the fan. Turning it off just restacks it. Has no visible effect on a
-// lone token (renderTokens only fans out when count>1), same as toggling
-// Splay on a single-card pile.
-function toggleTokenSplay(tokenId){
-  const t = state.tokens.get(tokenId); if(!t) return;
-  const old = { splayed:t.splayed, dir:t.splayDir||'right', spacing:t.splaySpacing||14 };
-  commitTokenSplay(tokenId, !t.splayed, old.dir, old.spacing, old);
-}
-// The "2nd token down" of a splayed stack (depth 1 from the top) is the one
-// you drag to set the whole fan's direction and spacing in one gesture —
-// every deeper token just follows at a proportional multiple of the same
-// distance (see renderTokens). Mirrors wireSplayAdjustDrag for card piles.
-function wireTokenSplayAdjustDrag(faceEl, t){
-  let old;
-  wirePressDragClick(faceEl, {
-    onDown: ()=>{ old = { splayed:true, dir:t.splayDir||'right', spacing:t.splaySpacing||14 }; },
-    onMove: (dx, dy)=>{
-      const d = screenDeltaToWorldDelta(dx, dy);
-      let dir;
-      if(Math.abs(d.x) >= Math.abs(d.y)) dir = d.x>=0 ? 'right' : 'left';
-      else dir = d.y>=0 ? 'down' : 'up';
-      const mag = Math.max(Math.abs(d.x), Math.abs(d.y));
-      const max = tokenSize(t);
-      const spacing = Math.max(TOKEN_SPLAY_MIN, Math.min(max, mag));
-      previewTokenSplay(t.id, true, dir, spacing);
-    },
-    onClick: (e)=> openTokenRadialMenu(t.id, e.clientX, e.clientY),
-    onDrop: ()=>{
-      const t2 = state.tokens.get(t.id); if(!t2) return;
-      // See wireSplayAdjustDrag: letting go close in reads as "close the stack".
-      if(t2.splaySpacing <= TOKEN_SPLAY_UNSPLAY_THRESHOLD){
-        commitTokenSplay(t.id, false, t2.splayDir, t2.splaySpacing, old);
-      } else {
-        commitTokenSplay(t.id, true, t2.splayDir, t2.splaySpacing, old);
-      }
-    },
-  });
+// Positive increments fan across the TOP half of the ring, negative ones
+// across the BOTTOM half, with Remove All (and Detach, when relevant) pinned
+// to the left/right "equator" points between the two arcs — see
+// openRadialMenu's `angle` override, added specifically for this. Radians,
+// same 12-o'clock-is-zero/clockwise convention as openRadialMenu's default:
+// angle 0 is 3 o'clock, -π/2 is 12 o'clock, π/2 is 6 o'clock, π is 9 o'clock.
+// Both arcs are ordered smallest-to-largest magnitude going left-to-right, so
+// a given magnitude's + and - items line up in the same vertical column
+// (+1 upper-left / -1 lower-left, ... +10 upper-right / -10 lower-right).
+const TOKEN_INCREMENTS = [1, 3, 5, 10];
+function tokenRadialAngle(half, indexFromLeft){ // half: 'top' or 'bottom'; indexFromLeft: 0..TOKEN_INCREMENTS.length-1
+  const n = TOKEN_INCREMENTS.length;
+  const span = Math.PI * (n-1)/(n+1); // leaves a margin at each end so items never land exactly on the 0/π equator
+  const start = half==='top' ? (-Math.PI + (Math.PI-span)/2) : ((Math.PI-span)/2);
+  return start + indexFromLeft*(span/(n-1));
 }
 function openTokenRadialMenu(tokenId, clientX, clientY){
   openRadialMenu(()=>{
     const t = state.tokens.get(tokenId); if(!t) return null;
     const clone = JSON.parse(JSON.stringify(t)); // PLACE_TOKEN overwrites regardless of whether it currently exists, so one clone covers both "decrement" and "fully removed" undo cases
     const items = [
-      {icon:'+', label:'+1', action:()=> incrementToken(tokenId)},
-      {icon:'▤', label: t.splayed?'Unsplay':'Splay', action:()=>toggleTokenSplay(tokenId)},
-      {icon:'−', label:'Remove 1', action:()=>{ doAction('SET_TOKEN_COUNT', {id:tokenId, count:t.count-1}); setUndo(()=> doAction('PLACE_TOKEN', clone)); }},
-      {icon:'✕', label:'Remove All', action:()=>{ doAction('REMOVE_TOKEN', {id:tokenId}); setUndo(()=> doAction('PLACE_TOKEN', clone)); }},
+      ...TOKEN_INCREMENTS.map((n,i)=>({icon:'+'+n, label:'+'+n, angle:tokenRadialAngle('top',i), action:()=>incrementToken(tokenId, n)})),
+      ...TOKEN_INCREMENTS.map((n,i)=>({icon:'−'+n, label:'-'+n, angle:tokenRadialAngle('bottom',i), action:()=>incrementToken(tokenId, -n)})),
+      {icon:'✕', label:'Remove All', angle:0, action:()=>{ doAction('REMOVE_TOKEN', {id:tokenId}); setUndo(()=> doAction('PLACE_TOKEN', clone)); }},
     ];
-    if(t.attachedTo) items.push({icon:'⤢', label:'Detach', action:()=>{ doAction('MOVE_TOKEN', {id:tokenId, x:t.x, y:t.y, attachedTo:null}); setUndo(()=> doAction('PLACE_TOKEN', clone)); }});
+    if(t.attachedTo) items.push({icon:'⤢', label:'Detach', angle:Math.PI, action:()=>{ doAction('MOVE_TOKEN', {id:tokenId, x:t.x, y:t.y, attachedTo:null}); setUndo(()=> doAction('PLACE_TOKEN', clone)); }});
     return items;
   }, clientX, clientY);
 }
@@ -5168,6 +5178,30 @@ document.addEventListener('click', (e)=>{
   if(e.target.closest('#zonePopover')) return;
   closeZoneEditPopover();
 });
+// Auto-exits "Edit Zones" mode the instant the user touches anything that
+// ISN'T part of editing a zone — a card, a deck label, a token, or any other
+// button (Seth: leaving it on invites accidentally dragging/resizing a zone
+// later when the user thought they'd moved on). Deliberately a CAPTURE-phase
+// listener, not the ordinary bubble-phase 'click' handler just above: every
+// piece is wired through wirePressDragClick, which calls e.stopPropagation()
+// on both its own mousedown AND its native click — so a ordinary document
+// click listener never even sees a click that landed on a card. Capture runs
+// top-down BEFORE any of that, so it sees every mousedown regardless.
+document.addEventListener('mousedown', (e)=>{
+  if(!state.zoneEditMode) return;
+  const t = e.target;
+  if(t.closest('#zonePopover')) return; // working within a zone's own edit popover
+  if(t.closest('.zone')) return; // clicking a zone itself (move/resize, or opens its popover)
+  const editZonesLabel = document.getElementById('zoneEditCheckbox').closest('label');
+  if(editZonesLabel && t.closest('label')===editZonesLabel) return; // toggling the checkbox itself
+  // Empty board space (not a piece/token) is the "draw a new zone" gesture —
+  // itself part of editing zones, so it doesn't turn the mode off.
+  if(t.closest('#boardViewport') && !t.closest('.piece') && !t.closest('.token')) return;
+  state.zoneEditMode = false;
+  document.getElementById('zoneEditCheckbox').checked = false;
+  document.getElementById('boardViewport').classList.remove('zone-drawing');
+  renderBoard();
+}, true);
 
 /* =========================================================================
    HOVER PREVIEW — works identically for board pieces and hand cards; shows
@@ -5368,10 +5402,16 @@ function wireHandCardDrag(el, idx){
       const overBoard = ev.clientX>=boardRect.left && ev.clientX<=boardRect.right && ev.clientY>=boardRect.top && ev.clientY<=boardRect.bottom;
       const target = overBoard ? findOverlapTarget({id:null}, ev.clientX, ev.clientY) : null;
       const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
+      // A hand card has no real piece/board position yet — by convention (see
+      // playHandCardToBoard) the cursor's world point stands in for its
+      // would-be CENTER, which is exactly what singleOverSingleSplayPreview
+      // wants (see its own comment on why it measures a position, not the
+      // raw cursor-inside-the-target-box case that under-served this before).
+      const world = clientToWorld(ev.clientX, ev.clientY);
       // Same brand-new-splay preview as driveWholePieceDrag's newSplay branch
       // — see singleOverSingleSplayPreview. A hand card is always a lone
       // single card, so the only gate left is the target itself.
-      const newSplay = splayTarget ? null : singleOverSingleSplayPreview(target, 1, ev.clientX, ev.clientY);
+      const newSplay = splayTarget ? null : singleOverSingleSplayPreview(target, 1, world.x, world.y);
       if(splayTarget){
         // Same "the card itself tucks in, no separate silhouette" preview as
         // a peeled/whole-piece drag (see driveWholePieceDrag) — the card's
@@ -5379,7 +5419,6 @@ function wireHandCardDrag(el, idx){
         // (see renderBoard), so the cursor-follow ghost is hidden while that's
         // showing instead of both being visible at once.
         clearMergeHighlight();
-        const world = clientToWorld(ev.clientX, ev.clientY);
         // A hand card has no real piece/board position yet — by convention
         // (see playHandCardToBoard) the cursor marks where its CENTER would
         // land if placed standalone, so its would-be top-left corner is half
@@ -5438,12 +5477,13 @@ function playHandCardToBoard(pick, clientX, clientY){
     // singleOverSingleSplayPreview/wireHandCardDrag's newSplay branch)
     // creates that splay in the same merge — same as playPieceToBoard/
     // finishWholeMove's matching check.
-    const newSplayInfo = (target.splayed && target.cardIds.length>1) ? null : singleOverSingleSplayPreview(target, 1, clientX, clientY);
+    const newSplayInfo = (target.splayed && target.cardIds.length>1) ? null : singleOverSingleSplayPreview(target, 1, world.x, world.y);
     // Same would-be top-left corner as wireHandCardDrag's matching preview —
     // see its comment.
     const insertIndex = newSplayInfo ? 0
       : (target.splayed && target.cardIds.length>1) ? splayInsertIndex(target, world.x-PIECE_W/2, world.y-PIECE_H/2)
-      : (shouldInsertBelow(target, world.x, world.y) ? 0 : target.cardIds.length);
+      : (target.cardIds.length>1) ? (shouldInsertBelow(target, world.x, world.y) ? 0 : target.cardIds.length)
+      : target.cardIds.length;
     const cardIds = [...target.cardIds.slice(0,insertIndex), pick.cardId, ...target.cardIds.slice(insertIndex)];
     const faceStates = [...target.faceStates.slice(0,insertIndex), true, ...target.faceStates.slice(insertIndex)];
     const targetCardRotations = target.cardRotations || target.cardIds.map(()=>0);
