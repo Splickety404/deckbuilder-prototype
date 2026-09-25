@@ -1560,6 +1560,18 @@ function applyRoomEvent(type, payload){
     const p = state.pieces.get(payload.id);
     if(p) rotateFromDeg = (p.cardRotations && p.cardRotations[payload.cardIndex]) || 0;
   }
+  // Same reasoning, for flipPopEl: the OLD face, rendered as its own HTML
+  // snapshot rather than just a boolean, so the animation has something to
+  // actually show during the first half (see flipPopEl's own comment on why
+  // that first half briefly shows this stale content on purpose).
+  let flipOldFaceHtml = null;
+  if(type==='FLIP_TOP'){
+    const p = state.pieces.get(payload.id);
+    if(p && p.faceStates.length){
+      const idx = payload.cardIndex!=null ? payload.cardIndex : p.faceStates.length-1;
+      if(idx>=0 && idx<p.cardIds.length) flipOldFaceHtml = cardFaceHtml(p.cardIds[idx], p.faceStates[idx]);
+    }
+  }
   switch(type){
     case 'PLACE_PIECE': {
       // kind defaults to 'cards' (an ordinary fixed-size card stack). kind:'image' is a
@@ -1877,7 +1889,7 @@ function applyRoomEvent(type, payload){
   // flip or a piece/card rotation is exactly the kind of tactile moment that
   // deserves the same playfulness as everything else in this app (see
   // --bounce and, again, popInEl).
-  if(type==='FLIP_TOP') flipPopEl(payload.id, payload.cardIndex);
+  if(type==='FLIP_TOP') flipPopEl(payload.id, payload.cardIndex, flipOldFaceHtml);
   if(type==='ROTATE_PIECE' && rotateFromDeg!=null){
     rotatePopEl(document.querySelector(`.piece[data-id="${payload.id}"]`), rotateFromDeg, payload.rotation);
   }
@@ -1904,7 +1916,7 @@ function popInEl(cssClass, id){
 // keyframes instead lets it carry that same base rotation all the way
 // through, and el.animate() cleanly hands control back to the element's own
 // (unchanged) inline style the instant it finishes.
-function flipPopEl(pieceId, cardIndex){
+function flipPopEl(pieceId, cardIndex, oldFaceHtml){
   const p = state.pieces.get(pieceId);
   if(!p) return;
   let el, baseRotation = 0;
@@ -1915,12 +1927,29 @@ function flipPopEl(pieceId, cardIndex){
     el = document.querySelector(`.piece[data-id="${pieceId}"] .piece-face`);
   }
   if(!el || !el.animate) return;
+  // renderBoard() already drew the NEW face into el by the time this runs
+  // (it's called right after the state mutation + render, same as
+  // popInEl/rotatePopEl) — so without this, a "flip" would just be a squash
+  // squeezed around a face that already changed at t=0, not at the visual
+  // midpoint where a real card's edge-on moment actually hides which way
+  // it's showing. oldFaceHtml (a snapshot taken BEFORE the mutation, see
+  // applyRoomEvent) lets this briefly put the OLD face back for the
+  // animation's first half, then swap to the real (already-rendered) new
+  // face — swapping DOM content, not just a CSS trick, since the two faces
+  // are genuinely different images/text, not something a single element's
+  // style alone can cross-fade or reveal.
+  const newFaceHtml = el.innerHTML;
+  const duration = 320;
+  if(oldFaceHtml!=null){
+    el.innerHTML = oldFaceHtml;
+    setTimeout(()=>{ if(el.isConnected) el.innerHTML = newFaceHtml; }, duration/2);
+  }
   const base = `rotate(${baseRotation}deg)`;
   el.animate([
     { transform: `${base} scaleX(1)` },
     { transform: `${base} scaleX(0)` },
     { transform: `${base} scaleX(1)` },
-  ], { duration:320, easing:'ease-in-out' });
+  ], { duration, easing:'ease-in-out' });
 }
 // The signed, shortest-path turn that actually connects two 90°-multiple
 // angles — e.g. 270→0 is a +90 step (the pile spun forward past 360, not
@@ -2628,6 +2657,38 @@ function renderBoard(){
       const extent = (preview ? n : topIndex)*spacing;
       el.style.width = (PIECE_W + (horizontal?extent:0)) + 'px';
       el.style.height = (PIECE_H + (horizontal?0:extent)) + 'px';
+      // A 'left'/'up' splay grows BACKWARD from the anchor (see pieceBounds'
+      // own matching comment on this exact asymmetry) — left as just a wider
+      // box still anchored at p.x/p.y like a 'right'/'down' splay correctly
+      // is, the container's own DECLARED box would balloon out the WRONG
+      // way, into empty space on the far side from the real fan, while the
+      // actual cards (rendered below with negative offsets) poke out the
+      // other way, past the container's own edge. Invisible for the cards
+      // themselves — a child can render outside its parent's own box just
+      // fine — but wrong for anything that reads the container's own CSS
+      // box directly instead of going through pieceBounds, like the plain
+      // .selected/.peek-alert/.search-alert outlines (pieceBounds exists
+      // specifically because drag-ghost/stack-perimeter/hit-testing/etc.
+      // can't rely on the container's own box either — see its own comment).
+      // Shifting the container's own left/top back by this same `extent`,
+      // and compensating every child's own offset forward by that same
+      // amount below (so each card's ABSOLUTE screen position is
+      // unchanged), makes the container's own declared box finally equal
+      // its real visual footprint no matter which way the fan grows.
+      if(dir==='left') el.style.left = (p.x - extent) + 'px';
+      else if(dir==='up') el.style.top = (p.y - extent) + 'px';
+      // The rotation pivot (see the transformOrigin set above, before dir/
+      // extent were known) assumed the anchor sits at the container's own
+      // local (0,0) origin — true for 'right'/'down', and true for 'left'/
+      // 'up' before the shift just above, but the shift moves the anchor to
+      // local (extent,0)/(0,extent) instead. Re-pinning the pivot there for
+      // just those two directions keeps the anchor visually fixed in place
+      // while a rotated pile's fan swings around it, exactly as before.
+      if(dir==='left' || dir==='up'){
+        const pivotX = dir==='left' ? extent + PIECE_W/2 : PIECE_W/2;
+        const pivotY = dir==='up' ? extent + PIECE_H/2 : PIECE_H/2;
+        el.style.transformOrigin = `${pivotX}px ${pivotY}px`;
+      }
       // A card's OWN rotation (see rotatePiece/ROTATE_CARD) rotates it around
       // its own center, same CSS mechanism as everything else in this app —
       // which means a 90°/270° card visually swaps its footprint (renders
@@ -2648,9 +2709,14 @@ function renderBoard(){
         const swapped = ((rotation||0) % 180) !== 0;
         let left=0, top=0;
         if(dir==='right'){ const w = swapped?PIECE_H:PIECE_W; left = depth*spacing + (PIECE_W-w)/2; }
-        else if(dir==='left'){ const w = swapped?PIECE_H:PIECE_W; left = -depth*spacing - (PIECE_W-w)/2; }
+        // The +extent here cancels out the container's own -extent left/top
+        // shift just above, so each card's ABSOLUTE screen position is
+        // exactly what it always was — only where the container's own
+        // declared box starts has changed, not where anything actually
+        // renders.
+        else if(dir==='left'){ const w = swapped?PIECE_H:PIECE_W; left = extent - depth*spacing - (PIECE_W-w)/2; }
         else if(dir==='down'){ const h = swapped?PIECE_W:PIECE_H; top = depth*spacing + (PIECE_H-h)/2; }
-        else if(dir==='up'){ const h = swapped?PIECE_W:PIECE_H; top = -depth*spacing - (PIECE_H-h)/2; }
+        else if(dir==='up'){ const h = swapped?PIECE_W:PIECE_H; top = extent - depth*spacing - (PIECE_H-h)/2; }
         return {left, top};
       };
       // Split into "before" and "after" the tuck slot rather than one
