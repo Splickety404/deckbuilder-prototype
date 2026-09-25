@@ -1042,6 +1042,12 @@ function attachedTokenPos(t){
 const cardsById = new Map();
 const knownSheetIds = new Set(); // sheets already fetched (or currently being fetched)
 const sheetNamesById = new Map(); // sheetId -> setName, for re-embedding sourceSheets on layout export
+// sheetId -> {genericBackUrl, overlordBackUrl, schemeBackUrl, championBackUrl} — the
+// per-GAME (not per-set) card-back art fetchSheetCards pulls in alongside a sheet's
+// rows (see Code.gs's getCardsBySheetId/scanGameFolderAssets). Every sheet in the same
+// game shares one entry here, keyed redundantly under each of that game's sheet ids —
+// simpler than a second gameFolderId->sheetIds index for what's a tiny amount of data.
+const sheetBacksById = new Map();
 // The card-library Apps Script — a REUSABLE SERVICE URL (same distinction as
 // ROOM_WEBAPP_URL: not tied to any specific sheet's data), used only to resolve
 // a given sheet id's cards through ITS OWN elevated ("Execute as: Me")
@@ -1087,13 +1093,18 @@ function applyCachedSheetCards(sheetId){
       preloadCardFace(r._front);
       if(r._doubleSided) preloadCardFace(r._back);
     });
+    // Older cache entries (written before card-back support existed) simply
+    // have no `backs` key — sheetBacksById just doesn't get set for this
+    // sheet yet, same as an unconfigured game, and the live fetch below
+    // fills it in (and re-caches it with backs included) momentarily.
+    if(cached.backs){ sheetBacksById.set(sheetId, cached.backs); preloadSheetBacks(cached.backs); }
   }catch(e){ /* corrupt entry — treat as no cache, live fetch below still runs regardless */ }
   return true;
 }
-function cacheSheetCards(sheetId, rows){
+function cacheSheetCards(sheetId, rows, backs){
   const key = cardCacheKey(sheetId);
   if(!key) return;
-  try{ localStorage.setItem(key, JSON.stringify({ rows, ts: Date.now() })); }
+  try{ localStorage.setItem(key, JSON.stringify({ rows, backs, ts: Date.now() })); }
   catch(e){ /* storage full/unavailable/private-browsing — caching is best-effort only */ }
 }
 function clearCachedSheetCards(sheetId){
@@ -1176,16 +1187,30 @@ async function fetchSheetCards(sheetId){
         // Preload both faces right away — see preloadCardFace's own comment —
         // so flipping a card for the first time doesn't have to wait on a
         // fresh network fetch. The back only ever gets shown for a genuinely
-        // double-sided card (see cardFaceHtml); everything else just shows a
-        // plain cardback, nothing to preload.
+        // double-sided card (see cardFaceHtml); everything else falls back to
+        // this sheet's generic back (below) or, failing that, a plain cardback.
         preloadCardFace(r._front);
         if(r._doubleSided) preloadCardFace(r._back);
       });
+      // The game-level generic card backs (see Code.gs's getCardsBySheetId /
+      // scanGameFolderAssets) — absent entirely on an older Code.gs deployment
+      // that doesn't send them yet, in which case cardBackImageUrl's callers
+      // just keep falling back to the plain "🂠" placeholder as before.
+      const backs = { genericBackUrl:'', overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' };
+      if(data.genericBackUrl || data.genericBacks){
+        backs.genericBackUrl = data.genericBackUrl || '';
+        backs.overlordBackUrl = (data.genericBacks && data.genericBacks.overlordBackUrl) || '';
+        backs.schemeBackUrl = (data.genericBacks && data.genericBacks.schemeBackUrl) || '';
+        backs.championBackUrl = (data.genericBacks && data.genericBacks.championBackUrl) || '';
+        sheetBacksById.set(sheetId, backs);
+        preloadSheetBacks(backs);
+      }
       // Persist for next time — see the cache helpers' own comment. Cached
       // AFTER the augmentation above so what's stored already carries
-      // _front/_back/_doubleSided/_sheetId, ready to drop straight into
-      // cardsById next session with no reprocessing.
-      cacheSheetCards(sheetId, data.rows);
+      // _front/_back/_doubleSided/_sheetId (and the resolved backs), ready to
+      // drop straight into cardsById/sheetBacksById next session with no
+      // reprocessing.
+      cacheSheetCards(sheetId, data.rows, sheetBacksById.get(sheetId) || null);
       return;
     }catch(e){ lastErr = e; }
   }
@@ -1258,6 +1283,35 @@ function preloadCardFace(url){
   if(!url) return;
   new Image().src = sizedUrl(url, 320);
   new Image().src = sizedUrl(url, 700);
+}
+// Picks the right "generic" card-back image for a card that isn't itself a
+// genuinely double-sided card (cardFaceHtml/pieceFaceHtml/showHoverPreview all
+// fall back to this only after checking card._doubleSided/_back first) — Echo
+// mode's own three-way overlord/scheme/champion split by the card's own type
+// column, falling back to a single shared back for anything that doesn't match
+// one of the three (a non-Echo game, or an odd/missing type). Mirrors
+// deckbuilder.html's own backUrlForExport dispatch exactly, so the table shows
+// the same back a printed card would. Returns '' when nothing is configured —
+// every caller already falls back to the plain "🂠" placeholder in that case,
+// so an older Code.gs deployment that doesn't send genericBacks yet, or a game
+// with no back files uploaded, degrades to exactly today's look, nothing breaks.
+function cardBackImageUrl(card){
+  if(!card || !card._sheetId) return '';
+  const backs = sheetBacksById.get(card._sheetId);
+  if(!backs) return '';
+  const type = card.type || '';
+  if(type === 'O - Scheme') return backs.schemeBackUrl || backs.genericBackUrl || '';
+  if(type.indexOf('O -')===0) return backs.overlordBackUrl || backs.genericBackUrl || '';
+  if(type.indexOf('C -')===0) return backs.championBackUrl || backs.genericBackUrl || '';
+  return backs.genericBackUrl || '';
+}
+// Preloads every back image a sheet's game actually has configured, the
+// instant they're known (fresh fetch or restored from cache) — same rationale
+// as preloadCardFace, so the very first card flipped face-down doesn't have to
+// wait on a fresh network request for its back.
+function preloadSheetBacks(backs){
+  if(!backs) return;
+  [backs.genericBackUrl, backs.overlordBackUrl, backs.schemeBackUrl, backs.championBackUrl].forEach(preloadCardFace);
 }
 
 /* =========================================================================
@@ -2277,6 +2331,8 @@ function cardFaceHtml(cardId, faceUp){
   if(card._pending) return `<div class="cardback pending-face">⏳ Access Pending</div>`;
   if(faceUp) return card._front ? `<img src="${sizedUrl(card._front,320)}" draggable="false">` : `<div class="cardback">${escapeHtml((card.name||'?').slice(0,20))}</div>`;
   if(card._doubleSided && card._back) return `<img src="${sizedUrl(card._back,320)}" draggable="false">`;
+  const genericBack = cardBackImageUrl(card);
+  if(genericBack) return `<img src="${sizedUrl(genericBack,320)}" draggable="false">`;
   return `<div class="cardback">🂠</div>`;
 }
 function pieceFaceHtml(p){
@@ -2286,6 +2342,8 @@ function pieceFaceHtml(p){
   if(card._pending) return `<div class="cardback pending-face">⏳ Access Pending</div>`;
   if(faceUp) return card._front ? `<img src="${sizedUrl(card._front,320)}" draggable="false">` : `<div class="cardback">${escapeHtml((card.name||'?').slice(0,20))}</div>`;
   if(card._doubleSided && card._back) return `<img src="${sizedUrl(card._back,320)}" draggable="false">`;
+  const genericBack = cardBackImageUrl(card);
+  if(genericBack) return `<img src="${sizedUrl(genericBack,320)}" draggable="false">`;
   return `<div class="cardback">🂠</div>`;
 }
 // A stack's card count lives right in its label text now ("Deck (41)", or
@@ -5332,7 +5390,7 @@ function showHoverPreview(card, faceUp, clientX, clientY){
   }
   back.classList.remove('classified-face','pending-face');
   back.textContent = '🂠';
-  const url = faceUp ? card._front : (card._doubleSided && card._back ? card._back : '');
+  const url = faceUp ? card._front : (card._doubleSided && card._back ? card._back : cardBackImageUrl(card));
   if(url){ img.src = sizedUrl(url, 700); img.style.display='block'; back.style.display='none'; }
   else { img.style.display='none'; back.style.display='flex'; }
   previewEl.classList.remove('hidden');
@@ -5358,7 +5416,7 @@ function openPeekPopup(card, faceUp){
     return;
   }
   classified.classList.add('hidden');
-  const url = card ? (faceUp ? card._front : (card._doubleSided && card._back ? card._back : '')) : '';
+  const url = card ? (faceUp ? card._front : (card._doubleSided && card._back ? card._back : cardBackImageUrl(card))) : '';
   if(url){ img.src = sizedUrl(url, 600); img.style.display='block'; }
   else { img.style.display='none'; }
   document.getElementById('peekPopup').classList.remove('hidden');

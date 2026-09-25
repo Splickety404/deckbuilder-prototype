@@ -484,7 +484,20 @@ function getCardsBySheetId(sheetId, idToken, callback) {
         headers.forEach((h, i) => { obj[h] = row[i]; });
         return obj;
       });
-      result = { ok: true, rows: rows };
+      // Card backs (the shared per-game overlordback/schemeback/championback —
+      // or a single generic "back" for a non-Echo game) live one level up, in
+      // the GAME's own folder, not this set's — see scanGameFolderAssets, which
+      // getSetData already uses the exact same way for the deckbuilder's own
+      // print/export backs. room.html needs the same URLs to actually draw a
+      // face-down card's back on the table instead of a plain placeholder.
+      // match already carries gameFolderId straight from getSetsForGame, so no
+      // extra folder-parent walk is needed here the way getSetData has to do it.
+      const assets = match.gameFolderId ? scanGameFolderAssets(match.gameFolderId) : emptyGameFolderAssets();
+      result = {
+        ok: true, rows: rows,
+        genericBackUrl: assets.genericBackUrl,
+        genericBacks: { overlordBackUrl: assets.overlordBackUrl, schemeBackUrl: assets.schemeBackUrl, championBackUrl: assets.championBackUrl },
+      };
     }
   } catch (err) {
     result = { ok: false, error: String((err && err.message) || err) };
