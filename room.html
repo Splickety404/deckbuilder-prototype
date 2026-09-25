@@ -1525,6 +1525,18 @@ function setPieceCards(id, cardIds, faceStates, cardRotations){
   if(!p) return;
   if(!cardIds.length){ state.pieces.delete(id); return; }
   p.cardIds = cardIds; p.faceStates = faceStates;
+  // A pile that's been whittled down to exactly one card (peeled/drawn/
+  // searched down from a splayed pile, most commonly) is no longer really
+  // "splayed" — renderBoard already knows this (its splay branch is gated on
+  // `p.splayed && p.cardIds.length>1`, so a lone leftover card already LOOKS
+  // like a normal single card) but p.splayed itself was left sitting at
+  // true, a stale flag nothing was clearing. A card merged back onto it
+  // later inherited that stale flag (see MERGE_PIECES: it only ever sets
+  // splayed TRUE for a fresh splay, never explicitly clears it), so it
+  // instantly became part of a "splayed" 2-card pile instead of an ordinary
+  // stack. Clearing it here, the one place every card-count change funnels
+  // through, is what actually keeps a lone card behaving like one.
+  if(cardIds.length<=1) p.splayed = false;
   // Per-card rotation (see ROTATE_CARD) — a splayed pile's cards can each be
   // rotated independently, so whenever a pile's card array is rebuilt this
   // parallel array has to travel along with it, same as faceStates already
@@ -3744,7 +3756,15 @@ function refreshStackPerimeter(){
     if(stackPerimeterEl) stackPerimeterEl.classList.remove('visible');
     return;
   }
-  if(!stackPerimeterEl){
+  // renderBoard() rebuilds #boardWorld from scratch (world.innerHTML='') on
+  // basically every interaction, which silently detaches this element from
+  // the document without ever clearing the stackPerimeterEl variable itself
+  // — so the plain `if(!stackPerimeterEl)` this used to be only ever created
+  // the element ONCE, on the very first hover of the whole session; every
+  // hover after the next re-render (i.e. almost immediately, in real play)
+  // was just repositioning a detached node nothing could ever see. Checking
+  // isConnected catches that stale case too, not just a never-created one.
+  if(!stackPerimeterEl || !stackPerimeterEl.isConnected){
     stackPerimeterEl = document.createElement('div');
     stackPerimeterEl.className = 'stack-perimeter';
     document.getElementById('boardWorld').appendChild(stackPerimeterEl);
@@ -4190,10 +4210,27 @@ const SINGLE_STACK_TO_SPLAY_NUDGE_FRACTION = 0.5;
 // own world point, which stands in for the card's would-be center.)
 // Returns null when this interaction doesn't apply at all (either side isn't
 // a genuine lone single card) or the piece is still in the "stack on top"
-// zone; otherwise {dir, spacing} for the tuck/splay preview — spacing is 0
-// right at the threshold and grows with how much further past it the piece
-// has moved, same "0 at the boundary, growing from there" convention as
-// splaySpacingForCursor.
+// zone; otherwise {dir, spacing} for the tuck/splay preview.
+//
+// spacing is the RAW center-to-center distance along the fan axis (mag,
+// below) — deliberately NOT measured from the threshold (i.e. NOT
+// `mag - threshold`, which an earlier version of this used). Two same-size
+// cards' center-to-center distance IS exactly the spacing renderBoard's
+// offsetFor needs for their edges to align, so using mag directly means the
+// card the caller renders at this spacing sits exactly where it's actually
+// been dragged to (Seth: "its x axis [the fan axis] should be exactly the
+// same, as if it were still completely in the user's grip") — continuous
+// with wherever it was rendering a moment ago, still following the cursor
+// 1:1, right through the moment this preview first engages. Subtracting the
+// threshold instead reset that distance back near 0 the instant `mag`
+// crossed it, which visually SNAPPED the card inward by however big the
+// threshold was — a sudden jump toward the target the moment you'd nudged
+// past it, instead of the fan smoothly opening from wherever you already
+// were. The CROSS axis needs no such care: offsetFor already pins it to
+// exactly 0 (dead even with the anchor) regardless of spacing, which is the
+// "its y position should snap" half of the same request — snapping flush to
+// the target is exactly right there, since that's what "joining the splay"
+// on that axis means.
 function singleOverSingleSplayPreview(target, sourceCardCount, pieceCenterX, pieceCenterY){
   if(!target || target.splayed || target.cardIds.length!==1) return null;
   if(sourceCardCount!==1) return null;
@@ -4207,7 +4244,7 @@ function singleOverSingleSplayPreview(target, sourceCardCount, pieceCenterX, pie
   const threshold = extent * SINGLE_STACK_TO_SPLAY_NUDGE_FRACTION;
   if(mag < threshold) return null; // still close to center: ordinary stack-on-top
   const dir = horizontal ? (dx>=0 ? 'right':'left') : (dy>=0 ? 'down':'up');
-  const spacing = Math.max(0, Math.min(splayMaxFor(dir), mag - threshold));
+  const spacing = Math.max(0, Math.min(splayMaxFor(dir), mag));
   return { dir, spacing };
 }
 // An UNSPLAYED multi-card pile: grabbing the thin border strip around its own
