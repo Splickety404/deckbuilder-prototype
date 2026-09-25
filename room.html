@@ -223,8 +223,21 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    including 'up' (whose fan grows the opposite way), leaves the space below
    the anchor clear, so only 'down' needs the flip — see the labelFlip check
    in renderBoard. */
-.piece .piece-label.stack-handle.label-flip{top:auto;bottom:202px;}
+/* NOTE: this used to be `top:auto;bottom:202px` — anchoring the label a fixed
+   distance up from the piece element's own BOTTOM edge. That edge is NOT the
+   anchor (top) card: for a 'down' splay the element's bottom edge is wherever
+   the LAST fanned-out card ends, which moves every time the splay's total
+   spacing/card count changes — so the label visibly drifted relative to the
+   anchor card any time the splay was resized. The anchor card's top edge is
+   always local y:0 (see depthFor/offsetFor above — depth 0 is always (0,0)
+   regardless of splay direction), so anchoring to `top:0` and translating
+   fully above it, instead of pinning to the piece's own dynamic bottom, keeps
+   this locked to the anchor card no matter how the splay is resized. */
+.piece .piece-label.stack-handle.label-flip{top:0;bottom:auto;
+  transform:translateX(-50%) translateY(calc(-100% - 6px)) rotate(var(--counter-rotate,0deg));}
 .piece .piece-label.stack-handle:hover{filter:brightness(1.35);transform:translateX(-50%) rotate(var(--counter-rotate,0deg)) scale(1.16);}
+.piece .piece-label.stack-handle.label-flip:hover{filter:brightness(1.35);
+  transform:translateX(-50%) translateY(calc(-100% - 6px)) rotate(var(--counter-rotate,0deg)) scale(1.16);}
 
 /* Ghost/silhouette preview shown while dragging a piece or token — a faint
    outline at the snapped position it will actually land at if released right
@@ -2158,29 +2171,41 @@ function firePing(clientX, clientY){
 // Right-click alone still pings (below) — but right-click-and-DRAG instead
 // draws the multi-select box (see beginBoxSelect), exactly like holding
 // shift and left-dragging does. Tracked here (rather than in beginBoxSelect
-// itself) purely to tell the two right-button gestures apart: a plain right
-// click never moves past DRAG_THRESHOLD before its mouseup/contextmenu, a
-// box-select always does. Shift+right-drag adds to whatever's already
-// selected instead of replacing it, same "shift adds" convention as the
-// left-drag version.
-let rightDragState = null;
+// itself) purely to tell the two right-button gestures apart.
+//
+// NOTE this deliberately does NOT use the 'contextmenu' event to make that
+// call (an earlier version did, and it never worked): Chromium fires
+// 'contextmenu' immediately after 'mousedown' — before the mouse has moved
+// at all, let alone past the drag threshold — not after 'mouseup' the way
+// you'd expect from a "right click" gesture. So by the time 'contextmenu'
+// fires, no drag could possibly have been detected yet, and keying off it
+// meant every right click fired a ping and reset the drag state before a
+// real drag ever got a chance to start. Deciding click-vs-drag off the
+// mousedown/mousemove/mouseup trio instead — exactly like every other
+// press-vs-drag gesture in this file — works regardless of when a given
+// browser happens to fire 'contextmenu'. That event is now used only to
+// silence the native right-click menu.
+let rightPressState = null;
 document.getElementById('boardViewport').addEventListener('mousedown', (e)=>{
   if(e.button!==2) return;
-  rightDragState = {startX:e.clientX, startY:e.clientY, dragging:false};
+  rightPressState = {startX:e.clientX, startY:e.clientY, additive:e.shiftKey, dragging:false};
 });
 window.addEventListener('mousemove', (e)=>{
-  if(!rightDragState || rightDragState.dragging) return;
-  if(Math.hypot(e.clientX-rightDragState.startX, e.clientY-rightDragState.startY) >= DRAG_THRESHOLD){
-    rightDragState.dragging = true;
-    beginBoxSelect(rightDragState.startX, rightDragState.startY, e.shiftKey);
+  if(!rightPressState || rightPressState.dragging) return;
+  if(Math.hypot(e.clientX-rightPressState.startX, e.clientY-rightPressState.startY) >= DRAG_THRESHOLD){
+    rightPressState.dragging = true;
+    beginBoxSelect(rightPressState.startX, rightPressState.startY, rightPressState.additive);
   }
 });
-document.getElementById('boardViewport').addEventListener('contextmenu', (e)=>{
-  e.preventDefault();
-  const wasDragging = rightDragState && rightDragState.dragging;
-  rightDragState = null;
-  if(wasDragging) return; // the drag itself already did its thing — no ping on top of it
+window.addEventListener('mouseup', (e)=>{
+  if(e.button!==2 || !rightPressState) return;
+  const wasDragging = rightPressState.dragging;
+  rightPressState = null;
+  if(wasDragging) return; // beginBoxSelect's own mouseup listener (armed when the drag started) already finished the box itself
   firePing(e.clientX, e.clientY);
+});
+document.getElementById('boardViewport').addEventListener('contextmenu', (e)=>{
+  e.preventDefault(); // always suppress the native menu here — see note above for why click-vs-drag isn't decided in this handler
 });
 // Long-press: held on the CAPTURE phase so it still fires even when the press
 // lands on a piece/token/zone whose own mousedown handler stops the event's
@@ -3041,7 +3066,7 @@ function beginPeelAsPiece(p, cardIndex, clientX, clientY){
 // single-card/image piece, and a drag from the "move whole stack" handle on a
 // multi-card pile) — snap, merge-check, sync, and undo, all in one place.
 function finishWholeMove(p, startX, startY, clientX, clientY){
-  const target = p.kind==='image' ? null : findOverlapTarget(p, clientX, clientY); // custom images never merge into/onto card piles
+  const target = p.kind==='image' ? null : resolveDragTarget(p, clientX, clientY); // custom images never merge into/onto card piles
   if(target){
     const world = clientToWorld(clientX, clientY);
     // Letting go while previewing a brand-new splay (see
@@ -3130,7 +3155,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   clearHandDropFeedback();
   const d = screenDeltaToWorldDelta(dx, dy);
   p.x = ctx.startX+d.x; p.y = ctx.startY+d.y;
-  const target = p.kind==='image' ? null : findOverlapTarget(p, ev.clientX, ev.clientY);
+  const target = p.kind==='image' ? null : resolveDragTarget(p, ev.clientX, ev.clientY);
   const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
   // Distinct from splayTarget above (tucking into an ALREADY-splayed pile):
   // this is hovering a single dragged card over another single, unsplayed
@@ -3423,6 +3448,48 @@ function findOverlapTarget(draggedPiece, clientX, clientY){
     const b = pieceBounds(p);
     if(worldX>=b.x && worldX<=b.x+b.w && worldY>=b.y && worldY<=b.y+b.h) return p;
   }
+  return null;
+}
+// A single dragged card hovering another single, unsplayed card (the one
+// case singleOverSingleSplayPreview covers) is judged by whether the two
+// cards' own FOOTPRINTS are touching at all — not by findOverlapTarget's
+// cursor-point check above. Those two used to disagree in exactly the cases
+// that matter: the cursor moves in lockstep with whatever it's dragging, so
+// by the time the dragged card has been nudged far enough off the target's
+// CENTER to actually cross singleOverSingleSplayPreview's own threshold and
+// preview a splay, the cursor itself has already left the target's own
+// small 140x196 hit-box (unless it happened to be grabbed dead-center and
+// nudged less than half a card-width) — so a plain cursor-point check would
+// leave the tuck gesture unreachable for almost any real grab point. This
+// only kicks in as a fallback, when the cursor-point check finds nothing at
+// all (see resolveDragTarget below) — so it never changes the existing
+// cursor-precise behavior for hovering a bigger stack or a splayed pile.
+function findSingleCardTuckTarget(draggedPiece){
+  const db = pieceBounds(draggedPiece);
+  let best = null, bestDist = Infinity;
+  state.pieces.forEach(p=>{
+    if(p.id===draggedPiece.id || p.kind==='image') return;
+    if(p.splayed || p.cardIds.length!==1) return; // only a lone unsplayed single card is a tuck target
+    const b = pieceBounds(p);
+    const touching = db.x < b.x+b.w && db.x+db.w > b.x && db.y < b.y+b.h && db.y+db.h > b.y;
+    if(!touching) return;
+    const dx = (db.x+db.w/2)-(b.x+b.w/2), dy = (db.y+db.h/2)-(b.y+b.h/2);
+    const dist = dx*dx + dy*dy;
+    if(dist < bestDist){ bestDist = dist; best = p; }
+  });
+  return best;
+}
+// The single point every whole-piece-drag merge/tuck/splay decision should
+// resolve its target through: the cursor-point check first (unchanged, and
+// still what decides hovering a splayed pile or an ordinary multi-card
+// stack), falling back to the footprint-touching check above ONLY when the
+// cursor has found nothing AND the dragged piece is itself a lone single
+// card — exactly the gap findSingleCardTuckTarget exists to fill, and
+// nothing more.
+function resolveDragTarget(p, clientX, clientY){
+  const cursorTarget = p.kind==='image' ? null : findOverlapTarget(p, clientX, clientY);
+  if(cursorTarget) return cursorTarget;
+  if(p.kind!=='image' && p.cardIds.length===1) return findSingleCardTuckTarget(p);
   return null;
 }
 // Live merge feedback: while a drag is hovering a valid merge target (exactly
