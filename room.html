@@ -8,10 +8,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- Optional live-presence layer (cursors, "holding a card" indicators) — see
-     the LIVE PRESENCE section further down. Safe to leave FIREBASE_CONFIG
-     blank; these scripts loading with nothing configured is a no-op. -->
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+     the LIVE PRESENCE section further down. Safe to leave ABLY_API_KEY
+     blank; this script loading with nothing configured is a no-op. -->
+<script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
 <style>
 :root{
   --bg:#14161b; --surface:#1c1f26; --surface-2:#242830; --border:#333844;
@@ -5349,51 +5348,46 @@ document.getElementById('btnEnterRoom').addEventListener('click', async ()=>{
 });
 
 /* =========================================================================
-   LIVE PRESENCE — an OPTIONAL real-time layer (Firebase Realtime Database)
-   layered on top of the room's actual sync, which stays exactly as it was
-   (Sheets + Apps Script polling, POLL_MS above, is still what carries real
-   game state — pieces, tokens, hands, turn order — and remains the source
-   of truth). This layer carries nothing but ephemeral, cosmetic presence:
-   where each connected player's cursor currently is, and whether they're
-   holding/dragging something right now. It's what makes the room feel
-   "live" between polls, without changing how anything is actually synced.
+   LIVE PRESENCE — an OPTIONAL real-time layer (Ably realtime presence
+   channels) layered on top of the room's actual sync, which stays exactly
+   as it was (Sheets + Apps Script polling, POLL_MS above, is still what
+   carries real game state — pieces, tokens, hands, turn order — and
+   remains the source of truth). This layer carries nothing but ephemeral,
+   cosmetic presence: where each connected player's cursor currently is,
+   and whether they're holding/dragging something right now. It's what
+   makes the room feel "live" between polls, without changing how anything
+   is actually synced.
 
-   Every function below no-ops safely if FIREBASE_CONFIG is left blank (the
-   default) or if the SDK script tags fail to load for any reason — so nothing
-   else in the app depends on this being set up. See the setup checklist
-   wherever this file's README/instructions live for the handful of manual
-   steps (create a free Firebase project, enable Realtime Database, paste
-   the project's web config below).
+   Every function below no-ops safely if ABLY_API_KEY is left blank (the
+   default) or if the SDK script tag fails to load for any reason — so
+   nothing else in the app depends on this being set up. See the setup
+   checklist wherever this file's README/instructions live for the handful
+   of manual steps (free Ably account, one API key, paste it below).
    ========================================================================= */
-const FIREBASE_CONFIG = {
-  // Paste your Firebase project's own web app config here — from the
-  // Firebase console: Project settings → General → "Your apps" → the </>
-  // (web) app → SDK setup and configuration → Config. Something like:
-  // apiKey: "AIza...", authDomain: "your-app.firebaseapp.com",
-  // databaseURL: "https://your-app-default-rtdb.firebaseio.com",
-  // projectId: "your-app", storageBucket: "your-app.appspot.com",
-  // messagingSenderId: "...", appId: "1:...:web:..."
-};
-function firebaseConfigured(){ return !!(FIREBASE_CONFIG && FIREBASE_CONFIG.databaseURL); }
+const ABLY_API_KEY = '';
+// Paste your Ably app's API key here (Ably dashboard → your app → API Keys
+// tab → copy a key's string, looks like "AbCdEf.GhIjKl:mnopqrstuvwxyz").
+// A key scoped to just {subscribe, publish, presence} on channel "room:*"
+// is the tidy choice; the default root key works fine too for a private
+// game among friends.
+function ablyConfigured(){ return !!ABLY_API_KEY; }
 
-let presenceDb = null;
-let presenceRoomRef = null;
-let presenceOwnRef = null;
+let ablyClient = null;
+let presenceChannel = null;
 const presenceCursors = new Map(); // playerId -> DOM element in #boardWorld
 let presenceLastSent = 0;
 const PRESENCE_SEND_MS = 100; // ~10 updates/sec — smooth without hammering the free tier
 let presenceHolding = false;
 let presenceHeldLabel = null;
 
-function ensureFirebase(){
-  if(!firebaseConfigured()) return false;
-  if(presenceDb) return true;
+function ensureAbly(){
+  if(!ablyConfigured()) return false;
+  if(ablyClient) return true;
   try{
-    if(!window.firebase || !firebase.apps) return false; // SDK <script> tags didn't load (offline, blocked, etc.)
-    if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
-    presenceDb = firebase.database();
+    if(!window.Ably) return false; // SDK <script> tag didn't load (offline, blocked, etc.)
+    ablyClient = new Ably.Realtime({ key: ABLY_API_KEY, clientId: state.playerId });
     return true;
-  }catch(err){ console.warn('Live presence disabled — Firebase init failed:', err); return false; }
+  }catch(err){ console.warn('Live presence disabled — Ably init failed:', err); return false; }
 }
 // Deterministic per-player color, derived purely from the id — every viewer
 // lands on the same color for the same player with nothing to sync.
@@ -5402,12 +5396,12 @@ function presenceColorFor(id){
   for(let i=0;i<id.length;i++) hash = (hash*31 + id.charCodeAt(i)) | 0;
   return `hsl(${Math.abs(hash)%360}, 80%, 64%)`;
 }
-function renderPresenceSnapshot(snap){
-  const data = snap.val() || {};
+function renderPresenceMembers(members){
   const world = document.getElementById('boardWorld');
   const seen = new Set();
-  Object.entries(data).forEach(([pid, p])=>{
-    if(pid === state.playerId || !p) return; // never render our own cursor back at ourselves
+  (members||[]).forEach(m=>{
+    const pid = m.clientId, p = m.data || {};
+    if(!pid || pid === state.playerId) return; // never render our own cursor back at ourselves
     seen.add(pid);
     let el = presenceCursors.get(pid);
     if(!el){
@@ -5427,33 +5421,40 @@ function renderPresenceSnapshot(snap){
     if(p.holding && p.heldLabel){ chip.style.display=''; chip.textContent = '✋ '+p.heldLabel; }
     else chip.style.display = 'none';
   });
-  // Anyone no longer in the snapshot (left, disconnected) loses their cursor —
-  // onDisconnect().remove() (set up in initPresence) is what makes this
-  // happen automatically even if they close the tab without warning.
+  // Anyone no longer in the member list (left, disconnected) loses their
+  // cursor — Ably detects a dropped connection and clears their presence
+  // automatically even if they close the tab without warning.
   presenceCursors.forEach((el, pid)=>{ if(!seen.has(pid)){ el.remove(); presenceCursors.delete(pid); } });
 }
+// Presence events (enter/update/leave) only tell us SOMETHING changed, not
+// the full picture — re-fetching the whole member list each time is cheap
+// at card-game scale and keeps rendering dead simple.
+function refreshPresenceMembers(){
+  if(!presenceChannel) return;
+  presenceChannel.presence.get((err, members)=>{ if(!err) renderPresenceMembers(members); });
+}
 function initPresence(){
-  if(!ensureFirebase()) return;
-  presenceRoomRef = presenceDb.ref(`rooms/${state.sessionCode}/presence`);
-  presenceOwnRef = presenceRoomRef.child(state.playerId);
-  presenceOwnRef.onDisconnect().remove();
-  presenceOwnRef.set({ name: state.playerName, x:0, y:0, holding:false, heldLabel:null, ts: Date.now() });
-  presenceRoomRef.on('value', renderPresenceSnapshot);
+  if(!ensureAbly()) return;
+  presenceChannel = ablyClient.channels.get(`room:${state.sessionCode}`);
+  presenceChannel.presence.subscribe(refreshPresenceMembers);
+  presenceChannel.presence.enter({ name: state.playerName, x:0, y:0, holding:false, heldLabel:null });
 }
 function teardownPresence(){
-  if(presenceRoomRef) presenceRoomRef.off('value', renderPresenceSnapshot);
-  if(presenceOwnRef) presenceOwnRef.remove();
-  presenceRoomRef = null; presenceOwnRef = null;
+  if(presenceChannel){
+    presenceChannel.presence.unsubscribe(refreshPresenceMembers);
+    presenceChannel.presence.leave();
+  }
+  presenceChannel = null;
   presenceCursors.forEach(el=>el.remove());
   presenceCursors.clear();
 }
 function sendPresence(clientX, clientY, forceNow){
-  if(!presenceOwnRef) return;
+  if(!presenceChannel) return;
   const now = Date.now();
   if(!forceNow && now - presenceLastSent < PRESENCE_SEND_MS) return;
   presenceLastSent = now;
   const w = clientToWorld(clientX, clientY);
-  presenceOwnRef.update({ x: Math.round(w.x), y: Math.round(w.y), holding: presenceHolding, heldLabel: presenceHeldLabel, ts: now });
+  presenceChannel.presence.update({ name: state.playerName, x: Math.round(w.x), y: Math.round(w.y), holding: presenceHolding, heldLabel: presenceHeldLabel });
 }
 window.addEventListener('mousemove', (e)=>{ sendPresence(e.clientX, e.clientY); });
 // A generic "is this player currently holding/dragging something" signal —
@@ -5476,7 +5477,7 @@ document.addEventListener('mouseup', (e)=>{
   presenceHeldLabel = null;
   sendPresence(e.clientX, e.clientY, true);
 }, true);
-window.addEventListener('beforeunload', ()=>{ if(presenceOwnRef) presenceOwnRef.remove(); });
+window.addEventListener('beforeunload', ()=>{ if(presenceChannel) presenceChannel.presence.leave(); });
 
 /* =========================================================================
    CONNECTING A ROOM — open it up to others once you're happy with your local
