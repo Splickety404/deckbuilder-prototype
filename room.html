@@ -1548,6 +1548,18 @@ function setPieceCards(id, cardIds, faceStates, cardRotations){
 // The single place board state actually changes — used for both our own actions
 // (optimistic, immediate) and replayed remote events, so every client converges.
 function applyRoomEvent(type, payload){
+  // Captured BEFORE the reducer below mutates state — rotatePopEl (see its
+  // own comment, near popInEl) needs the pre-mutation angle to animate FROM,
+  // and by the time this function would otherwise get a chance to look, the
+  // mutation below has already overwritten it.
+  let rotateFromDeg = null;
+  if(type==='ROTATE_PIECE'){
+    const p = state.pieces.get(payload.id);
+    if(p) rotateFromDeg = p.rotation||0;
+  } else if(type==='ROTATE_CARD'){
+    const p = state.pieces.get(payload.id);
+    if(p) rotateFromDeg = (p.cardRotations && p.cardRotations[payload.cardIndex]) || 0;
+  }
   switch(type){
     case 'PLACE_PIECE': {
       // kind defaults to 'cards' (an ordinary fixed-size card stack). kind:'image' is a
@@ -1860,12 +1872,86 @@ function applyRoomEvent(type, payload){
   if(type==='PLACE_PIECE') popInEl('piece', payload.id);
   if(type==='PLACE_TOKEN') popInEl('token', payload.id);
   if(type==='PLACE_ZONE') popInEl('zone', payload.id);
+  // Same "runs from inside applyRoomEvent itself, so every client sees it,
+  // not just whoever pressed the key" reasoning as popInEl above — a card
+  // flip or a piece/card rotation is exactly the kind of tactile moment that
+  // deserves the same playfulness as everything else in this app (see
+  // --bounce and, again, popInEl).
+  if(type==='FLIP_TOP') flipPopEl(payload.id, payload.cardIndex);
+  if(type==='ROTATE_PIECE' && rotateFromDeg!=null){
+    rotatePopEl(document.querySelector(`.piece[data-id="${payload.id}"]`), rotateFromDeg, payload.rotation);
+  }
+  if(type==='ROTATE_CARD' && rotateFromDeg!=null){
+    rotatePopEl(document.querySelector(`.piece[data-id="${payload.id}"] .splay-card[data-i="${payload.cardIndex}"]`), rotateFromDeg, payload.rotation);
+  }
 }
 function popInEl(cssClass, id){
   const el = document.querySelector(`.${cssClass}[data-id="${id}"]`);
   if(!el) return;
   el.classList.add('pop-in');
   setTimeout(()=> el.classList.remove('pop-in'), 380);
+}
+// A quick squash-and-recover on the exact face that just flipped — the pile's
+// own single face (an unsplayed pile, or a lone card) or, for one card picked
+// out of a splay, that specific .splay-card. Built with the Web Animations
+// API rather than a baked CSS class (see popInEl's comment on why one-shot
+// animations can't just live in renderBoard's className template) for a
+// second reason beyond the one-shot problem: a splayed card's own element
+// already carries its own per-card rotation as an inline `transform` (see
+// renderBoard's rotStyle) that a plain CSS @keyframes class targeting
+// `transform` would stomp on for the animation's duration, snapping the card
+// upright and back. Building the squash out of full `rotate(...) scaleX(...)`
+// keyframes instead lets it carry that same base rotation all the way
+// through, and el.animate() cleanly hands control back to the element's own
+// (unchanged) inline style the instant it finishes.
+function flipPopEl(pieceId, cardIndex){
+  const p = state.pieces.get(pieceId);
+  if(!p) return;
+  let el, baseRotation = 0;
+  if(p.splayed && p.cardIds.length>1 && cardIndex!=null){
+    el = document.querySelector(`.piece[data-id="${pieceId}"] .splay-card[data-i="${cardIndex}"]`);
+    baseRotation = (p.cardRotations && p.cardRotations[cardIndex]) || 0;
+  } else {
+    el = document.querySelector(`.piece[data-id="${pieceId}"] .piece-face`);
+  }
+  if(!el || !el.animate) return;
+  const base = `rotate(${baseRotation}deg)`;
+  el.animate([
+    { transform: `${base} scaleX(1)` },
+    { transform: `${base} scaleX(0)` },
+    { transform: `${base} scaleX(1)` },
+  ], { duration:320, easing:'ease-in-out' });
+}
+// The signed, shortest-path turn that actually connects two 90°-multiple
+// angles — e.g. 270→0 is a +90 step (the pile spun forward past 360, not
+// backward through 180), which plain `to-from` arithmetic gets wrong right
+// at that wraparound. rotateCardAt/rotatePiece only ever move a pile by
+// exactly one 90° tap at a time, so the "shortest" path here is always
+// exactly the real one that was taken.
+function shortestRotationDelta(fromDeg, toDeg){
+  let d = ((toDeg-fromDeg)%360+360)%360;
+  if(d>180) d -= 360;
+  return d;
+}
+// The bounce-overshoot spin for a whole-piece (ROTATE_PIECE) or single-card
+// (ROTATE_CARD) tap — same idea as flipPopEl (see its comment on why this is
+// built with full explicit `rotate(...)` keyframes via el.animate() rather
+// than a CSS class): `fromDeg`/`toDeg` are the plain 0/90/180/270 values
+// state actually stores, but the animation itself travels the CONTINUOUS,
+// un-wrapped path between them (via shortestRotationDelta) so a 270→0 tap
+// visibly keeps spinning forward past 360° instead of snapping backward
+// through 180 — and swings a little past its landing angle before settling,
+// the same --bounce overshoot feel used everywhere else in this app.
+function rotatePopEl(el, fromDeg, toDeg){
+  if(!el || !el.animate) return;
+  const delta = shortestRotationDelta(fromDeg, toDeg);
+  const target = fromDeg + delta;
+  const overshoot = target + (delta<0 ? -14 : 14);
+  el.animate([
+    { transform: `rotate(${fromDeg}deg)` },
+    { transform: `rotate(${overshoot}deg)` },
+    { transform: `rotate(${target}deg)` },
+  ], { duration:260, easing:'cubic-bezier(.34,1.56,.64,1)' }); // same curve as --bounce
 }
 
 // Human-readable text for a synced event — used for the chat's history bubbles
@@ -2971,13 +3057,24 @@ function createDragGhost(){
   document.getElementById('boardWorld').appendChild(ghost);
   return ghost;
 }
-function updateDragGhost(ghost, x, y, w, h){
+function updateDragGhost(ghost, x, y, w, h, rotation){
   if(!ghost || !ghost.isConnected) return;
   const snapped = applyZoneSnap(snapCoord(x), snapCoord(y), w, h);
   ghost.style.left = snapped.x+'px';
   ghost.style.top = snapped.y+'px';
   ghost.style.width = w+'px';
   ghost.style.height = h+'px';
+  // `rotation` is optional (only pieces have one — tokens/zones never pass
+  // it) and, when given, is the same effectivePieceRotation(p) the actual
+  // .piece element itself rotates by (see renderBoard). x/y/w/h above are
+  // always pieceBounds' own UNROTATED box (same one .piece's left/top/width/
+  // height already use), so rotating this ghost the same way, around the
+  // same default center pivot (.piece's own transform-origin, for anything
+  // that isn't a splayed multi-card pile — the only case with a rotation
+  // that's ever actually nonzero here, see effectivePieceRotation), is what
+  // makes the dashed outline finally trace the card's real on-screen footprint
+  // instead of always sitting flat no matter how the piece itself is turned.
+  ghost.style.transform = rotation ? `rotate(${rotation}deg)` : '';
 }
 function removeDragGhost(ghost){
   if(ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
@@ -3052,7 +3149,17 @@ function beginPeelAsPiece(p, cardIndex, clientX, clientY){
   const cardId = p.cardIds[cardIndex];
   const faceUp = p.faceStates[cardIndex];
   const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
-  const cardRotation = cardRotations[cardIndex] || 0; // carries over as the new standalone piece's own rotation
+  // The rotation this card is ACTUALLY showing right now, carried over as the
+  // new standalone piece's own rotation. Only meaningful to read from
+  // cardRotations while the pile is splayed (see effectivePieceRotation's
+  // comment: a splayed pile's own cards can each carry a separate rotation on
+  // top of the container's) — an UNSPLAYED pile never paints per-card
+  // rotations at all, its cards all just ride along with the whole
+  // container's own `rotation` (ROTATE_PIECE), so peeling from one of those
+  // has to read p.rotation instead, or a card rotated as part of a rigid
+  // unsplayed stack would visually snap back to upright the instant it's
+  // peeled off.
+  const cardRotation = p.splayed ? (cardRotations[cardIndex] || 0) : (p.rotation || 0);
   const remainingCardIds = p.cardIds.filter((_,i)=>i!==cardIndex);
   const remainingFaceStates = p.faceStates.filter((_,i)=>i!==cardIndex);
   const remainingCardRotations = cardRotations.filter((_,i)=>i!==cardIndex);
@@ -3224,7 +3331,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   // its old, much-smaller threshold used to leak through and make this look
   // identical to hovering a real stack).
   ctx.el.classList.toggle('insert-below', !!target && target.cardIds.length>1 && shouldInsertBelow(target, world.x, world.y));
-  { const b = pieceBounds(p); updateDragGhost(ctx.ghost, b.x, b.y, b.w, b.h); }
+  { const b = pieceBounds(p); updateDragGhost(ctx.ghost, b.x, b.y, b.w, b.h, effectivePieceRotation(p)); }
   repositionAttachedTokens(p.id);
 }
 // Lands a drag driven by driveWholePieceDrag, whichever gesture started it —
@@ -3318,7 +3425,7 @@ function wireGroupHandleDrag(handleEl, p){
         pieceEl.style.left=p.x+'px'; pieceEl.style.top=p.y+'px';
         pieceEl.classList.toggle('insert-below', !!target && !splayTarget && shouldInsertBelow(target, world.x, world.y));
       }
-      { const b = pieceBounds(p); updateDragGhost(ghost, b.x, b.y, b.w, b.h); }
+      { const b = pieceBounds(p); updateDragGhost(ghost, b.x, b.y, b.w, b.h, effectivePieceRotation(p)); }
       repositionAttachedTokens(p.id);
     },
     onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY), // the Stack menu — see comment above
@@ -3774,6 +3881,14 @@ function refreshStackPerimeter(){
   stackPerimeterEl.style.top = b.y+'px';
   stackPerimeterEl.style.width = b.w+'px';
   stackPerimeterEl.style.height = b.h+'px';
+  // Same fix as updateDragGhost's rotation param, and for the same reason:
+  // b above is pieceBounds' UNROTATED box, so without this the perimeter sat
+  // flat over a rotated pile no matter which way its actual cards were
+  // turned. Rotating around the default center pivot matches .piece's own
+  // (see renderBoard) since effectivePieceRotation is only ever nonzero here
+  // for the kind of piece that also rotates around its plain box center.
+  const rot = effectivePieceRotation(p);
+  stackPerimeterEl.style.transform = rot ? `rotate(${rot}deg)` : '';
   stackPerimeterEl.classList.add('visible');
 }
 function isTextEntryFocused(){
