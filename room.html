@@ -4166,21 +4166,28 @@ function splaySpacingForCursor(p, dir, clientX, clientY, depth){
   // uses, right up to the point it actually does unsplay.
   return Math.max(0, Math.min(splayMaxFor(dir), spacing));
 }
-// What fraction of the target's own extent (PIECE_W for a horizontal nudge,
-// PIECE_H for a vertical one) a single dragged card has to be nudged off
-// center before hovering it over another single, unsplayed card switches
-// from previewing an ordinary "stack on top" merge to previewing a brand-new
-// 2-card splay instead. A FRACTION of each axis's own dimension, not a flat
-// px value: PIECE_H and PIECE_W differ (a card is taller than it is wide —
-// see PIECE_W/PIECE_H), so a flat threshold either made the vertical nudge
-// trivial to reach and the horizontal one nearly impossible (needing the
-// cursor within a pixel of the card's own edge) or vice versa. This is also
-// deliberately a much bigger gesture than SPLAY_UNSPLAY_PROXIMITY (which
-// governs the much finer "let go near zero to collapse" snap-back while
-// already adjusting an existing fan) — this is a coarser choice between two
-// visually different outcomes, so it needs a nudge that reads as clearly
-// deliberate.
-const SINGLE_STACK_TO_SPLAY_NUDGE_FRACTION = 0.5;
+// How far a single dragged card has to be nudged off a single, unsplayed
+// target's own origin before hovering it switches from previewing an
+// ordinary "stack on top" merge to previewing a brand-new 2-card splay
+// instead — a plain circular radius around the target's origin (its own
+// x/y — see PIECE_W/PIECE_H), the same in every direction.
+//
+// An earlier version compared the nudge against each AXIS's own extent
+// separately (a fraction of PIECE_W for a mostly-horizontal nudge, of
+// PIECE_H for a mostly-vertical one), specifically to correct for the card
+// being taller than it is wide. That correction overshot: it made the two
+// axes reach their OWN threshold at the same fraction of nudge, but a
+// mostly-vertical nudge still had to travel PIECE_H's share (196px) to get
+// there while a mostly-horizontal one only needed PIECE_W's (140px) —
+// nudging down still felt like it took distinctly longer than nudging
+// sideways the same "amount". A single flat radius, measured once as
+// straight-line distance from the origin rather than compared per-axis,
+// removes that asymmetry entirely: how far you've dragged is how far
+// you've dragged, regardless of which way. 1/4 of the card's SHORTER
+// dimension (not the longer one) keeps the gesture reachable without
+// having to leave the target's footprint on its narrow axis before it
+// engages.
+const SINGLE_STACK_TO_SPLAY_RADIUS = Math.min(PIECE_W, PIECE_H) * 0.25;
 // Distinct from the tuck-under-a-PILE behavior (shouldInsertBelow/
 // splayInsertIndex — those apply once a target is already a multi-card or
 // splayed pile): this is specifically for a single dragged card hovering a
@@ -4236,13 +4243,14 @@ function singleOverSingleSplayPreview(target, sourceCardCount, pieceCenterX, pie
   if(sourceCardCount!==1) return null;
   const local = localOffsetInPieceFromWorld(target, pieceCenterX, pieceCenterY);
   const dx = local.x - PIECE_W/2, dy = local.y - PIECE_H/2;
-  // Compared as a FRACTION of each axis's own extent, not raw px, so the
-  // taller (Y) axis doesn't dominate just because PIECE_H > PIECE_W.
+  if(Math.hypot(dx, dy) < SINGLE_STACK_TO_SPLAY_RADIUS) return null; // still within the origin radius: ordinary stack-on-top
+  // Which axis becomes the fan direction is still compared as a FRACTION of
+  // each axis's own extent (not raw px), so the taller (Y) axis doesn't
+  // dominate just because PIECE_H > PIECE_W — this only decides which way
+  // the splay opens, not whether it engages at all (that's the radius
+  // check above), so it doesn't have the same overshoot problem.
   const horizontal = Math.abs(dx)/PIECE_W >= Math.abs(dy)/PIECE_H;
-  const extent = horizontal ? PIECE_W : PIECE_H;
   const mag = horizontal ? Math.abs(dx) : Math.abs(dy);
-  const threshold = extent * SINGLE_STACK_TO_SPLAY_NUDGE_FRACTION;
-  if(mag < threshold) return null; // still close to center: ordinary stack-on-top
   const dir = horizontal ? (dx>=0 ? 'right':'left') : (dy>=0 ? 'down':'up');
   const spacing = Math.max(0, Math.min(splayMaxFor(dir), mag));
   return { dir, spacing };
