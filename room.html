@@ -1029,10 +1029,15 @@ function attachedTokenPos(t){
    CARD LIBRARY DATA — NO card-library sheet id is hardcoded here at all. Every
    imported deck's JSON carries the exact sheet id(s) its own cards come from
    (deckJson.sourceSheets); this app fetches each one, on demand, the first
-   time it's needed, and caches the result. A deck mixing cards from two
-   different sets simply means two sheets get fetched instead of one, and any
-   client that receives a synced piece referencing a sheet it hasn't fetched
-   yet (because another player did the importing) fetches it too, lazily.
+   time it's needed this session (knownSheetIds), and also checks a
+   persistent per-account cache in localStorage so a set already fetched in a
+   PAST session doesn't even wait on that first round-trip (see
+   applyCachedSheetCards/cacheSheetCards below) — either way, the real
+   server-side access check still always runs and always wins. A deck mixing
+   cards from two different sets simply means two sheets get fetched instead
+   of one, and any client that receives a synced piece referencing a sheet it
+   hasn't fetched yet (because another player did the importing) fetches it
+   too, lazily.
    ========================================================================= */
 const cardsById = new Map();
 const knownSheetIds = new Set(); // sheets already fetched (or currently being fetched)
@@ -1045,6 +1050,58 @@ const sheetNamesById = new Map(); // sheetId -> setName, for re-embedding source
 // work — so the room app can't always rely on fetching it directly.
 const CARD_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxuoxW84Mn4Grrq2T9_RCoCJO1ftMdBPJ2gNqcwW5T7wXNonNjZaKOcxgc3ZQAHanVpZQ/exec';
 
+/* ---------- Persistent (cross-session) sheet card cache ----------
+   Pure speed optimization, never a substitute for the real check: the live
+   round-trip in fetchSheetCards below always still runs, every single time,
+   and its result always wins, overwriting whatever the cache put in
+   cardsById. All this buys is letting a set the account has already been
+   granted access to (this session or a past one) render its real faces the
+   instant it's needed instead of sitting on "Access Pending" for however
+   long that round-trip takes — most returning-player imports become
+   effectively instant, with the network fetch reconfirming silently in the
+   background. Scoped per signed-in account (email) so a shared/kiosk browser
+   never shows one person's cached cards to whoever signs in next; classified
+   (denied) sheets are deliberately never cached — there's no card data in
+   that response worth keeping, and a set that WAS cached but comes back
+   classified on recheck means access was revoked since, so the stale entry
+   is dropped and the player is told (see fetchSheetCards) rather than ever
+   silently reappearing. */
+const CARD_CACHE_VERSION = 'v1';
+function cardCacheKey(sheetId){
+  if(!state.userEmail) return null; // no account identity yet (shouldn't happen post-sign-in) — don't cache blind
+  return `eoo_sheet_cache_${CARD_CACHE_VERSION}:${state.userEmail}:${sheetId}`;
+}
+// Returns true if a cache entry existed (whether or not it parsed cleanly) —
+// fetchSheetCards uses this to know whether a classified result later means
+// "access was just revoked" (worth a toast) versus "never had access at all".
+function applyCachedSheetCards(sheetId){
+  const key = cardCacheKey(sheetId);
+  if(!key) return false;
+  const raw = localStorage.getItem(key);
+  if(!raw) return false;
+  try{
+    const cached = JSON.parse(raw);
+    (cached.rows||[]).forEach(r=>{
+      if(!r || !r.id) return;
+      cardsById.set(r.id, r);
+      preloadCardFace(r._front);
+      if(r._doubleSided) preloadCardFace(r._back);
+    });
+  }catch(e){ /* corrupt entry — treat as no cache, live fetch below still runs regardless */ }
+  return true;
+}
+function cacheSheetCards(sheetId, rows){
+  const key = cardCacheKey(sheetId);
+  if(!key) return;
+  try{ localStorage.setItem(key, JSON.stringify({ rows, ts: Date.now() })); }
+  catch(e){ /* storage full/unavailable/private-browsing — caching is best-effort only */ }
+}
+function clearCachedSheetCards(sheetId){
+  const key = cardCacheKey(sheetId);
+  if(!key) return;
+  try{ localStorage.removeItem(key); }catch(e){}
+}
+
 // Both attempts below go through the card-library script's own elevated
 // ("Execute as: Me") permissions, gated by the signed-in idToken (see
 // getCardsBySheetId in Code.gs). The old direct-CSV-export fallbacks are
@@ -1054,6 +1111,17 @@ const CARD_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxuoxW84Mn4Grrq
 // shared "anyone with the link". Losing them means a sheet must go through
 // the gated endpoint to be usable in the room at all, same as the deckbuilder.
 async function fetchSheetCards(sheetId){
+  // Runs synchronously, before anything below even reaches the network —
+  // see the cache helpers' own comment. registerPendingCards (called by
+  // every caller of ensureSheetsLoaded, just before it) has already stood in
+  // "Access Pending" placeholders for every id on this piece; this
+  // immediately overwrites the ones this sheet actually owns with their real
+  // cached data, so a returning player often never sees "Access Pending" at
+  // all for a set they already have. wasCached remembers whether there was
+  // something to roll back from, purely so a set that turns out to be
+  // classified on THIS check can say "access was revoked" instead of just
+  // silently landing on Classified same as a set never seen before.
+  const wasCached = applyCachedSheetCards(sheetId);
   const attempts = [
     async () => {
       const res = await fetch(`${CARD_WEBAPP_URL}?cardsForSheet=${encodeURIComponent(sheetId)}&idToken=${encodeURIComponent(state.idToken)}&_=${Date.now()}`);
@@ -1086,6 +1154,17 @@ async function fetchSheetCards(sheetId){
         (data.ids||[]).forEach(id=>{
           if(id) cardsById.set(id, { id, name:'Classified', _classified:true, _sheetId:sheetId });
         });
+        if(wasCached){
+          // This account HAD cached access to this set (this session or a
+          // past one) and just lost it — the brief real faces the player saw
+          // a moment ago (from cache, before this check landed) are already
+          // overwritten by the classified placeholders above; drop the stale
+          // cache entry too so a future session doesn't repeat the flash,
+          // and say something, since this is a real access change, not just
+          // an ordinary first-time "not authorized".
+          clearCachedSheetCards(sheetId);
+          toast(`Access to "${sheetNamesById.get(sheetId)||sheetId}" is no longer available — showing as Classified.`);
+        }
         return;
       }
       (data.rows||[]).forEach(r=>{
@@ -1102,6 +1181,11 @@ async function fetchSheetCards(sheetId){
         preloadCardFace(r._front);
         if(r._doubleSided) preloadCardFace(r._back);
       });
+      // Persist for next time — see the cache helpers' own comment. Cached
+      // AFTER the augmentation above so what's stored already carries
+      // _front/_back/_doubleSided/_sheetId, ready to drop straight into
+      // cardsById next session with no reprocessing.
+      cacheSheetCards(sheetId, data.rows);
       return;
     }catch(e){ lastErr = e; }
   }
