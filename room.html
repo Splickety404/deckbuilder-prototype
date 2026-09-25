@@ -76,21 +76,6 @@ input[type="range"]{accent-color:var(--accent);}
   margin:2px auto 0;
 }
 
-/* ---------- Import overlay ---------- */
-/* Shown while a dropped-in deck file's card sets are being fetched — each set
-   is a real network round-trip through the gated card-library endpoint (see
-   fetchSheetCards), including the per-set Drive-access check server-side, so
-   this can visibly take a moment, especially the first time a set is touched
-   this session (later imports referencing an already-fetched set skip straight
-   past it — see knownSheetIds). */
-#importOverlay{position:fixed;inset:0;z-index:400;display:flex;align-items:center;justify-content:center;
-  background:rgba(20,22,27,.72);}
-#importOverlay.hidden{display:none;}
-.import-overlay-box{display:flex;flex-direction:column;align-items:center;gap:14px;
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
-  padding:26px 34px;box-shadow:var(--shadow);animation:bouncePopIn .3s var(--bounce);}
-.import-overlay-box .signin-spinner{width:32px;height:32px;border-width:4px;margin:0;}
-#importOverlayText{font-size:13px;color:var(--text-soft);text-align:center;max-width:260px;}
 
 /* ---------- Setup screen ---------- */
 #setup-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:50;}
@@ -160,6 +145,22 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   color:var(--danger) !important;font-size:11px;font-weight:700;text-align:center;
   width:100%;height:100%;box-sizing:border-box;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:8px;}
+/* A card whose sheet's access check hasn't come back yet — genuinely unknown,
+   not yet "restricted" (classified) or "unrevealed" (an ordinary cardback).
+   Placed immediately by registerPendingCards the instant a piece referencing
+   an unfetched sheet appears (deck import, or a synced PLACE_PIECE/MERGE_PIECES
+   from another client), so nothing ever blocks on the network round-trip —
+   this is what's shown in the meantime, and it's swapped for the real face (or
+   "Classified") the moment that sheet's fetchSheetCards call resolves and
+   triggers a re-render. Pulses gently to read as "still checking", never a
+   static/stuck state. */
+.cardback.pending-face,.pending-face{
+  background:var(--surface-2) !important;
+  color:var(--text-soft) !important;font-size:11px;font-weight:700;text-align:center;
+  width:100%;height:100%;box-sizing:border-box;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:8px;
+  animation:pendingFacePulse 1.6s ease-in-out infinite;}
+@keyframes pendingFacePulse{0%,100%{opacity:.5;}50%{opacity:1;}}
 /* Live "you're about to place this card on that deck" feedback while dragging
    a single card or a whole pile over another pile — shown for exactly as long
    as dropping right now would trigger mergePieceOntoTarget (see
@@ -749,13 +750,6 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 
 <div id="toast"></div>
 
-<div id="importOverlay" class="hidden">
-  <div class="import-overlay-box">
-    <div class="signin-spinner"></div>
-    <div id="importOverlayText">Importing deck…</div>
-  </div>
-</div>
-
 <div id="radialMenu" class="hidden"></div>
 <div id="imageScalePopover" class="hidden"></div>
 <div id="zonePopover" class="hidden"></div>
@@ -1126,6 +1120,23 @@ async function ensureSheetsLoaded(sourceSheets){
     toast(`Could not load cards from "${s.setName||s.sheetId}": ${e.message}`);
   })));
 }
+// Registers a lightweight stand-in for every id whose real data (or "Classified"
+// status) isn't known yet — called the instant a piece referencing an unfetched
+// sheet appears on the board (deck import, a synced PLACE_PIECE/LOAD_LAYOUT/
+// STATE_SNAPSHOT from another client), always BEFORE the renderBoard() that
+// follows in the same tick, so that first render shows "Access Pending" (see
+// pending-face CSS, cardFaceHtml/pieceFaceHtml/cardFrontInnerHtml) instead of
+// either a bare "?" or — worse — blocking on the network at all. Whichever
+// sheet each pending id actually belongs to is still in flight and unknown
+// here, so this can't fill in _sheetId; that's fine, fetchSheetCards
+// unconditionally overwrites every id it resolves (real row or classified)
+// the moment its sheet comes back, pending placeholder included. Never
+// overwrites an id that's already resolved one way or the other.
+function registerPendingCards(cardIds){
+  (cardIds||[]).forEach(id=>{
+    if(id && !cardsById.has(id)) cardsById.set(id, { id, name:'Access Pending', _pending:true });
+  });
+}
 // Every sheet referenced by any card currently placed on the board/held in hand —
 // used to re-embed exactly the decks a saved layout needs into its export.
 function sourceSheetsInUse(){
@@ -1356,8 +1367,10 @@ function applyRoomEvent(type, payload){
         owner:payload.owner, splayed:false, splayDir:'right', splaySpacing:36, label:payload.label||'', rotation:payload.rotation||0, locked:payload.locked||false,
         kind:payload.kind||'cards', imageUrl:payload.imageUrl||null, w:payload.w||null, h:payload.h||null, naturalW:payload.naturalW||null, naturalH:payload.naturalH||null });
       if(payload.sourceSheets && payload.sourceSheets.length){
-        // fire-and-forget: this piece renders with "?" cardbacks until whichever
-        // sheets it needs finish loading, then a re-render picks up the real art
+        // fire-and-forget: this piece renders with "Access Pending" faces until
+        // whichever sheets it needs finish loading, then a re-render picks up
+        // the real art (or "Classified", if this account isn't authorized).
+        registerPendingCards(payload.cardIds);
         ensureSheetsLoaded(payload.sourceSheets).then(renderBoard);
       }
       break;
@@ -1550,6 +1563,7 @@ function applyRoomEvent(type, payload){
       (payload.tokens||[]).forEach(t=> state.tokens.set(t.id, {...t}));
       if(payload.theme){ state.theme = {...payload.theme}; applyBoardTheme(state.theme); }
       if(payload.sourceSheets && payload.sourceSheets.length){
+        registerPendingCards((payload.pieces||[]).flatMap(p=>p.cardIds||[]));
         ensureSheetsLoaded(payload.sourceSheets).then(renderBoard);
       }
       break;
@@ -1632,7 +1646,10 @@ function applyRoomEvent(type, payload){
       if(payload.turnOrder) state.turnOrder = payload.turnOrder;
       if(payload.turnIndex!=null) state.turnIndex = payload.turnIndex;
       state.hasInitialState = true;
-      if(payload.sourceSheets && payload.sourceSheets.length) ensureSheetsLoaded(payload.sourceSheets).then(renderBoard);
+      if(payload.sourceSheets && payload.sourceSheets.length){
+        registerPendingCards((payload.pieces||[]).flatMap(p=>p.cardIds||[]));
+        ensureSheetsLoaded(payload.sourceSheets).then(renderBoard);
+      }
       renderTurnTracker();
       renderPlayerCounters();
       break;
@@ -1722,40 +1739,23 @@ function shuffle(arr){
   for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
   return arr;
 }
-function showImportOverlay(text){
-  document.getElementById('importOverlayText').textContent = text;
-  document.getElementById('importOverlay').classList.remove('hidden');
-}
-function hideImportOverlay(){
-  document.getElementById('importOverlay').classList.add('hidden');
-}
+// No more overlay, no more waiting on the network before the pile even shows
+// up: importing used to block on a full round-trip per set — including the
+// per-set Drive-access check happening server-side (see fetchSheetCards ->
+// Code.gs's getCardsBySheetId) — behind a modal spinner, which is exactly the
+// "really slow" complaint. All the ids this deck needs are already known
+// straight from the deck file itself (no fetch required for THAT part), so
+// the pile is placed immediately via the ordinary PLACE_PIECE path, which
+// already registers "Access Pending" placeholders and kicks off
+// ensureSheetsLoaded in the background on its own (see applyRoomEvent's
+// PLACE_PIECE case) — importDeckJson doesn't need to duplicate any of that
+// anymore, just hand it sourceSheets like any other piece. Real faces (or
+// "Classified") pop in per-set as each one resolves, never all-or-nothing.
 async function importDeckJson(deckJson, dropX, dropY){
   if(!deckJson || !deckJson.deckType) throw new Error('Not a recognized deck file.');
   if(!deckJson.sourceSheets || !deckJson.sourceSheets.length){
     throw new Error('This deck file has no sourceSheets info — re-export it from the latest deckbuilder version.');
   }
-  const setsToFetch = deckJson.sourceSheets.filter(s=>s && s.sheetId && !knownSheetIds.has(s.sheetId));
-  if(setsToFetch.length){
-    // Loading card data means a real network round-trip per set — including the
-    // per-set Drive-access check happening server-side (see fetchSheetCards ->
-    // Code.gs's getCardsBySheetId) — so this is the one part of an import that
-    // can visibly take a moment, especially the first time a set is touched
-    // this session. The spinner overlay stays up for exactly that stretch;
-    // ensureSheetsLoaded's own catch still reports a per-set failure via toast
-    // if one comes up along the way (a genuinely broken/unreachable sheet, as
-    // opposed to a merely-unauthorized one, which now resolves normally as
-    // "Classified" placeholders rather than failing at all).
-    const label = setsToFetch.length>1 ? `${setsToFetch.length} card sets` : (setsToFetch[0].setName || 'a card set');
-    showImportOverlay(`Checking your Google access for ${label}…`);
-  } else {
-    showImportOverlay('Importing deck…');
-  }
-  try{
-    await ensureSheetsLoaded(deckJson.sourceSheets);
-  } finally {
-    hideImportOverlay();
-  }
-
   const cardIds = [];
   if(deckJson.leaderId) cardIds.push(deckJson.leaderId);
   if(deckJson.bonusCardId) cardIds.push(deckJson.bonusCardId);
@@ -2176,15 +2176,21 @@ function pieceTopFace(p){
 // "Classified" label swapped in for the image.
 function cardFrontInnerHtml(card, size){
   if(card && card._classified) return `<div class="classified-face">🔒 Classified</div>`;
+  if(card && card._pending) return `<div class="pending-face">⏳ Access Pending</div>`;
   return card && card._front ? `<img src="${sizedUrl(card._front,size)}" draggable="false">` : '';
 }
 // Classified is checked before faceUp/back at all — a card you're not
 // authorized for stays "Classified" whichever way it's flipped, matching a
 // real opponent's hidden card rather than a merely face-down one of yours.
+// Pending (registerPendingCards — access check for this card's sheet is
+// still in flight) gets the exact same treatment: neither state has real
+// front/back data to show yet, so there's nothing faceUp could meaningfully
+// pick between.
 function cardFaceHtml(cardId, faceUp){
   const card = cardsById.get(cardId);
   if(!card) return `<div class="cardback">?</div>`;
   if(card._classified) return `<div class="cardback classified-face">🔒 Classified</div>`;
+  if(card._pending) return `<div class="cardback pending-face">⏳ Access Pending</div>`;
   if(faceUp) return card._front ? `<img src="${sizedUrl(card._front,320)}" draggable="false">` : `<div class="cardback">${escapeHtml((card.name||'?').slice(0,20))}</div>`;
   if(card._doubleSided && card._back) return `<img src="${sizedUrl(card._back,320)}" draggable="false">`;
   return `<div class="cardback">🂠</div>`;
@@ -2193,6 +2199,7 @@ function pieceFaceHtml(p){
   const { card, faceUp } = pieceTopFace(p);
   if(!card) return `<div class="cardback">?</div>`;
   if(card._classified) return `<div class="cardback classified-face">🔒 Classified</div>`;
+  if(card._pending) return `<div class="cardback pending-face">⏳ Access Pending</div>`;
   if(faceUp) return card._front ? `<img src="${sizedUrl(card._front,320)}" draggable="false">` : `<div class="cardback">${escapeHtml((card.name||'?').slice(0,20))}</div>`;
   if(card._doubleSided && card._back) return `<img src="${sizedUrl(card._back,320)}" draggable="false">`;
   return `<div class="cardback">🂠</div>`;
@@ -5230,15 +5237,16 @@ function showHoverPreview(card, faceUp, clientX, clientY){
   previewEl.classList.toggle('flip-left', wouldOverlapCursor);
   const img = document.getElementById('hoverPreviewImg');
   const back = document.getElementById('hoverPreviewBack');
-  if(card._classified){
+  if(card._classified || card._pending){
     img.style.display='none';
-    back.textContent = '🔒 Classified';
-    back.classList.add('classified-face');
+    back.textContent = card._pending ? '⏳ Access Pending' : '🔒 Classified';
+    back.classList.toggle('classified-face', !!card._classified);
+    back.classList.toggle('pending-face', !!card._pending);
     back.style.display='flex';
     previewEl.classList.remove('hidden');
     return;
   }
-  back.classList.remove('classified-face');
+  back.classList.remove('classified-face','pending-face');
   back.textContent = '🂠';
   const url = faceUp ? card._front : (card._doubleSided && card._back ? card._back : '');
   if(url){ img.src = sizedUrl(url, 700); img.style.display='block'; back.style.display='none'; }
@@ -5252,9 +5260,15 @@ function hideHoverPreview(){ document.getElementById('hoverPreview').classList.a
    ========================================================================= */
 function openPeekPopup(card, faceUp){
   const img = document.getElementById('peekPopupImg');
+  // This element doubles as the "unavailable" placeholder for BOTH states —
+  // classified (verified and denied) and pending (not verified yet); only its
+  // text and color scheme change (see pending-face/classified-face CSS).
   const classified = document.getElementById('peekPopupClassified');
-  if(card && card._classified){
+  if(card && (card._classified || card._pending)){
     img.style.display='none';
+    classified.textContent = card._pending ? '⏳ Access Pending' : '🔒 Classified';
+    classified.classList.toggle('classified-face', !!card._classified);
+    classified.classList.toggle('pending-face', !!card._pending);
     classified.classList.remove('hidden');
     document.getElementById('peekPopup').classList.remove('hidden');
     return;
@@ -5557,7 +5571,10 @@ document.getElementById('layoutFileInput').addEventListener('change', (e)=>{
     try{
       const json = JSON.parse(reader.result);
       if(!confirm('Loading this layout replaces the CURRENT board for everyone at the table. Continue?')) return;
-      if(json.sourceSheets && json.sourceSheets.length) await ensureSheetsLoaded(json.sourceSheets);
+      // No pre-flight wait: LOAD_LAYOUT's own applyRoomEvent case registers
+      // "Access Pending" placeholders and resolves every set's access in the
+      // background (see registerPendingCards/ensureSheetsLoaded there), same
+      // as importDeckJson — the board comes back immediately either way.
       doAction('LOAD_LAYOUT', {
         sourceSheets: json.sourceSheets||[],
         theme: json.theme||null,
