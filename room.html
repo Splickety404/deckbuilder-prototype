@@ -166,6 +166,19 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    showMergeHighlight/clearMergeHighlight), never a separate/delayed state. */
 .piece.merge-target{outline:3px solid var(--ok);outline-offset:3px;box-shadow:0 0 0 7px rgba(74,222,128,.22),var(--shadow);}
 .piece.merge-target .piece-label{background:var(--ok);color:#0a2a12;}
+
+/* Anti-cheat visibility: a peek or an in-progress search is never a quiet,
+   local-only thing — everyone at the table sees exactly which pile someone
+   looked at or is currently rifling through. peek-alert is brief (self-clears,
+   see PEEK_ALERT_MS) and pulses like an alarm; search-alert is persistent for
+   as long as SEARCH_START/SEARCH_END says that pile is being searched, and
+   dashed rather than solid to read as "ongoing" rather than "just happened". */
+.piece.peek-alert{outline:3px solid var(--danger);outline-offset:3px;box-shadow:0 0 0 7px rgba(248,113,113,.28),var(--shadow);animation:peekAlertPulse 0.8s ease-in-out 3;}
+@keyframes peekAlertPulse{0%,100%{box-shadow:0 0 0 7px rgba(248,113,113,.28),var(--shadow);}50%{box-shadow:0 0 0 13px rgba(248,113,113,.06),var(--shadow);}}
+.piece.search-alert{outline:3px dashed var(--danger);outline-offset:3px;box-shadow:0 0 0 7px rgba(248,113,113,.18),var(--shadow);}
+.search-alert-badge{position:absolute;top:-26px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;
+  color:#fff;background:var(--danger);border-radius:var(--radius-pill);padding:2px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  transform:rotate(var(--counter-rotate,0deg));pointer-events:none;}
 .piece .piece-label{position:absolute;bottom:-22px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;
   color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);padding:2px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   transition:background .1s,color .1s,transform .35s var(--bounce);
@@ -421,6 +434,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 /* ---------- Hover preview ---------- */
 #hoverPreview{position:fixed;z-index:95;pointer-events:none;bottom:130px;right:20px;box-shadow:var(--shadow);border-radius:var(--radius);overflow:hidden;}
 #hoverPreview.hidden{display:none;}
+#hoverPreview.flip-left{right:auto;left:20px;}
 #hoverPreview img{width:320px;display:block;border-radius:var(--radius);}
 
 /* ---------- Hotkey hint — reminds you of the flip/rotate/draw keys while
@@ -1164,6 +1178,8 @@ const state = {
   undoFn: null,          // single-level undo for the local player's last action
   snapToGrid: false,    // local per-viewer, never synced
   zoneEditMode: false,  // local per-viewer, never synced — gates left-drag move/resize of zones
+  peekAlertIds: new Set(), // pieceIds with a brief "someone just peeked here" highlight — self-clears after PEEK_ALERT_MS
+  searchingBy: new Map(), // pieceId -> playerName currently rifling through it — cleared on SEARCH_END
   players: new Map(),   // playerId -> playerName — everyone who has ever joined, synced via PLAYER_JOINED
   turnOrder: [],         // array of playerIds — synced via SET_TURN, built lazily from state.players
   turnIndex: -1,          // index into turnOrder of whoever's turn it is; -1 = not started
@@ -1356,6 +1372,13 @@ function applyRoomEvent(type, payload){
     case 'MERGE_PIECES': {
       setPieceCards(payload.intoId, payload.cardIds, payload.faceStates, payload.cardRotations);
       state.pieces.delete(payload.removedId);
+      // See mergePieceOntoTarget's splayInfo param: hovering a single card
+      // over another single card, nudged far enough off-center, creates a
+      // brand-new splay in the same atomic event as the merge itself.
+      if(payload.splay){
+        const into = state.pieces.get(payload.intoId);
+        if(into){ into.splayed = true; into.splayDir = payload.splay.dir; into.splaySpacing = payload.splay.spacing; }
+      }
       break;
     }
     case 'SHUFFLE_PIECE':
@@ -1544,6 +1567,32 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'NOTE': break; // no board mutation — handled entirely via the toast/history text
+    // Anti-cheat visibility (see peekTopCard's comment): a brief, unmissable
+    // flag on the exact pile that was just peeked at, for every player —
+    // self-clears after PEEK_ALERT_MS via its own timeout, not another event,
+    // so it works even if the peeking player leaves right after.
+    case 'PEEK_ALERT': {
+      const p = state.pieces.get(payload.id);
+      if(p){
+        const b = pieceBounds(p);
+        showPing(b.x+b.w/2, b.y+b.h/2);
+      }
+      state.peekAlertIds.add(payload.id);
+      setTimeout(()=>{ state.peekAlertIds.delete(payload.id); renderBoard(); }, PEEK_ALERT_MS);
+      break;
+    }
+    // Anti-cheat visibility for Search — persistent (not a timed flash like
+    // PEEK_ALERT above) for as long as the searching player's modal stays
+    // open, since a search can take a while and should stay obviously
+    // flagged the whole time, not just at the start.
+    case 'SEARCH_START': {
+      state.searchingBy.set(payload.id, payload.playerName);
+      break;
+    }
+    case 'SEARCH_END': {
+      state.searchingBy.delete(payload.id);
+      break;
+    }
     // Lets a newly-joined (or refreshed) player catch up to the live board
     // without the sheet ever being in the loop. Any client that already has
     // real state answers, after a small random delay so simultaneous
@@ -1578,7 +1627,7 @@ function applyRoomEvent(type, payload){
       break;
     }
   }
-  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','EDIT_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE','STATE_SNAPSHOT'].includes(type)) renderBoard();
+  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','EDIT_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE','STATE_SNAPSHOT','PEEK_ALERT','SEARCH_START','SEARCH_END'].includes(type)) renderBoard();
   // A playful "pop" the moment something new lands on the board — for every client,
   // local placer and remote viewers alike, since this runs from inside applyRoomEvent
   // itself rather than the call site. Only ever added to a piece/token/zone element
@@ -1636,6 +1685,9 @@ function describeEvent(type, payload, playerName){
     case 'SET_PIECE_SCALE': return `${playerName} resized a custom piece`;
     case 'SET_ZONE_LOCK': return `${playerName} ${payload.locked?'locked':'unlocked'} a zone`;
     case 'PLAYER_JOINED': return `${playerName} joined the table`;
+    case 'PEEK_ALERT': return `👁 ${playerName} peeked at a card — watch that pile`;
+    case 'SEARCH_START': return `🔍 ${playerName} started searching a pile`;
+    case 'SEARCH_END': return `${playerName} stopped searching`;
     case 'SET_TURN': {
       const activeId = payload.turnOrder[payload.turnIndex];
       const activeName = state.players.get(activeId) || 'someone';
@@ -2150,7 +2202,8 @@ function renderBoard(){
     // clears the preview and re-renders).
     if(splayPreview && splayPreview.sourceId===p.id) return;
     const el = document.createElement('div');
-    el.className='piece' + (p.splayed?' splayed':'') + (state.selectedIds.has(p.id)?' selected':'') + (p.kind==='image'?' image-piece':'');
+    el.className='piece' + (p.splayed?' splayed':'') + (state.selectedIds.has(p.id)?' selected':'') + (p.kind==='image'?' image-piece':'')
+      + (state.peekAlertIds.has(p.id)?' peek-alert':'') + (state.searchingBy.has(p.id)?' search-alert':'');
     el.style.left = p.x+'px'; el.style.top = p.y+'px';
     const containerRotation = effectivePieceRotation(p);
     el.style.transform = containerRotation ? `rotate(${containerRotation}deg)` : '';
@@ -2193,7 +2246,7 @@ function renderBoard(){
         ${p.locked ? `<div class="lock-badge">🔒</div>` : ''}
       `;
       wireWholeInteraction(el, p);
-    } else if(p.splayed && p.cardIds.length>1){
+    } else if((p.splayed && p.cardIds.length>1) || (splayPreview && splayPreview.targetId===p.id && splayPreview.newSplay && p.cardIds.length===1)){
       // The TOP card is the fixed anchor (depth 0, sits exactly at the piece's own
       // x/y with no offset) and every card beneath it fans out AWAY from that
       // anchor — depth 1 (the "2nd card down") sits one spacing-unit away, depth 2
@@ -2204,11 +2257,6 @@ function renderBoard(){
       // from the anchor is what you're setting, and every other card's distance
       // (that many spacing-units, same direction) follows automatically so the
       // gaps between consecutive outer edges stay equal throughout the fan.
-      const dir = p.splayDir || 'right';
-      const spacing = p.splaySpacing || 36;
-      const horizontal = dir==='left' || dir==='right';
-      const n = p.cardIds.length;
-      const topIndex = n-1;
       // A card being dragged in from elsewhere (peeled off another pile, or
       // played from hand) can be previewing a "tuck" into this exact splay —
       // see splayInsertIndex/splayPreview. When it is, depthFor gives every
@@ -2219,6 +2267,19 @@ function renderBoard(){
       // real change, committed only on an actual drop (see placePeeledCardToBoard /
       // playHandCardToBoard).
       const preview = (splayPreview && splayPreview.targetId===p.id) ? splayPreview : null;
+      // p itself isn't splayed yet when this piece's single card is only
+      // PREVIEWING a brand-new splay (see singleOverSingleSplayPreview) — in
+      // that case there's no real p.splayDir/p.splaySpacing to fall back on,
+      // so the preview's own dir/spacing are used instead. Everything below
+      // (n, topIndex, depthFor, offsetFor, etc.) already generalizes to this
+      // case for free: n is just p.cardIds.length (1, the anchor-to-be) and
+      // the preview always inserts at index 0 (see singleOverSingleSplayPreview's
+      // own comment on why the target is always the anchor here).
+      const dir = (preview && preview.newSplay) ? preview.newSplay.dir : (p.splayDir || 'right');
+      const spacing = (preview && preview.newSplay) ? preview.newSplay.spacing : (p.splaySpacing || 36);
+      const horizontal = dir==='left' || dir==='right';
+      const n = p.cardIds.length;
+      const topIndex = n-1;
       const depthFor = (i)=> !preview ? (topIndex-i) : (i<preview.insertIndex ? (n-i) : (n-i-1));
       const extent = (preview ? n : topIndex)*spacing;
       el.style.width = (PIECE_W + (horizontal?extent:0)) + 'px';
@@ -2347,6 +2408,16 @@ function renderBoard(){
     }
     if(p.kind!=='image') el.addEventListener('dblclick', ()=> flipTopCard(p.id));
     wireHotkeyHint(el, p.id);
+    // Anti-cheat visibility: applied uniformly here (rather than inside any one
+    // of the branches above) so it shows up on an image piece, a plain card, or
+    // a splayed pile alike. peek-alert/search-alert (CSS) give the outline;
+    // this badge names WHO, so "someone's looking at this pile" is unambiguous.
+    if(state.searchingBy.has(p.id)){
+      const badge = document.createElement('div');
+      badge.className = 'search-alert-badge';
+      badge.textContent = `🔍 ${state.searchingBy.get(p.id)} is searching`;
+      el.appendChild(badge);
+    }
     world.appendChild(el);
     if(hoveredPieceId===p.id) showHotkeyHint(el); // re-anchor the hint to the freshly-rebuilt element
   });
@@ -2655,13 +2726,22 @@ function finishWholeMove(p, startX, startY, clientX, clientY){
   const target = p.kind==='image' ? null : findOverlapTarget(p, clientX, clientY); // custom images never merge into/onto card piles
   if(target){
     const world = clientToWorld(clientX, clientY);
+    // Letting go while previewing a brand-new splay (see
+    // singleOverSingleSplayPreview/driveWholePieceDrag's newSplay branch)
+    // creates that splay in the same merge, rather than an ordinary
+    // top/bottom placement.
+    const newSplay = (target.splayed && target.cardIds.length>1) ? null : singleOverSingleSplayPreview(target, p.cardIds.length, clientX, clientY);
+    if(newSplay){
+      mergePieceOntoTarget(p.id, target.id, 0, newSplay);
+      return;
+    }
     // A SPLAYED target inserts at the exact fanned position it was
     // previewing (see splayInsertIndex — keyed off the dragged piece's OWN
     // board position, p.x/p.y, not the cursor); any other target uses the
     // coarser cursor-based top/bottom-only rule.
     const insertIndex = (target.splayed && target.cardIds.length>1)
       ? splayInsertIndex(target, p.x, p.y)
-      : (shouldInsertBelow(target, world.y) ? 0 : target.cardIds.length);
+      : (shouldInsertBelow(target, world.x, world.y) ? 0 : target.cardIds.length);
     mergePieceOntoTarget(p.id, target.id, insertIndex); // re-renders the board itself, sets its own undo
     return;
   }
@@ -2726,6 +2806,13 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   p.x = ctx.startX+d.x; p.y = ctx.startY+d.y;
   const target = p.kind==='image' ? null : findOverlapTarget(p, ev.clientX, ev.clientY);
   const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
+  // Distinct from splayTarget above (tucking into an ALREADY-splayed pile):
+  // this is hovering a single dragged card over another single, unsplayed
+  // card, nudged far enough off-center to preview forming a brand-new splay
+  // — see singleOverSingleSplayPreview's own comment. null while still close
+  // to center (ordinary stack-on-top merge) or when either side isn't a lone
+  // single card.
+  const newSplay = splayTarget ? null : singleOverSingleSplayPreview(target, p.cardIds.length, ev.clientX, ev.clientY);
   const world = clientToWorld(ev.clientX, ev.clientY);
   if(splayTarget){
     // Close enough to tuck: preview it with this piece's OWN card face (it's
@@ -2744,6 +2831,19 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
     ctx.tucked = true;
     return;
   }
+  if(newSplay){
+    // Same "hide the loose floating piece, show its real face tucked in
+    // place" treatment as the splayTarget branch above, but forming a BRAND
+    // NEW splay rather than tucking into an existing one — always inserts at
+    // index 0 (the target is always the anchor here, see
+    // singleOverSingleSplayPreview's own comment).
+    clearMergeHighlight();
+    setSplayPreview(target.id, 0, {sourceId:p.id, cardId:p.cardIds[0], faceUp:p.faceStates[0], rotation:p.rotation||0}, newSplay);
+    if(ctx.ghost){ removeDragGhost(ctx.ghost); ctx.ghost=null; }
+    ctx.el = null;
+    ctx.tucked = true;
+    return;
+  }
   // Not (or no longer) close enough to tuck — clearing a preview that was
   // showing rebuilds the board (the piece reappears in its own right there),
   // which drops any DOM reference we were holding; reacquire it below.
@@ -2754,7 +2854,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   if(!ctx.ghost) ctx.ghost = createDragGhost();
   ctx.el.classList.add('dragging-piece');
   ctx.el.style.left=p.x+'px'; ctx.el.style.top=p.y+'px';
-  ctx.el.classList.toggle('insert-below', !!target && shouldInsertBelow(target, world.y));
+  ctx.el.classList.toggle('insert-below', !!target && shouldInsertBelow(target, world.x, world.y));
   { const b = pieceBounds(p); updateDragGhost(ctx.ghost, b.x, b.y, b.w, b.h); }
   repositionAttachedTokens(p.id);
 }
@@ -2848,7 +2948,7 @@ function wireGroupHandleDrag(handleEl, p){
       if(pieceEl){
         pieceEl.classList.add('dragging-piece');
         pieceEl.style.left=p.x+'px'; pieceEl.style.top=p.y+'px';
-        pieceEl.classList.toggle('insert-below', !!target && !splayTarget && shouldInsertBelow(target, world.y));
+        pieceEl.classList.toggle('insert-below', !!target && !splayTarget && shouldInsertBelow(target, world.x, world.y));
       }
       { const b = pieceBounds(p); updateDragGhost(ghost, b.x, b.y, b.w, b.h); }
       repositionAttachedTokens(p.id);
@@ -2974,13 +3074,25 @@ function findOverlapTarget(draggedPiece, clientX, clientY){
 // (or pass null/undefined) for the old blank dashed-placeholder preview,
 // still used for a multi-card whole-pile drag where there's no single face
 // to show.
+// newSplayInfo, when given, is {dir, spacing} for a target that ISN'T
+// actually splayed (yet) — see singleOverSingleSplayPreview: hovering a
+// single dragged card far enough off-center over another single, unsplayed
+// card previews forming a brand-new 2-card splay rather than the ordinary
+// tuck-into-an-existing-fan case cardInfo alone handles. renderBoard reads
+// this to render the target AS IF already splayed (anchor + one fanned
+// card), using these dir/spacing values instead of the target's own (since
+// it has none yet); dropping while this shows creates the real splay (see
+// mergePieceOntoTarget's splayInfo param).
 let splayPreview = null;
-function setSplayPreview(targetId, insertIndex, cardInfo){
+function setSplayPreview(targetId, insertIndex, cardInfo, newSplayInfo){
   const next = cardInfo
     ? {targetId, insertIndex, sourceId:cardInfo.sourceId, cardId:cardInfo.cardId, faceUp:cardInfo.faceUp, rotation:cardInfo.rotation||0}
     : {targetId, insertIndex, sourceId:null, cardId:null, faceUp:null, rotation:0};
+  next.newSplay = newSplayInfo ? {dir:newSplayInfo.dir, spacing:newSplayInfo.spacing} : null;
   if(splayPreview && splayPreview.targetId===next.targetId && splayPreview.insertIndex===next.insertIndex
-     && splayPreview.sourceId===next.sourceId && splayPreview.cardId===next.cardId && splayPreview.rotation===next.rotation) return false;
+     && splayPreview.sourceId===next.sourceId && splayPreview.cardId===next.cardId && splayPreview.rotation===next.rotation
+     && !!splayPreview.newSplay===!!next.newSplay
+     && (!next.newSplay || (splayPreview.newSplay.dir===next.newSplay.dir && splayPreview.newSplay.spacing===next.newSplay.spacing))) return false;
   splayPreview = next;
   renderBoard();
   return true;
@@ -3283,28 +3395,55 @@ document.addEventListener('keydown', (e)=>{
   else if(p.kind!=='image' && key==='p'){ e.preventDefault(); peekTopCard(hoveredPieceId, cardIdx); }
 });
 
-// True when the cursor (in world coords) is over the BOTTOM THIRD of the
-// target's own top-card footprint (always PIECE_W x PIECE_H at the target's
-// x,y, regardless of how far a splay visually extends it) — the drop should
-// then insert the dragged card(s) underneath the pile instead of on top of it.
-// Deliberately generous (a full third, not a thin strip right at the edge) so
-// it's easy to land without needing pixel precision.
-function shouldInsertBelow(target, worldY){
+// True when the cursor is over the BOTTOM THIRD of the target's own top-card
+// footprint (always PIECE_W x PIECE_H at the target's x,y, regardless of how
+// far a splay visually extends it) — the drop should then insert the dragged
+// card(s) underneath the pile instead of on top of it. Deliberately generous
+// (a full third, not a thin strip right at the edge) so it's easy to land
+// without needing pixel precision.
+// POV-based, not board/world-space based: a player drags a card toward the
+// BOTTOM OF THEIR OWN SCREEN to mean "add to the bottom of the stack" — they
+// don't think about which way the board itself is currently rotated
+// (state.viewRotation). So the cursor's offset from the target's center is
+// converted from world space into screen-aligned space (the same
+// world→screen-aligned convention used elsewhere — rotateVector(worldDx,
+// worldDy, -state.viewRotation) — undoes the view's own rotation) before
+// checking whether it falls in the bottom third. Since the view only ever
+// rotates in exact 90° steps, "screen down" lines up exactly with either the
+// target's world Y axis (0°/180°) or its world X axis (90°/270°) — never in
+// between — so the correct footprint dimension (PIECE_H or PIECE_W) is
+// picked to match.
+function shouldInsertBelow(target, worldX, worldY){
   if(!target) return false;
-  return worldY >= target.y + PIECE_H*2/3;
+  const cx = target.x + PIECE_W/2, cy = target.y + PIECE_H/2;
+  const screenAligned = rotateVector(worldX-cx, worldY-cy, -(state.viewRotation||0));
+  const rot = ((state.viewRotation||0) % 360 + 360) % 360;
+  const axisSwapped = rot===90 || rot===270;
+  const halfDepth = (axisSwapped ? PIECE_W : PIECE_H) / 2;
+  return screenAligned.y >= halfDepth/3;
 }
 // insertIndex is an array position in the TARGET's own cardIds (same
 // convention as splayInsertIndex/DRAW_TOP/MERGE_PIECES elsewhere): 0 puts the
 // dropped piece's cards underneath everything, target.cardIds.length puts
 // them on top, and anything between tucks them into that exact spot in a
 // splayed fan. Omit it (or pass null) for the old default of "on top."
-function mergePieceOntoTarget(sourceId, targetId, insertIndex){
+// splayInfo, when given, is {dir, spacing} (see singleOverSingleSplayPreview)
+// and marks the target as freshly splayed the instant this merge lands — the
+// "hover a single card over another single card, nudged into the tuck zone"
+// gesture creates the splay and the merge in one atomic synced event, rather
+// than two separate ones that could arrive out of order for another player.
+// The spacing is floored to SPLAY_MIN so the brand-new fan is never a
+// zero-width, effectively-hidden sliver even if the drop landed right at the
+// nudge threshold (see SINGLE_STACK_TO_SPLAY_NUDGE's own comment on why that
+// threshold is measured in a way that can leave spacing near 0 there).
+function mergePieceOntoTarget(sourceId, targetId, insertIndex, splayInfo){
   const source = state.pieces.get(sourceId);
   const target = state.pieces.get(targetId);
   if(!source || !target || source.id===target.id) return;
   const sourceClone = JSON.parse(JSON.stringify(source));
   const targetOldCardIds = [...target.cardIds], targetOldFaceStates = [...target.faceStates];
   const targetOldCardRotations = [...(target.cardRotations || target.cardIds.map(()=>0))];
+  const targetOldSplay = {splayed: !!target.splayed, dir: target.splayDir||'right', spacing: target.splaySpacing||36};
   const idx = insertIndex==null ? target.cardIds.length : insertIndex;
   // Each card keeps its own face — nothing here forces a match. Same for
   // rotation: a multi-card source carries its OWN per-card rotations in;
@@ -3315,9 +3454,11 @@ function mergePieceOntoTarget(sourceId, targetId, insertIndex){
   const faceStates = [...target.faceStates.slice(0,idx), ...source.faceStates, ...target.faceStates.slice(idx)];
   const sourceRotations = source.cardRotations || source.cardIds.map(()=> source.rotation||0);
   const cardRotations = [...targetOldCardRotations.slice(0,idx), ...sourceRotations, ...targetOldCardRotations.slice(idx)];
-  doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: source.id });
+  const splay = splayInfo ? { dir: splayInfo.dir, spacing: Math.max(SPLAY_MIN, splayInfo.spacing) } : null;
+  doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: source.id, splay });
   setUndo(()=>{
     doAction('RESTORE_PIECE_CARDS', {id:target.id, cardIds:targetOldCardIds, faceStates:targetOldFaceStates, cardRotations:targetOldCardRotations});
+    if(splay) doAction('SET_SPLAY', {id:target.id, splayed:targetOldSplay.splayed, dir:targetOldSplay.dir, spacing:targetOldSplay.spacing});
     doAction('PLACE_PIECE', sourceClone);
   });
 }
@@ -3387,6 +3528,23 @@ const SPLAY_UNSPLAY_PROXIMITY = SPLAY_MIN + 4;
 // board-space size made it easier to grab when zoomed in and harder when
 // zoomed out, which felt backwards).
 const SPLAY_EDGE_ZONE = 20;
+// The zone above straddled the edge LINE symmetrically — half of it reaching
+// into the card, half reaching past it. That read as sitting on the card's
+// INTERIOR rather than its edge, since a grab that far into the card already
+// feels like "inside the card" to the eye even though it's technically within
+// the zone. So the zone is biased outward: only a small sliver reaches into
+// the card face, the rest extends past the true edge line and off the card —
+// which is where a resize handle actually feels like it belongs.
+const SPLAY_EDGE_INSET = 6; // px of the zone that reach INTO the card (screen px, pre-scale)
+// distSigned: positive = this many (screen) px INSIDE the card from the edge
+// in question; negative = this many px OUTSIDE/past it. `scale` is state.view.scale,
+// same screen-px-to-board-space conversion stackEdgeAt/isOnSplayAdjustEdge/
+// isOnAnchorSplayEdge always used.
+function withinSplayEdgeZone(distSigned, scale){
+  const zoneIn = SPLAY_EDGE_INSET / scale;
+  const zoneOut = (SPLAY_EDGE_ZONE - SPLAY_EDGE_INSET) / scale;
+  return distSigned <= zoneIn && distSigned >= -zoneOut;
+}
 // The rotation actually applied to a piece's own CONTAINER element (see
 // renderBoard) — just p.rotation, full stop, whether or not the pile is
 // splayed. A splayed pile's container rotates around its ANCHOR card's own
@@ -3422,15 +3580,17 @@ function localOffsetInPiece(p, clientX, clientY){
 // edges at once) resolves to whichever margin is smaller.
 function stackEdgeAt(p, clientX, clientY){
   const local = localOffsetInPiece(p, clientX, clientY);
-  const zone = SPLAY_EDGE_ZONE / state.view.scale; // screen px -> board-space px at the current zoom
+  const scale = state.view.scale;
   const margins = [
-    ['left', Math.abs(local.x)],
-    ['right', Math.abs(PIECE_W-local.x)],
-    ['up', Math.abs(local.y)],
-    ['down', Math.abs(PIECE_H-local.y)],
+    ['left', local.x],
+    ['right', PIECE_W-local.x],
+    ['up', local.y],
+    ['down', PIECE_H-local.y],
   ];
   let best=null, bestVal=Infinity;
-  margins.forEach(([dir,val])=>{ if(val<=zone && val<bestVal){ best=dir; bestVal=val; } });
+  margins.forEach(([dir,distSigned])=>{
+    if(withinSplayEdgeZone(distSigned, scale) && Math.abs(distSigned)<bestVal){ best=dir; bestVal=Math.abs(distSigned); }
+  });
   return best;
 }
 // Whether dragging this pile's `dir` edge — a LOGICAL direction in the
@@ -3531,6 +3691,49 @@ function splaySpacingForCursor(p, dir, clientX, clientY, depth){
   // closes up in step with the same distance the drop-time unsplay check
   // uses, right up to the point it actually does unsplay.
   return Math.max(0, Math.min(splayMaxFor(dir), spacing));
+}
+// How far (in local axis units, past the center of a single unsplayed card)
+// a single dragged card has to be nudged before hovering it over another
+// single, unsplayed card switches from previewing an ordinary "stack on top"
+// merge to previewing a brand-new 2-card splay instead. Deliberately a much
+// bigger gesture than SPLAY_UNSPLAY_PROXIMITY (which governs the much finer
+// "let go near zero to collapse" snap-back while already adjusting an
+// existing fan) — this is a coarser choice between two visually different
+// outcomes, so it needs a nudge that reads as clearly deliberate.
+const SINGLE_STACK_TO_SPLAY_NUDGE = PIECE_W * 0.5;
+// Distinct from the tuck-under-a-PILE behavior (shouldInsertBelow/
+// splayInsertIndex — those apply once a target is already a multi-card or
+// splayed pile): this is specifically for a single dragged card hovering a
+// single, unsplayed target card (Seth: "abandon the tucking logic ... for a
+// hovered card over a single card ... something different"). Close to the
+// target's center previews an ordinary on-top merge (the caller should fall
+// back to its usual showMergeHighlight/plain-merge path when this returns
+// null); nudged further off previews tucking BEHIND the target along
+// whichever local axis (x or y) the nudge favored, snapped to that axis's
+// direction — releasing while this shows creates a brand-new 2-card splayed
+// pile with the target as the anchor (depth 0, unmoved) and the dragged card
+// as its one other, fanned-out card (depth 1) — see mergePieceOntoTarget's
+// splayInfo param and renderBoard's splayPreview.newSplay branch. The target
+// is always the anchor and the dragged card always the 2nd/last card, so the
+// insert is always at index 0 (same convention as splayInsertIndex/
+// MERGE_PIECES: 0 = underneath everything, i.e. away from the anchor here).
+// Returns null when this interaction doesn't apply at all (either side isn't
+// a genuine lone single card) or the cursor's still in the "stack on top"
+// zone; otherwise {dir, spacing} for the tuck/splay preview — spacing scales
+// with how far past the nudge threshold the cursor has moved (same
+// cursor-tracks-the-grabbed-edge convention as splaySpacingForCursor, reused
+// here directly since the target itself IS the anchor being measured from).
+function singleOverSingleSplayPreview(target, sourceCardCount, clientX, clientY){
+  if(!target || target.splayed || target.cardIds.length!==1) return null;
+  if(sourceCardCount!==1) return null;
+  const local = localOffsetInPiece(target, clientX, clientY);
+  const dx = local.x - PIECE_W/2, dy = local.y - PIECE_H/2;
+  const horizontal = Math.abs(dx) >= Math.abs(dy);
+  const mag = horizontal ? Math.abs(dx) : Math.abs(dy);
+  if(mag < SINGLE_STACK_TO_SPLAY_NUDGE) return null; // still close to center: ordinary stack-on-top
+  const dir = horizontal ? (dx>=0 ? 'right':'left') : (dy>=0 ? 'down':'up');
+  const spacing = splaySpacingForCursor(target, dir, clientX, clientY, 1);
+  return { dir, spacing };
 }
 // An UNSPLAYED multi-card pile: grabbing the thin border strip around its own
 // edge (stackEdgeAt) begins a splay in that edge's direction right away —
@@ -3644,11 +3847,11 @@ function isOnSplayAdjustEdge(p, clientX, clientY, depth){
   else if(dir==='down') top = spacing;
   else top = -spacing; // 'up'
   const cardLocal = { x: pieceLocal.x - left, y: pieceLocal.y - top };
-  const zone = SPLAY_EDGE_ZONE / state.view.scale;
-  if(dir==='left') return Math.abs(cardLocal.x) <= zone;
-  if(dir==='right') return Math.abs(PIECE_W - cardLocal.x) <= zone;
-  if(dir==='up') return Math.abs(cardLocal.y) <= zone;
-  return Math.abs(PIECE_H - cardLocal.y) <= zone; // 'down'
+  const scale = state.view.scale;
+  if(dir==='left') return withinSplayEdgeZone(cardLocal.x, scale);
+  if(dir==='right') return withinSplayEdgeZone(PIECE_W - cardLocal.x, scale);
+  if(dir==='up') return withinSplayEdgeZone(cardLocal.y, scale);
+  return withinSplayEdgeZone(PIECE_H - cardLocal.y, scale); // 'down'
 }
 // The anchor card's OWN two edges along the splay's locked axis — its LEFT
 // and RIGHT edges for a horizontal splay, TOP and BOTTOM for vertical
@@ -3660,11 +3863,11 @@ function isOnSplayAdjustEdge(p, clientX, clientY, depth){
 function isOnAnchorSplayEdge(p, clientX, clientY){
   const dir = p.splayDir || 'right';
   const pieceLocal = localOffsetInPiece(p, clientX, clientY);
-  const zone = SPLAY_EDGE_ZONE / state.view.scale;
+  const scale = state.view.scale;
   if(dir==='left' || dir==='right'){
-    return Math.abs(pieceLocal.x) <= zone || Math.abs(PIECE_W - pieceLocal.x) <= zone;
+    return withinSplayEdgeZone(pieceLocal.x, scale) || withinSplayEdgeZone(PIECE_W - pieceLocal.x, scale);
   }
-  return Math.abs(pieceLocal.y) <= zone || Math.abs(PIECE_H - pieceLocal.y) <= zone;
+  return withinSplayEdgeZone(pieceLocal.y, scale) || withinSplayEdgeZone(PIECE_H - pieceLocal.y, scale);
 }
 // ANY card in a splayed pile except the anchor itself: grabbing the SAME
 // edge that began the splay (matching p.splayDir, see isOnSplayAdjustEdge)
@@ -3824,8 +4027,11 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
 }
 
 // Privately reveals the CURRENTLY-HIDDEN face of the top card to the peeking
-// player only — never changes the piece's actual state. Other players are told
-// a peek happened (and where), never what was seen.
+// player only — never changes the piece's actual state. What's actually
+// seen stays private, but everyone else is told exactly WHERE a peek just
+// happened (a ping + a pulsing highlight right on that pile, see PEEK_ALERT
+// below) — a peek is deliberately never a quiet, unnoticed action, so it
+// can't be used to scout without the table knowing about it.
 // Privately reveals ONE card's currently-hidden face — the pile's own top
 // card by default, or a specific `cardIndex` (any card of a splay).
 function peekTopCard(pieceId, cardIndex){
@@ -3835,8 +4041,9 @@ function peekTopCard(pieceId, cardIndex){
   const card = cardsById.get(p.cardIds[idx]);
   const otherFaceUp = !p.faceStates[idx];
   openPeekPopup(card, otherFaceUp);
-  doNote('peeked at a card on the board');
+  doAction('PEEK_ALERT', {id:pieceId, playerName:state.playerName});
 }
+const PEEK_ALERT_MS = 2600; // long enough to actually notice, short enough not to linger and clutter the board
 
 // Removes ONE card from a pile — the top card by default, or a specific
 // `cardIndex` (any card of a splay) — sending it either into the player's
@@ -3896,6 +4103,10 @@ function openSearchModal(pieceId){
   }).join('');
   document.getElementById('searchModal').dataset.pieceId = pieceId;
   document.getElementById('searchModal').classList.remove('hidden');
+  // Anti-cheat visibility: rifling through a pile is visible to everyone else
+  // at the table for as long as the search modal stays open — see SEARCH_END
+  // at every path that closes it (confirm to hand, confirm to board, cancel).
+  doAction('SEARCH_START', {id:pieceId, playerName:state.playerName});
 }
 function confirmSearchRemove(destination){
   const modal = document.getElementById('searchModal');
@@ -3903,6 +4114,7 @@ function confirmSearchRemove(destination){
   const p = state.pieces.get(pieceId); if(!p) return;
   const checked = [...modal.querySelectorAll('input[type=checkbox]:checked')].map(cb=>Number(cb.dataset.idx));
   modal.classList.add('hidden');
+  doAction('SEARCH_END', {id:pieceId, playerName:state.playerName});
   if(!checked.length) return;
   const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
   const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates], originalCardRotations = [...cardRotations];
@@ -3933,7 +4145,12 @@ function confirmSearchRemove(destination){
 }
 document.getElementById('btnSearchToHand').addEventListener('click', ()=>confirmSearchRemove('hand'));
 document.getElementById('btnSearchToBoard').addEventListener('click', ()=>confirmSearchRemove('board'));
-document.getElementById('btnSearchCancel').addEventListener('click', ()=>document.getElementById('searchModal').classList.add('hidden'));
+document.getElementById('btnSearchCancel').addEventListener('click', ()=>{
+  const modal = document.getElementById('searchModal');
+  const pieceId = modal.dataset.pieceId;
+  modal.classList.add('hidden');
+  if(pieceId) doAction('SEARCH_END', {id:pieceId, playerName:state.playerName});
+});
 
 /* =========================================================================
    HAND (basic — draw from a stack; reordering comes later)
@@ -4957,18 +5174,26 @@ document.addEventListener('click', (e)=>{
    whatever face is CURRENTLY exposed, never a hidden one.
    ========================================================================= */
 let hoverTimer = null;
+const HOVER_PREVIEW_WIDTH = 320; // keep in sync with #hoverPreview img { width }
 function wireHoverPreview(el, getCardAndFace){
-  el.addEventListener('mouseenter', ()=>{
+  el.addEventListener('mouseenter', (ev)=>{
     clearTimeout(hoverTimer);
+    const clientX = ev.clientX, clientY = ev.clientY;
     hoverTimer = setTimeout(()=>{
       const {card, faceUp} = getCardAndFace();
-      showHoverPreview(card, faceUp);
+      showHoverPreview(card, faceUp, clientX, clientY);
     }, 400);
   });
   el.addEventListener('mouseleave', ()=>{ clearTimeout(hoverTimer); hideHoverPreview(); });
 }
-function showHoverPreview(card, faceUp){
+function showHoverPreview(card, faceUp, clientX, clientY){
   if(!card) return;
+  const previewEl = document.getElementById('hoverPreview');
+  // Default position is bottom-right. If that would put the preview under/near
+  // the cursor that triggered it, flip it to the left side instead so it never
+  // covers what the player is pointing at.
+  const wouldOverlapCursor = typeof clientX === 'number' && clientX > (window.innerWidth - HOVER_PREVIEW_WIDTH - 60);
+  previewEl.classList.toggle('flip-left', wouldOverlapCursor);
   const img = document.getElementById('hoverPreviewImg');
   const back = document.getElementById('hoverPreviewBack');
   if(card._classified){
@@ -4976,7 +5201,7 @@ function showHoverPreview(card, faceUp){
     back.textContent = '🔒 Classified';
     back.classList.add('classified-face');
     back.style.display='flex';
-    document.getElementById('hoverPreview').classList.remove('hidden');
+    previewEl.classList.remove('hidden');
     return;
   }
   back.classList.remove('classified-face');
@@ -4984,7 +5209,7 @@ function showHoverPreview(card, faceUp){
   const url = faceUp ? card._front : (card._doubleSided && card._back ? card._back : '');
   if(url){ img.src = sizedUrl(url, 700); img.style.display='block'; back.style.display='none'; }
   else { img.style.display='none'; back.style.display='flex'; }
-  document.getElementById('hoverPreview').classList.remove('hidden');
+  previewEl.classList.remove('hidden');
 }
 function hideHoverPreview(){ document.getElementById('hoverPreview').classList.add('hidden'); }
 
@@ -5143,6 +5368,10 @@ function wireHandCardDrag(el, idx){
       const overBoard = ev.clientX>=boardRect.left && ev.clientX<=boardRect.right && ev.clientY>=boardRect.top && ev.clientY<=boardRect.bottom;
       const target = overBoard ? findOverlapTarget({id:null}, ev.clientX, ev.clientY) : null;
       const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
+      // Same brand-new-splay preview as driveWholePieceDrag's newSplay branch
+      // — see singleOverSingleSplayPreview. A hand card is always a lone
+      // single card, so the only gate left is the target itself.
+      const newSplay = splayTarget ? null : singleOverSingleSplayPreview(target, 1, ev.clientX, ev.clientY);
       if(splayTarget){
         // Same "the card itself tucks in, no separate silhouette" preview as
         // a peeled/whole-piece drag (see driveWholePieceDrag) — the card's
@@ -5157,6 +5386,10 @@ function wireHandCardDrag(el, idx){
         // a card up and to the left of that; splayInsertIndex wants that
         // corner, same as every other caller, not the raw cursor point.
         setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x-PIECE_W/2, world.y-PIECE_H/2), {sourceId:null, cardId:pick.cardId, faceUp:true});
+        ghost.style.visibility = 'hidden';
+      } else if(newSplay){
+        clearMergeHighlight();
+        setSplayPreview(target.id, 0, {sourceId:null, cardId:pick.cardId, faceUp:true}, newSplay);
         ghost.style.visibility = 'hidden';
       } else {
         clearSplayPreview();
@@ -5201,16 +5434,22 @@ function playHandCardToBoard(pick, clientX, clientY){
   const target = findOverlapTarget({id:null}, clientX, clientY);
   const world = clientToWorld(clientX, clientY);
   if(target){
+    // Letting go while previewing a brand-new splay (see
+    // singleOverSingleSplayPreview/wireHandCardDrag's newSplay branch)
+    // creates that splay in the same merge — same as playPieceToBoard/
+    // finishWholeMove's matching check.
+    const newSplayInfo = (target.splayed && target.cardIds.length>1) ? null : singleOverSingleSplayPreview(target, 1, clientX, clientY);
     // Same would-be top-left corner as wireHandCardDrag's matching preview —
     // see its comment.
-    const insertIndex = (target.splayed && target.cardIds.length>1)
-      ? splayInsertIndex(target, world.x-PIECE_W/2, world.y-PIECE_H/2)
-      : (shouldInsertBelow(target, world.y) ? 0 : target.cardIds.length);
+    const insertIndex = newSplayInfo ? 0
+      : (target.splayed && target.cardIds.length>1) ? splayInsertIndex(target, world.x-PIECE_W/2, world.y-PIECE_H/2)
+      : (shouldInsertBelow(target, world.x, world.y) ? 0 : target.cardIds.length);
     const cardIds = [...target.cardIds.slice(0,insertIndex), pick.cardId, ...target.cardIds.slice(insertIndex)];
     const faceStates = [...target.faceStates.slice(0,insertIndex), true, ...target.faceStates.slice(insertIndex)];
     const targetCardRotations = target.cardRotations || target.cardIds.map(()=>0);
     const cardRotations = [...targetCardRotations.slice(0,insertIndex), 0, ...targetCardRotations.slice(insertIndex)]; // a hand card always plays in upright
-    doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: null });
+    const splay = newSplayInfo ? { dir: newSplayInfo.dir, spacing: Math.max(SPLAY_MIN, newSplayInfo.spacing) } : null;
+    doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: null, splay });
     return;
   }
   const worldX = world.x - PIECE_W/2, worldY = world.y - PIECE_H/2;
