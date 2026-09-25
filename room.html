@@ -7,9 +7,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<!-- Optional live-presence layer (cursors, "holding a card" indicators) — see
-     the LIVE PRESENCE section further down. Safe to leave ABLY_API_KEY
-     blank; this script loading with nothing configured is a no-op. -->
+<!-- Powers the whole live room: game-state sync (moves, draws, chat — see
+     the SYNC ENGINE / ROOM CHANNEL sections further down) AND cursors/
+     "holding a card" indicators. ABLY_API_KEY (see ROOM CHANNEL) must be
+     set for multiplayer to work at all — see room.html's setup notes. -->
 <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
 <style>
 :root{
@@ -606,7 +607,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .history-row-new{animation:bouncePopIn .3s var(--bounce);}
 
 /* ---------- Live presence (other players' cursors) ---------- */
-/* Lives inside #boardWorld (see LIVE PRESENCE section in the script) so it
+/* Lives inside #boardWorld (see ROOM CHANNEL section in the script) so it
    inherits the shared pan/zoom/rotation transform for free, exactly like
    pieces and tokens — no per-viewer math needed here. */
 .presence-cursor{position:absolute;top:0;left:0;pointer-events:none;z-index:500;
@@ -885,7 +886,6 @@ function onGoogleSignIn(response){
 
 initGoogleSignIn();
 
-const POLL_MS = 1500;
 const PIECE_W = 140, PIECE_H = 196; // board-space px at scale 1 — matches the .piece CSS size, and is the
 // fixed footprint of every ordinary card-stack piece. A custom-image piece (kind:'image')
 // carries its OWN w/h instead (any scale the uploader picked), so anywhere the board needs
@@ -1150,7 +1150,7 @@ const state = {
   playerName: '',       // set from the signed-in Google account's name at sign-in, not user-typed
   idToken: '',          // signed-in Google ID token, sent with every card-data fetch for the access check
   userEmail: '',
-  lastSeq: 0,
+  hasInitialState: false, // true once this client has real board state — either it's the host, or a REQUEST_STATE/STATE_SNAPSHOT round-trip completed (or timed out)
   pieces: new Map(),   // id -> { id, x, y, cardIds:[...], faceStates:[bool,...], owner, splayed, splayDir, splaySpacing, label }
   tokens: new Map(),   // id -> { id, x, y, type, count, attachedTo: pieceId|null, attachedCardIndex: number|null }
   tokenTypes: new Map(), // name -> color (hex) — shared table-wide, user-defined; no built-in types
@@ -1158,7 +1158,6 @@ const state = {
   theme: { boardColor:'#1a1c22', handColor:'#1c1f26' }, // shared table theme, synced
   hand: [],            // array of cardIds — private, never synced except as a count
   playerHandCounts: new Map(), // playerId -> {playerName, count} — public, synced
-  polling: false,
   view: { x:0, y:0, scale:0.6 }, // board-world panning/zoom, local per-viewer, never synced
   viewRotation: 0,      // 0/90/180/270 — local per-viewer, never synced
   handScale: 70,         // px, local per-viewer, persisted in localStorage
@@ -1183,77 +1182,88 @@ function hexToRgba(hex, alpha){
 }
 
 /* =========================================================================
-   SYNC ENGINE — same optimistic-apply + skip-own-echo pattern as before, now
-   generalized for any number of players (playerId instead of a fixed role).
+   SYNC ENGINE — rewritten around Ably pub/sub instead of polling a Google
+   Sheet. Why: the old design polled an Apps Script web app every 1.5s for
+   "anything new since sequence N", using the sheet itself as a growing
+   event log — that meant every action already had up to 1.5s of lag baked
+   in even when everything worked, AND the "having trouble syncing" status
+   people were hitting was Apps Script's own quotas/cold-starts/execution
+   limits (it was never built to be a realtime message bus, and the log
+   scan gets slower the longer a session runs). Ably is a purpose-built
+   realtime pub/sub service — publishing a message here reaches every other
+   connected client in well under a second, no polling at all, which is
+   what "feels like you're in the same room" actually requires.
+
+   The sheet isn't gone — it just moved to a role it's actually good at:
+   card library data (untouched) and a durable, permanent history log
+   that's written in the background, completely decoupled from the live
+   path below (see the fire-and-forget fetch in postRoomEvent). If that
+   write is slow or fails, gameplay is unaffected; only the "full history"
+   flyout would be missing that one line.
+
+   Same optimistic-apply + skip-own-echo pattern as before, now over Ably:
+   doAction applies locally first (instant feel), then publishes; every
+   client (including the sender, since Ably echoes your own publishes back
+   to you) runs incoming messages through the same skip-if-it's-mine check
+   that used to guard against re-applying our own polled-back event.
    ========================================================================= */
 function isConnected(){ return !!(state.roomSheetId && state.sessionCode); }
-async function postRoomEvent(type, payload){
+function postRoomEvent(type, payload){
   if(!isConnected()) return; // playing solo — nothing to sync yet
-  const body = { sheetId: state.roomSheetId, sessionCode: state.sessionCode, playerId: state.playerId, playerName: state.playerName, type, payload: {...payload, _origin: state.clientId} };
-  try{
-    await fetch(ROOM_WEBAPP_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids a CORS preflight Apps Script can't answer
-      body: JSON.stringify(body),
-    });
-  }catch(e){ console.error('postRoomEvent failed', e); toast('Could not sync that action — check your connection.'); }
+  const envelope = { ...payload, _origin: state.clientId, _playerName: state.playerName, _playerId: state.playerId };
+  // Live transport: instant, this is what everyone actually sees moves through.
+  if(roomChannel){
+    try{ roomChannel.publish(type, envelope); }
+    catch(e){ console.error('Ably publish failed', e); toast('Live sync hiccup — that action may not have reached others.'); }
+  }
+  // Durable, permanent record only — never on the critical path for gameplay.
+  // REQUEST_STATE/STATE_SNAPSHOT are internal plumbing (how a new joiner
+  // catches up), not real game moves, so they're not worth logging here.
+  if(type==='REQUEST_STATE' || type==='STATE_SNAPSHOT') return;
+  fetch(ROOM_WEBAPP_URL, {
+    method:'POST',
+    headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids a CORS preflight Apps Script can't answer
+    body: JSON.stringify({ sheetId: state.roomSheetId, sessionCode: state.sessionCode, playerId: state.playerId, playerName: state.playerName, type, payload: envelope }),
+  }).catch(e=> console.warn('Durable history log failed (gameplay unaffected):', e));
 }
-async function pollRoomOnce(){
-  try{
-    const url = `${ROOM_WEBAPP_URL}?pollRoom=${encodeURIComponent(state.sessionCode)}&sheetId=${encodeURIComponent(state.roomSheetId)}&since=${state.lastSeq}&_=${Date.now()}`;
-    const res = await fetch(url);
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const events = await res.json();
-    if(events && events.error) throw new Error(events.error);
-    events.forEach(ev=>{
-      state.lastSeq = Math.max(state.lastSeq, ev.seq);
-      if(ev.payload && ev.payload._origin===state.clientId) return; // already applied (and announced) optimistically — see announceLocalAction
-      applyRoomEvent(ev.type, ev.payload, {remote:true});
-      // CHAT already gets its own immediate bubble (sender's name, un-narrated
-      // text) from inside applyRoomEvent's own CHAT case, right above — this
-      // generic history bubble was firing a SECOND time for it too, a
-      // pre-existing double-bubble for every remote chat message.
-      if(ev.type!=='CHAT') showHistoryBubble(describeEvent(ev.type, ev.payload, ev.playerName));
-      appendHistoryFlyoutRow(ev.type, ev.payload, ev.playerName, ev.ts);
-    });
-    setConnStatus(true);
-  }catch(e){ setConnStatus(false, e.message); }
+// Fires for every message on the room's Ably channel, including our own
+// (Ably echoes a client's own publishes back to it) — the _origin check
+// below is what skips re-applying something we already applied optimistically.
+function handleIncomingRoomEvent(msg){
+  const payload = msg.data || {};
+  if(payload._origin === state.clientId) return;
+  applyRoomEvent(msg.name, payload);
+  if(msg.name==='CHAT' || msg.name==='REQUEST_STATE' || msg.name==='STATE_SNAPSHOT') return;
+  showHistoryBubble(describeEvent(msg.name, payload, payload._playerName));
+  appendHistoryFlyoutRow(msg.name, payload, payload._playerName, Date.now());
 }
-function startPolling(){
-  if(state.polling || !isConnected()) return;
-  state.polling = true;
-  (async function loop(){ while(state.polling){ await pollRoomOnce(); await new Promise(r=>setTimeout(r, POLL_MS)); } })();
-}
-function setConnStatus(ok, errMsg){
+function setConnStatus(ok, detail){
   const el = document.getElementById('connStatus');
-  el.textContent = ok ? '● connected' : '● having trouble syncing…' + (errMsg ? ` (${errMsg})` : '');
-  el.title = errMsg || '';
+  el.textContent = ok ? '● connected' : '● having trouble syncing…' + (detail ? ` (${detail})` : '');
+  el.title = detail || '';
   el.className = ok ? 'ok' : 'warn';
 }
 
-// One call does it all for a state-mutating action: apply locally (instant feel),
-// sync to the sheet, done. Every board-changing interaction in this app should
-// route through this rather than calling applyRoomEvent/postRoomEvent separately.
-// Mirrors what pollRoomOnce does for a REMOTE player's action (show a
-// history bubble) but fires the instant *I* act instead of waiting to see my
-// own event come back from a poll — which never actually happened before
-// this: pollRoomOnce deliberately skips re-applying (and re-announcing) any
-// event whose _origin is this very client (see its own _origin check, right
-// above where it used to be the ONLY place showHistoryBubble got called), so
-// the person actually doing something never saw so much as a bubble for
-// their own action, immediately or otherwise, while everyone else eventually
-// did (up to POLL_MS later) — this was the root of "doesn't really seem to
-// be up-to-date, I try taking actions and don't immediately see an update."
-// CHAT is the one exception: it already gets its own immediate bubble (with
-// the sender's name, un-narrated) from inside applyRoomEvent's own CHAT case
-// — a second, generic history bubble for it here would just double it up.
+// One call does it all for a state-mutating action: apply locally (instant
+// feel), publish it live over Ably, done. Every board-changing interaction
+// in this app should route through this rather than calling
+// applyRoomEvent/postRoomEvent separately.
+// Mirrors what handleIncomingRoomEvent does for a REMOTE player's action
+// (show a history bubble) but fires instantly for *my own* action instead
+// of waiting to see my own event echoed back — CHAT, REQUEST_STATE and
+// STATE_SNAPSHOT are exceptions: CHAT already gets its own immediate
+// bubble from inside applyRoomEvent's own CHAT case (a second one here
+// would double it up), and REQUEST_STATE/STATE_SNAPSHOT are internal
+// plumbing for catching a new joiner up, not real game moves worth a
+// history entry.
 function announceLocalAction(type, payload){
+  if(type==='REQUEST_STATE' || type==='STATE_SNAPSHOT') return;
   appendHistoryFlyoutRow(type, payload, state.playerName, Date.now());
-  if(type==='CHAT') return; // already gets its own bubble — see the matching comment in pollRoomOnce
+  if(type==='CHAT') return;
   showHistoryBubble(describeEvent(type, payload, state.playerName));
 }
 function doAction(type, payload){
-  applyRoomEvent(type, payload, {remote:false});
+  applyRoomEvent(type, payload);
   postRoomEvent(type, payload);
   announceLocalAction(type, payload);
 }
@@ -1534,8 +1544,41 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'NOTE': break; // no board mutation — handled entirely via the toast/history text
+    // Lets a newly-joined (or refreshed) player catch up to the live board
+    // without the sheet ever being in the loop. Any client that already has
+    // real state answers, after a small random delay so simultaneous
+    // responses don't all collide — duplicate answers are harmless (a
+    // requester just re-applies the same snapshot again). Purely a peer
+    // hand-off: nothing here is logged as permanent history (see
+    // postRoomEvent/announceLocalAction's exclusions for these two types).
+    case 'REQUEST_STATE': {
+      if(state.hasInitialState && payload.requesterId && payload.requesterId !== state.playerId){
+        setTimeout(()=>{
+          doAction('STATE_SNAPSHOT', { to: payload.requesterId, ...exportLayout(),
+            players: [...state.players.entries()], turnOrder: state.turnOrder, turnIndex: state.turnIndex });
+        }, 150 + Math.random()*350);
+      }
+      break;
+    }
+    case 'STATE_SNAPSHOT': {
+      if(payload.to !== state.playerId) break; // addressed to a different requester — not for us
+      state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear();
+      (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
+      (payload.zones||[]).forEach(z=> state.zones.set(z.id, {...z}));
+      (payload.pieces||[]).forEach(p=> state.pieces.set(p.id, {...p}));
+      (payload.tokens||[]).forEach(t=> state.tokens.set(t.id, {...t}));
+      if(payload.theme){ state.theme = {...payload.theme}; applyBoardTheme(state.theme); }
+      if(payload.players) payload.players.forEach(([pid,name])=> state.players.set(pid, name));
+      if(payload.turnOrder) state.turnOrder = payload.turnOrder;
+      if(payload.turnIndex!=null) state.turnIndex = payload.turnIndex;
+      state.hasInitialState = true;
+      if(payload.sourceSheets && payload.sourceSheets.length) ensureSheetsLoaded(payload.sourceSheets).then(renderBoard);
+      renderTurnTracker();
+      renderPlayerCounters();
+      break;
+    }
   }
-  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','EDIT_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE'].includes(type)) renderBoard();
+  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','EDIT_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE','STATE_SNAPSHOT'].includes(type)) renderBoard();
   // A playful "pop" the moment something new lands on the board — for every client,
   // local placer and remote viewers alike, since this runs from inside applyRoomEvent
   // itself rather than the call site. Only ever added to a piece/token/zone element
@@ -4998,7 +5041,7 @@ async function loadHistoryFlyout(){
 // loadHistoryFlyout's own row markup exactly, so a live row is
 // indistinguishable from one that was fetched normally, and is called for
 // BOTH the local player's own actions (announceLocalAction) and everyone
-// else's (pollRoomOnce) — the same two call sites that feed the chat bubbles.
+// else's (handleIncomingRoomEvent) — the same two call sites that feed the chat bubbles.
 function appendHistoryFlyoutRow(type, payload, playerName, ts){
   const flyout = document.getElementById('historyFlyout');
   if(!flyout || flyout.classList.contains('hidden')) return;
@@ -5029,10 +5072,10 @@ document.getElementById('btnCloseHistoryFlyout').addEventListener('click', ()=>{
    pre-filled via localStorage for exactly that).
    ========================================================================= */
 function leaveGame(){
-  teardownPresence();
-  state.polling = false;
+  teardownRoomChannel();
   state.roomSheetId = '';
   state.sessionCode = '';
+  state.hasInitialState = false;
   state.pieces.clear();
   state.tokens.clear();
   state.tokenTypes.clear();
@@ -5041,7 +5084,6 @@ function leaveGame(){
   applyBoardTheme(state.theme);
   state.hand = [];
   state.playerHandCounts.clear();
-  state.lastSeq = 0;
   state.undoFn = null;
   state.zoneEditMode = false;
   state.players.clear();
@@ -5348,21 +5390,19 @@ document.getElementById('btnEnterRoom').addEventListener('click', async ()=>{
 });
 
 /* =========================================================================
-   LIVE PRESENCE — an OPTIONAL real-time layer (Ably realtime presence
-   channels) layered on top of the room's actual sync, which stays exactly
-   as it was (Sheets + Apps Script polling, POLL_MS above, is still what
-   carries real game state — pieces, tokens, hands, turn order — and
-   remains the source of truth). This layer carries nothing but ephemeral,
+   ROOM CHANNEL — one Ably realtime channel per session code that carries
+   BOTH real game events (see the SYNC ENGINE section above — postRoomEvent
+   publishes here, handleIncomingRoomEvent subscribes here) AND ephemeral
    cosmetic presence: where each connected player's cursor currently is,
-   and whether they're holding/dragging something right now. It's what
-   makes the room feel "live" between polls, without changing how anything
-   is actually synced.
+   and whether they're holding/dragging something right now. Ably supports
+   pub/sub messages and presence on the same channel, so one connection
+   does both jobs.
 
-   Every function below no-ops safely if ABLY_API_KEY is left blank (the
-   default) or if the SDK script tag fails to load for any reason — so
-   nothing else in the app depends on this being set up. See the setup
-   checklist wherever this file's README/instructions live for the handful
-   of manual steps (free Ably account, one API key, paste it below).
+   This is now a hard requirement for multiplayer, not an optional add-on —
+   see the SYNC ENGINE comment above for why the old Sheets-polling design
+   was replaced outright rather than kept as a fallback. If ABLY_API_KEY is
+   left blank or the SDK fails to load, connectToRoom below shows a clear
+   toast rather than silently limping along on a broken sync.
    ========================================================================= */
 const ABLY_API_KEY = 'TTVNbQ.lz-fZA:mzHxpkBNnMo7qMtP3xs8uqEB4yye8np0lqtaS00fSM0';
 // Paste your Ably app's API key here (Ably dashboard → your app → API Keys
@@ -5373,10 +5413,10 @@ const ABLY_API_KEY = 'TTVNbQ.lz-fZA:mzHxpkBNnMo7qMtP3xs8uqEB4yye8np0lqtaS00fSM0'
 function ablyConfigured(){ return !!ABLY_API_KEY; }
 
 let ablyClient = null;
-let presenceChannel = null;
+let roomChannel = null;
 const presenceCursors = new Map(); // playerId -> DOM element in #boardWorld
 let presenceLastSent = 0;
-const PRESENCE_SEND_MS = 100; // ~10 updates/sec — smooth without hammering the free tier
+const PRESENCE_SEND_MS = 150; // ~6-7 updates/sec — smooth, and easier on the free tier's message quota now that this channel also carries every game action
 let presenceHolding = false;
 let presenceHeldLabel = null;
 
@@ -5386,8 +5426,12 @@ function ensureAbly(){
   try{
     if(!window.Ably) return false; // SDK <script> tag didn't load (offline, blocked, etc.)
     ablyClient = new Ably.Realtime({ key: ABLY_API_KEY, clientId: state.playerId });
+    ablyClient.connection.on((stateChange)=>{
+      const s = stateChange.current;
+      setConnStatus(s==='connected', s==='connected' ? null : s);
+    });
     return true;
-  }catch(err){ console.warn('Live presence disabled — Ably init failed:', err); return false; }
+  }catch(err){ console.warn('Live sync disabled — Ably init failed:', err); return false; }
 }
 // Deterministic per-player color, derived purely from the id — every viewer
 // lands on the same color for the same player with nothing to sync.
@@ -5430,31 +5474,37 @@ function renderPresenceMembers(members){
 // the full picture — re-fetching the whole member list each time is cheap
 // at card-game scale and keeps rendering dead simple.
 function refreshPresenceMembers(){
-  if(!presenceChannel) return;
-  presenceChannel.presence.get((err, members)=>{ if(!err) renderPresenceMembers(members); });
+  if(!roomChannel) return;
+  roomChannel.presence.get((err, members)=>{ if(!err) renderPresenceMembers(members); });
 }
-function initPresence(){
-  if(!ensureAbly()) return;
-  presenceChannel = ablyClient.channels.get(`room:${state.sessionCode}`);
-  presenceChannel.presence.subscribe(refreshPresenceMembers);
-  presenceChannel.presence.enter({ name: state.playerName, x:0, y:0, holding:false, heldLabel:null });
+// Sets up the one Ably channel for this session — both the live game-event
+// bus (handleIncomingRoomEvent, defined in the SYNC ENGINE section above)
+// and presence (cursors) ride this same channel/connection.
+function initRoomChannel(){
+  if(!ensureAbly()) return false;
+  roomChannel = ablyClient.channels.get(`room:${state.sessionCode}`);
+  roomChannel.subscribe(handleIncomingRoomEvent);
+  roomChannel.presence.subscribe(refreshPresenceMembers);
+  roomChannel.presence.enter({ name: state.playerName, x:0, y:0, holding:false, heldLabel:null });
+  return true;
 }
-function teardownPresence(){
-  if(presenceChannel){
-    presenceChannel.presence.unsubscribe(refreshPresenceMembers);
-    presenceChannel.presence.leave();
+function teardownRoomChannel(){
+  if(roomChannel){
+    roomChannel.unsubscribe(handleIncomingRoomEvent);
+    roomChannel.presence.unsubscribe(refreshPresenceMembers);
+    roomChannel.presence.leave();
   }
-  presenceChannel = null;
+  roomChannel = null;
   presenceCursors.forEach(el=>el.remove());
   presenceCursors.clear();
 }
 function sendPresence(clientX, clientY, forceNow){
-  if(!presenceChannel) return;
+  if(!roomChannel) return;
   const now = Date.now();
   if(!forceNow && now - presenceLastSent < PRESENCE_SEND_MS) return;
   presenceLastSent = now;
   const w = clientToWorld(clientX, clientY);
-  presenceChannel.presence.update({ name: state.playerName, x: Math.round(w.x), y: Math.round(w.y), holding: presenceHolding, heldLabel: presenceHeldLabel });
+  roomChannel.presence.update({ name: state.playerName, x: Math.round(w.x), y: Math.round(w.y), holding: presenceHolding, heldLabel: presenceHeldLabel });
 }
 window.addEventListener('mousemove', (e)=>{ sendPresence(e.clientX, e.clientY); });
 // A generic "is this player currently holding/dragging something" signal —
@@ -5477,7 +5527,7 @@ document.addEventListener('mouseup', (e)=>{
   presenceHeldLabel = null;
   sendPresence(e.clientX, e.clientY, true);
 }, true);
-window.addEventListener('beforeunload', ()=>{ if(presenceChannel) presenceChannel.presence.leave(); });
+window.addEventListener('beforeunload', ()=>{ if(roomChannel) roomChannel.presence.leave(); });
 
 /* =========================================================================
    CONNECTING A ROOM — open it up to others once you're happy with your local
@@ -5489,23 +5539,37 @@ function connectToRoom({code, isHost}){
   state.roomSheetId = ROOM_SHEET_ID;
   state.sessionCode = code;
   localStorage.setItem(LS_LAST_SESSION_CODE_KEY, code);
-  state.lastSeq = 0;
+  state.hasInitialState = false;
+  const channelReady = initRoomChannel();
+  if(!channelReady){
+    setConnStatus(false, 'not configured');
+    toast('Live sync isn\'t set up yet (missing Ably key) — see the setup notes near ABLY_API_KEY in room.html.');
+  }
   if(isHost){
     // Whatever you've already built locally becomes the room's starting layout.
     doAction('LOAD_LAYOUT', exportLayout());
+    state.hasInitialState = true;
   } else {
     // Joining adopts the shared room's board instead of merging with it —
-    // clear local content first, then let the first poll below replay the
-    // room's full history from scratch.
+    // clear local content first, then ask whoever's already there for the
+    // current state (see REQUEST_STATE/STATE_SNAPSHOT in applyRoomEvent) —
+    // arrives in well under a second rather than waiting on a poll cycle.
     state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear();
     state.players.clear(); state.turnOrder = []; state.turnIndex = -1;
     renderBoard();
+    if(channelReady) requestStateSync();
   }
   doAction('PLAYER_JOINED', {playerId: state.playerId, playerName: state.playerName});
-  startPolling();
-  initPresence();
   updateConnectionUI();
   toast(isHost ? `Room open — session code ${code}` : `Joined session ${code}`);
+}
+// Asks the room's other players (if any) for the current board so a new
+// joiner isn't stuck staring at an empty table. If nobody answers within a
+// couple seconds (first to arrive, or everyone else has left), the local —
+// already-cleared — board is simply treated as current from here on.
+function requestStateSync(){
+  doAction('REQUEST_STATE', {requesterId: state.playerId});
+  setTimeout(()=>{ state.hasInitialState = true; }, 2000);
 }
 
 let connectMode = 'host';
