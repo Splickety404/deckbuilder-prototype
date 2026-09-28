@@ -232,6 +232,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
   border:1px dashed var(--border);border-radius:var(--radius);
 }
 #deck-drop-zone.dragover{background:var(--accent-soft);border-color:var(--accent);}
+#importDropZone.dragover{background:var(--accent-soft);border-color:var(--accent);color:var(--text);}
 .deck-stack{
   position:relative;
   display:flex;align-items:center;gap:8px;padding:5px;cursor:grab;
@@ -462,7 +463,6 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
    sealed-deck-generation) — hides the Echo-of-Omens-specific deckbuilding controls
    entirely rather than leaving them visible-but-inert. */
 body.generic-mode #deckTypeTabs,
-body.generic-mode #btnSealedDeck,
 body.generic-mode #btnSealedDecks,
 body.generic-mode #overlordModeToggle,
 body.generic-mode #deckSetupPanel,
@@ -525,8 +525,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     </div>
     <input type="text" id="deckNameInput" placeholder="Deck name...">
     <div class="btn" id="btnNewDeck">New</div>
-    <div class="btn" id="btnSealedDeck" title="Randomly build a full deck from scratch, following the sealed-deck rules">Get Sealed Deck</div>
-    <div class="btn" id="btnSealedDecks" title="Randomly build BOTH the Overlord and Champion decks (plus the scheme deck) from a single shared card pool">Get Sealed Decks</div>
+    <div class="btn" id="btnSealedDecks" title="Randomly build BOTH the Overlord and Champion decks (plus the scheme deck) from a single shared card pool, following the sealed-deck rules">Get Sealed Decks</div>
     <div class="btn" id="btnSaveDeck">Save</div>
     <div class="btn" id="btnLoadDeck">Load ▾</div>
     <div class="btn btn-accent" id="btnExport">Export ▾</div>
@@ -695,9 +694,28 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     <div class="modal-box" style="width:min(440px,92vw);">
       <div class="modal-header"><h2>Load / import deck</h2><div class="btn btn-icon" data-close="loadModal">✕</div></div>
       <div class="modal-body">
-        <div class="btn" id="btnImportFile" style="width:100%;justify-content:center;margin-bottom:10px;">Import from file (.txt or .json)</div>
+        <div id="importDropZone" style="width:100%;box-sizing:border-box;border:2px dashed var(--border);border-radius:var(--radius-sm);padding:14px 10px;text-align:center;margin-bottom:10px;color:var(--text-soft);transition:background .1s,border-color .1s;">
+          Drag &amp; drop a .txt or .json deck file here, or
+          <div class="btn" id="btnImportFile" style="justify-content:center;margin-top:8px;">Choose a file…</div>
+        </div>
         <input type="file" id="importFileInput" accept=".txt,.json">
         <div id="loadModalBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export: prompts for a deck name first if the deck doesn't have one yet.
+       "Export without a name" still proceeds straight to the export modal below. -->
+  <div class="modal-overlay hidden" id="exportNameModal">
+    <div class="modal-box" style="width:min(420px,92vw);">
+      <div class="modal-header"><h2>Name this deck?</h2><div class="btn btn-icon" data-close="exportNameModal">✕</div></div>
+      <div class="modal-body">
+        <p style="margin-top:0;color:var(--text-soft);">This deck doesn't have a name yet. Give it one now, or export without one.</p>
+        <input type="text" id="exportNameInput" placeholder="Deck name..." style="width:100%;box-sizing:border-box;margin-bottom:12px;">
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <div class="btn" id="btnExportWithoutName">Export without a name</div>
+          <div class="btn btn-accent" id="btnExportSaveName">Save name &amp; continue</div>
+        </div>
       </div>
     </div>
   </div>
@@ -947,7 +965,7 @@ function mergeCardSets(setCardLists){
   // A card that's the same id in more than one set (e.g. reprinted/shared into a
   // later set) should stay visible under ANY of its sets' filters, not just whichever
   // set's copy happened to win as the displayed row above — see cardMatchesFilters
-  // and generateSealedDeck's bySet(), both of which check the full list here rather
+  // and generateSealedDecks's bySet(), both of which check the full list here rather
   // than just the single primary _setName.
   byId.forEach((card, id)=>{ card._setNames = [...setNamesById.get(id)]; });
   return [...byId.values()];
@@ -1704,73 +1722,6 @@ function sealedRouteCard(slot, card){
   else sealedIncrementDeckCard(slot, card.id);
 }
 
-function generateSealedDeck(setName){
-  const deckType = state.deckType;
-  const isOverlord = deckType==='overlord';
-  const slot = freshDeckSlot();
-  state.decks[deckType] = slot; // curDeck()/getLeader()/isAspectLegal below all read through this
-
-  // Same multi-set awareness as cardMatchesFilters: a card shared across sets is
-  // eligible for a sealed deck built from ANY set it belongs to, not only the set
-  // whose copy happens to be the displayed row.
-  const bySet = (c) => (c._setNames && c._setNames.length) ? c._setNames.includes(setName) : c._setName===setName;
-
-  // 1. Leader
-  const leader = weightedRandomPick(state.cards.filter(c=>c.type===leaderTypeName(deckType) && bySet(c)));
-  if(leader) slot.leaderId = leader.id;
-
-  // 2. Domination/Quest, excluding the one matching the leader's own aspect
-  let bonusPool = state.cards.filter(c=>c.type===bonusCardTypeName(deckType) && bySet(c));
-  if(leader) bonusPool = bonusPool.filter(c=>c.aspect!==leader.aspect);
-  const bonusCard = weightedRandomPick(bonusPool);
-  if(bonusCard){ slot.bonusCardId = bonusCard.id; slot.bonusAspect = bonusCard.aspect||''; }
-
-  const aspectLegalPool = (pool) => leader ? pool.filter(isAspectLegal) : [];
-
-  // 2.5. Stronghold/Resistance — no aspect concept for these, plain weighted pick.
-  // extraCardPool() already prefers a real card the moment one exists, falling back to
-  // the Z-Custom placeholder otherwise, same as everywhere else in the app. The
-  // Z-Custom placeholders aren't tagged with any real set, so they're always allowed
-  // through regardless of which set was chosen — otherwise picking a set with no real
-  // Stronghold/Resistance cards yet would leave this slot empty for no good reason.
-  const extraCard = weightedRandomPick(extraCardPool(deckType).filter(c=>bySet(c) || c.type==='Z - Custom'));
-  if(extraCard) slot.extraCardId = extraCard.id;
-
-  // 3. Two lieutenants/allies costing 9 or 10 combined, respecting aspect
-  const laType = isOverlord ? 'O - Lieutenant' : 'C - Ally';
-  const laPoolLegal = aspectLegalPool(state.cards.filter(c=>c.type===laType && bySet(c)));
-  pickPairWithCostSum(laPoolLegal, [9,10]).forEach(c=> sealedIncrementDeckCard(slot, c.id));
-
-  // 4. Five DISTINCT schemes, aspect-respecting (Overlord only) — withoutReplacement
-  // guarantees no duplicates among these 5 specifically; duplicates from steps 6-7 are fine.
-  if(isOverlord){
-    const schemePoolLegal = aspectLegalPool(state.cards.filter(c=>c.type==='O - Scheme' && bySet(c)));
-    weightedRandomPickMany(schemePoolLegal, 5, true).forEach(c=> slot.schemeIds.push(c.id));
-  }
-
-  const mainPoolFull = state.cards.filter(c=>isMainDeckEligibleType(c, deckType) && bySet(c));
-
-  // 5. 28 cards, aspect-respecting, capped at 3 copies of any one card BY THE END OF
-  // THIS STEP (counting whatever the lieutenant pair above already contributed) — the
-  // cap stops applying once this step finishes; later steps can push past it freely.
-  weightedRandomPickCapped(aspectLegalPool(mainPoolFull), 28, slot, 3);
-
-  // 6-7: aspect ignored from here on; Overlord draws can also land on schemes
-  const ignoreAspectPool = isOverlord ? mainPoolFull.concat(state.cards.filter(c=>c.type==='O - Scheme' && bySet(c))) : mainPoolFull;
-  weightedRandomPickMany(ignoreAspectPool, 9).forEach(c=> sealedRouteCard(slot, c));
-  const rareOrLegendPool = ignoreAspectPool.filter(c=> ['rare','legendary'].includes(rarityTier(c)));
-  weightedRandomPickMany(rareOrLegendPool, 3).forEach(c=> sealedRouteCard(slot, c));
-
-  // 8. Champion only: 5 common cards, aspect ignored
-  if(!isOverlord){
-    const commonPool = mainPoolFull.filter(c=>rarityTier(c)==='common');
-    weightedRandomPickMany(commonPool, 5).forEach(c=> sealedIncrementDeckCard(slot, c.id));
-  }
-
-  renderAll();
-  toast(`Sealed deck generated from "${setName}": ${deckTotalCount()} main-deck card(s)${isOverlord?`, ${slot.schemeIds.length} scheme(s)`:''}.`);
-}
-
 // Standalone version of isAspectLegal that doesn't read through curDeck()/getLeader() —
 // needed because generateSealedDecks (below) builds the Overlord and Champion decks
 // side by side in one pass, so "the current deck's leader" isn't a meaningful concept
@@ -1784,16 +1735,26 @@ function isAspectLegalFor(card, leader, bonusAspect){
 
 function deckCountOf(slot){ let n=0; for(const v of slot.deckCards.values()) n+=v; return n; }
 
-/* "Get Sealed Decks" (plural) — builds the Overlord deck, the Champion deck, and the
-   scheme deck all in one shot, from a SINGLE shared pool of aspect-legal O- and C-
-   cards (confirmed with Seth): leader/Domination-or-Quest/Stronghold-or-Resistance/
-   lieutenant-or-ally selection for each side mirrors generateSealedDeck's own steps
-   1/2/2.5/3 exactly, run once per side. The 25 non-scheme cards then come from one
-   combined pool of both sides' aspect-legal cards, drawn by rarity tier (4 rare-or-
-   legendary, 6 uncommon, 15 common; each card lands in the Overlord or Champion deck
-   according to its own O-/C- prefix — so the two decks aren't guaranteed to be the same
-   size). Schemes are drawn separately: 7 total, rarity-weighted, from the Overlord-side
-   scheme pool (schemes are always Overlord-only, exactly as in generateSealedDeck). */
+/* "Get Sealed Decks" — builds the Overlord deck, the Champion deck, and the scheme
+   deck all in one shot. Steps below are numbered to match the spec Seth gave:
+     1. Leaders (Champion + Overlord).
+     2. Domination/Quest, excluding whichever aspect matches that side's OWN leader.
+     3. Stronghold/Resistance (only a Z-Custom placeholder exists today — see
+        extraCardPool's own comment on that fallback).
+     4. 30 cards per side, aspect-legal for that side's own leader/bonus card, capped
+        at 2 copies of any one card — including a guaranteed lieutenant pair (Overlord)
+        / ally pair (Champion) costing 9-or-10 combined, same as ever, with the
+        remaining 28 slots filled respecting that same 2-copy cap (counting the pair).
+     5. 5 DISTINCT Overlord schemes, aspect-legal — withoutReplacement guarantees no
+        duplicates among these 5 specifically.
+     6-9. 12 common + 6 uncommon + 2 rare-or-legendary + 4 any-rarity cards, ALL drawn
+        from one shared pool of every O-/C- main-deck card AND every O-Scheme card in
+        the set — aspect is intentionally ignored here (confirmed with Seth) and a
+        scheme can land in any of these four draws, not just the common one. Each card
+        routes to the Overlord or Champion deck (or the Overlord scheme deck) by its
+        own type, so the two decks aren't guaranteed to end up the same size, and
+        nothing here respects the step-4 copy cap — these can freely push a card (or a
+        scheme already among the 5 from step 5) past it. */
 function generateSealedDecks(setName){
   const bySet = (c) => (c._setNames && c._setNames.length) ? c._setNames.includes(setName) : c._setName===setName;
   const overlordSlot = freshDeckSlot();
@@ -1816,7 +1777,7 @@ function generateSealedDecks(setName){
   const quest = weightedRandomPick(questPool);
   if(quest){ championSlot.bonusCardId = quest.id; championSlot.bonusAspect = quest.aspect||''; }
 
-  // 2.5. Stronghold/Resistance — see extraCardPool's own comment on the Z-Custom fallback
+  // 3. Stronghold/Resistance — see extraCardPool's own comment on the Z-Custom fallback
   const stronghold = weightedRandomPick(extraCardPool('overlord').filter(c=>bySet(c) || c.type==='Z - Custom'));
   if(stronghold) overlordSlot.extraCardId = stronghold.id;
   const resistance = weightedRandomPick(extraCardPool('champion').filter(c=>bySet(c) || c.type==='Z - Custom'));
@@ -1825,35 +1786,38 @@ function generateSealedDecks(setName){
   const overlordAspectLegal = (pool) => overlordLeader ? pool.filter(c=>isAspectLegalFor(c, overlordLeader, overlordSlot.bonusAspect)) : [];
   const championAspectLegal = (pool) => championLeader ? pool.filter(c=>isAspectLegalFor(c, championLeader, championSlot.bonusAspect)) : [];
 
-  // 3. Two lieutenants/allies costing 9 or 10 combined, respecting aspect
+  // 4. 30 cards per side: the guaranteed lieutenant/ally pair (costing 9 or 10
+  // combined) first, then 28 more capped at 2 copies of any one card BY THE END OF
+  // THIS STEP (counting the pair, which weightedRandomPickCapped sees via slot.deckCards
+  // since pickPairWithCostSum already added it) — the cap stops applying once this step
+  // finishes; steps 6-9 can push past it freely.
   const lieutenantPoolLegal = overlordAspectLegal(state.cards.filter(c=>c.type==='O - Lieutenant' && bySet(c)));
   pickPairWithCostSum(lieutenantPoolLegal, [9,10]).forEach(c=> sealedIncrementDeckCard(overlordSlot, c.id));
   const allyPoolLegal = championAspectLegal(state.cards.filter(c=>c.type==='C - Ally' && bySet(c)));
   pickPairWithCostSum(allyPoolLegal, [9,10]).forEach(c=> sealedIncrementDeckCard(championSlot, c.id));
 
-  // Shared main-deck pool — every O- and C- non-scheme card that's both in this set and
-  // aspect-legal for ITS OWN side's leader/bonus card (an O-card checked against the
-  // Overlord leader+Domination, a C-card checked against the Champion leader+Quest).
-  // Cards are drawn from this ONE combined pool by rarity tier and routed to whichever
-  // deck their own O-/C- prefix names, so the two decks aren't guaranteed to come out
-  // the same size.
-  const overlordMainPool = overlordAspectLegal(state.cards.filter(c=>isMainDeckEligibleType(c,'overlord') && bySet(c)));
-  const championMainPool = championAspectLegal(state.cards.filter(c=>isMainDeckEligibleType(c,'champion') && bySet(c)));
-  const combinedMainPool = overlordMainPool.concat(championMainPool);
-  const routeMainCard = (c) => sealedIncrementDeckCard(c.type.startsWith('O - ') ? overlordSlot : championSlot, c.id);
+  const overlordMainPoolLegal = overlordAspectLegal(state.cards.filter(c=>isMainDeckEligibleType(c,'overlord') && bySet(c)));
+  const championMainPoolLegal = championAspectLegal(state.cards.filter(c=>isMainDeckEligibleType(c,'champion') && bySet(c)));
+  weightedRandomPickCapped(overlordMainPoolLegal, 28, overlordSlot, 2);
+  weightedRandomPickCapped(championMainPoolLegal, 28, championSlot, 2);
 
-  // Rarity-tier guarantees confirmed with Seth: 4 rare-or-legendary, 6 uncommon, 15
-  // common — each tier drawn (with replacement) from just that tier's own slice of the
-  // combined pool.
-  const tierPool = (tiers) => combinedMainPool.filter(c=>tiers.includes(rarityTier(c)));
-  weightedRandomPickMany(tierPool(['rare','legendary']), 4).forEach(routeMainCard);
-  weightedRandomPickMany(tierPool(['uncommon']), 6).forEach(routeMainCard);
-  weightedRandomPickMany(tierPool(['common']), 15).forEach(routeMainCard);
-
-  // Schemes: 7 total, rarity-weighted, with replacement (confirmed with Seth — not
-  // required to be distinct, unlike generateSealedDeck's own 5-distinct-schemes step).
+  // 5. 5 DISTINCT Overlord schemes, aspect-legal
   const schemePoolLegal = overlordAspectLegal(state.cards.filter(c=>c.type==='O - Scheme' && bySet(c)));
-  weightedRandomPickMany(schemePoolLegal, 7).forEach(c=> overlordSlot.schemeIds.push(c.id));
+  weightedRandomPickMany(schemePoolLegal, 5, true).forEach(c=> overlordSlot.schemeIds.push(c.id));
+
+  // 6-9. Shared pool for the remaining 12+6+2+4 = 24 cards: every O-/C- main-deck card
+  // AND every O-Scheme card in the set, aspect ignored, routed to whichever deck (or
+  // the Overlord scheme deck) its own type belongs in. sealedRouteCard already sends
+  // 'O - Scheme' to schemeIds and everything else to deckCards, so routeBonusCard only
+  // has to pick which SLOT (Overlord vs Champion) — schemes are always Overlord-side.
+  const bonusPool = state.cards.filter(c=> bySet(c) &&
+    (isMainDeckEligibleType(c,'overlord') || isMainDeckEligibleType(c,'champion') || c.type==='O - Scheme'));
+  const routeBonusCard = (c) => sealedRouteCard(c.type.startsWith('O - ') ? overlordSlot : championSlot, c);
+  const tierPool = (tiers) => bonusPool.filter(c=>tiers.includes(rarityTier(c)));
+  weightedRandomPickMany(tierPool(['common']), 12).forEach(routeBonusCard);        // 6
+  weightedRandomPickMany(tierPool(['uncommon']), 6).forEach(routeBonusCard);       // 7
+  weightedRandomPickMany(tierPool(['rare','legendary']), 2).forEach(routeBonusCard); // 8, rarity-weighted between the two tiers
+  weightedRandomPickMany(bonusPool, 4).forEach(routeBonusCard);                    // 9, any rarity, weighted
 
   state.decks.overlord = overlordSlot;
   state.decks.champion = championSlot;
@@ -3187,17 +3151,13 @@ document.getElementById('btnNewDeck').addEventListener('click', ()=>{
   state.decks[activeDeckKey()] = freshDeckSlot();
   renderAll();
 });
-document.getElementById('btnSealedDeck').addEventListener('click', ()=>{
-  if(!confirm('Generate a sealed deck? This replaces your current '+(state.deckType==='overlord'?'Overlord':'Champion')+' deck — unsaved changes will be lost.')) return;
-  openSealedSetPicker(generateSealedDeck);
-});
 document.getElementById('btnSealedDecks').addEventListener('click', ()=>{
   if(!confirm('Generate sealed Overlord AND Champion decks (plus the scheme deck) from one shared pool? This replaces BOTH your current Overlord and Champion decks — unsaved changes will be lost.')) return;
   openSealedSetPicker(generateSealedDecks);
 });
-// Shared by both "Get Sealed Deck" (single, currently-active deck) and "Get Sealed
-// Decks" (both decks at once) — generatorFn is whichever of generateSealedDeck /
-// generateSealedDecks the triggering button wants run once a set is chosen.
+// generatorFn is whichever set-picker consumer wants to run once a set is chosen —
+// only generateSealedDecks today, but left generic rather than inlined in case a
+// second sealed-generation entry point returns later.
 function openSealedSetPicker(generatorFn){
   const listEl = document.getElementById('sealedSetList');
   listEl.innerHTML = allSetNames().map(n=>`<div class="row-item" data-set="${escapeHtml(n)}">${escapeHtml(n)}</div>`).join('');
@@ -3348,10 +3308,12 @@ document.getElementById('btnLoadDeck').addEventListener('click', ()=>{
   document.getElementById('loadModal').classList.remove('hidden');
 });
 
-/* ---- Import from file (.json exact, .txt best-effort by name) ---- */
-document.getElementById('btnImportFile').addEventListener('click', ()=> document.getElementById('importFileInput').click());
-document.getElementById('importFileInput').addEventListener('change', (e)=>{
-  const file = e.target.files[0]; if(!file) return;
+/* ---- Import from file (.json exact, .txt best-effort by name) ----
+   Shared by the "Choose a file…" button (via the hidden file input's change event)
+   and dragging a file onto #importDropZone below — both funnel into this one function
+   so there's a single place that decides .json vs .txt parsing and closes the modal. */
+function handleImportFile(file){
+  if(!file) return;
   const reader = new FileReader();
   reader.onload = ()=>{
     try{
@@ -3361,8 +3323,43 @@ document.getElementById('importFileInput').addEventListener('change', (e)=>{
     }catch(err){ toast('Import failed: '+err.message); }
   };
   reader.readAsText(file);
+}
+document.getElementById('btnImportFile').addEventListener('click', ()=> document.getElementById('importFileInput').click());
+document.getElementById('importFileInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  handleImportFile(file);
   e.target.value='';
 });
+
+// Drag-and-drop onto the import drop zone — mirrors the deck-row drag styling
+// convention (#deck-drop-zone.dragover) elsewhere in the app. dragenter/dragover must
+// both call preventDefault() or the browser refuses to fire 'drop' at all.
+(()=>{
+  const zone = document.getElementById('importDropZone');
+  let dragDepth = 0; // tracks nested enter/leave pairs so a dragover on a child (the
+                      // "Choose a file…" button) doesn't prematurely clear the highlight
+  zone.addEventListener('dragenter', (e)=>{
+    e.preventDefault();
+    dragDepth++;
+    zone.classList.add('dragover');
+  });
+  zone.addEventListener('dragover', (e)=> e.preventDefault());
+  zone.addEventListener('dragleave', (e)=>{
+    e.preventDefault();
+    dragDepth = Math.max(0, dragDepth-1);
+    if(dragDepth===0) zone.classList.remove('dragover');
+  });
+  zone.addEventListener('drop', (e)=>{
+    e.preventDefault();
+    dragDepth = 0;
+    zone.classList.remove('dragover');
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if(!file){ toast('No file detected in drop.'); return; }
+    const name = file.name.toLowerCase();
+    if(!name.endsWith('.txt') && !name.endsWith('.json')){ toast('Please drop a .txt or .json deck file.'); return; }
+    handleImportFile(file);
+  });
+})();
 
 function importDeckFromJson(d){
   if(!d || !d.deckType) throw new Error('not a recognized deck file');
@@ -3445,13 +3442,41 @@ function importDeckFromText(text){
 /* =========================================================================
    EXPORT
    ========================================================================= */
-document.getElementById('btnExport').addEventListener('click', ()=>{
+function openExportModal(){
   const printCount = buildPrintList().length;
   const pages = Math.ceil(printCount / 9); // 3x3 grid per Letter page
   document.getElementById('pdfPageEstimate').textContent = printCount
     ? `~${pages} page${pages!==1?'s':''} (${printCount} card image${printCount!==1?'s':''})`
     : 'Nothing to export yet.';
   document.getElementById('exportModal').classList.remove('hidden');
+}
+document.getElementById('btnExport').addEventListener('click', ()=>{
+  // An unnamed deck gets one chance to pick up a name before exporting — but naming
+  // is never required, so "Export without a name" (below) just falls through to
+  // openExportModal() same as if the deck already had one.
+  if(document.getElementById('deckNameInput').value.trim()){
+    openExportModal();
+  }else{
+    document.getElementById('exportNameInput').value = '';
+    document.getElementById('exportNameModal').classList.remove('hidden');
+  }
+});
+document.getElementById('btnExportSaveName').addEventListener('click', ()=>{
+  const name = document.getElementById('exportNameInput').value.trim();
+  if(name){
+    curDeck().name = name;
+    document.getElementById('deckNameInput').value = name;
+  }
+  document.getElementById('exportNameModal').classList.add('hidden');
+  openExportModal();
+});
+document.getElementById('btnExportWithoutName').addEventListener('click', ()=>{
+  document.getElementById('exportNameModal').classList.add('hidden');
+  openExportModal();
+});
+// Enter in the name field acts like "Save name & continue" rather than doing nothing.
+document.getElementById('exportNameInput').addEventListener('keydown', (e)=>{
+  if(e.key==='Enter') document.getElementById('btnExportSaveName').click();
 });
 
 function deckFileBase(){ return (document.getElementById('deckNameInput').value.trim()||'deck').replace(/[^a-z0-9-_]+/gi,'_'); }
