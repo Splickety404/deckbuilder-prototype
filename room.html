@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Echo of Omens — Game Room</title>
+<title>Game Room</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -98,6 +98,8 @@ input[type="range"]{accent-color:var(--accent);}
 #game-screen.active{display:flex;}
 #topbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-wrap:wrap;z-index:10;}
 #topbar h1{font-size:13px;font-weight:700;margin:0;white-space:nowrap;}
+/* Related top-bar controls sit snug together, with the normal gap between groups. */
+.topbar-group{display:flex;align-items:center;gap:3px;}
 #connStatus{font-size:12px;font-weight:600;}
 #connStatus.ok{color:var(--ok);}
 #connStatus.warn{color:var(--danger);}
@@ -420,8 +422,8 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .popover-actions{display:flex;gap:8px;padding:2px 10px 10px;}
 
 /* ---------- Add Token / Focus dropdowns (still simple lists) ---------- */
-#tokenMenu, #focusMenu{position:fixed;z-index:90;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);min-width:190px;max-width:260px;overflow:hidden;animation:bouncePopIn .2s var(--bounce);}
-#tokenMenu.hidden, #focusMenu.hidden{display:none;}
+#tokenMenu, #focusMenu, #boardMenu{position:fixed;z-index:90;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);min-width:190px;max-width:260px;overflow:hidden;animation:bouncePopIn .2s var(--bounce);}
+#tokenMenu.hidden, #focusMenu.hidden, #boardMenu.hidden{display:none;}
 .token-type-item, .focus-item{padding:9px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .12s;}
 .token-type-item:hover, .focus-item:hover{background:var(--surface-2);}
 .token-dot{width:12px;height:12px;border-radius:50%;flex:none;}
@@ -568,7 +570,18 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    button always shows; the input row hides when collapsed, floating bubbles
    still pop up above it either way so incoming chat is never missed. */
 #chatPanel{position:absolute;left:16px;bottom:16px;z-index:60;display:flex;flex-direction:column;
-  align-items:flex-start;gap:8px;max-width:260px;}
+  align-items:flex-start;gap:8px;max-width:340px;}
+/* One chip per player: cards in hand, with whoever's turn it is highlighted
+   (see renderPlayerCounters). */
+#playerCounters{display:flex;flex-wrap:wrap;gap:4px;}
+#playerCounters:empty{display:none;}
+.player-chip{font-size:11.5px;color:var(--text-soft);background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-pill);padding:2px 9px;white-space:nowrap;}
+.player-chip b{color:var(--text);font-weight:700;}
+.player-chip.active-turn{border-color:var(--accent);color:var(--text);box-shadow:0 0 0 2px var(--accent-soft);}
+/* Round "rotate view" button docked at the board's bottom-right, just above the hand. */
+#btnRotateView{position:absolute;right:16px;bottom:16px;z-index:60;width:44px;height:44px;padding:0;
+  border-radius:50%;justify-content:center;font-size:20px;box-shadow:var(--shadow);}
 #chatBar{display:flex;align-items:center;gap:6px;width:100%;}
 #chatPanel.collapsed #chatBar input{display:none;}
 #chatBar input{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);
@@ -703,7 +716,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 
 <div id="setup-screen" class="hidden">
   <div class="setup-box">
-    <h1>Echo of Omens — Game Room</h1>
+    <h1>Game Room</h1>
     <p>A freeform virtual tabletop. Enter solo to lay out your board — you can open it up to other players, or join someone else's room, whenever you're ready.</p>
 
     <div class="setup-row">
@@ -734,54 +747,60 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 
 <div id="game-screen">
   <header id="topbar">
-    <h1>ECHO OF OMENS — ROOM</h1>
+    <h1>Game Room</h1>
     <span id="sessionInfo" style="font-size:12px;color:var(--text-soft);"></span>
     <span id="connStatus"></span>
     <div class="btn btn-sm btn-accent" id="btnOpenRoom">Open Room</div>
     <div class="btn btn-sm" id="btnJoinRoom">Join Room</div>
-    <div class="btn btn-sm" id="btnImportDeck">Import Deck</div>
-    <input type="file" id="deckFileInput" accept=".json" style="display:none;">
-    <div class="btn btn-sm" id="btnAddToken">Add Token</div>
-    <div id="tokenMenu" class="hidden"></div>
-    <div class="btn btn-sm" id="btnCustomPiece">🖼 Custom Piece</div>
-    <input type="file" id="customPieceFileInput" accept="image/*" style="display:none;">
-    <div class="btn btn-sm" id="btnTheme">Table Theme</div>
-    <div id="themePopover" class="hidden"></div>
-    <div class="btn btn-sm" id="btnFocus">Focus ▾</div>
-    <div id="focusMenu" class="hidden"></div>
-    <label class="btn btn-sm" style="cursor:pointer;">
-      <input type="checkbox" id="snapToGridCheckbox" style="margin-right:5px;">Snap to Grid
-    </label>
-    <label class="btn btn-sm" style="cursor:pointer;">
-      <input type="checkbox" id="showGridCheckbox" style="margin-right:5px;">Show Grid
-    </label>
-    <input type="number" id="gridSizeInput" class="hidden" min="20" max="300" step="5" value="80" title="Grid cell size (px)" style="width:52px;">
-    <div class="btn btn-sm" id="btnDice">🎲 Dice</div>
-    <div id="dicePopover" class="hidden"></div>
-    <span id="turnIndicator" style="font-size:12px;color:var(--text-soft);">Turn: —</span>
-    <div class="btn btn-sm" id="btnPassTurn">Pass Turn</div>
-    <div class="btn btn-sm" id="btnRotateView" style="margin-left:auto;">Rotate View ⟳</div>
-    <div class="btn btn-sm" id="btnUndo" style="opacity:.4;pointer-events:none;">Undo</div>
-    <div id="playerCounters" style="font-size:12px;color:var(--text-soft);"></div>
-    <div class="btn btn-sm" id="btnZoomFit">Fit All</div>
-    <div class="btn btn-sm" id="btnExportLayout">Export Layout</div>
-    <div class="btn btn-sm" id="btnImportLayout">Import Layout</div>
-    <input type="file" id="layoutFileInput" accept=".json" style="display:none;">
+    <div class="topbar-group">
+      <div class="btn btn-sm" id="btnFocus" title="Jump to a labeled pile">Focus ▾</div>
+      <div class="btn btn-sm" id="btnZoomFit" title="Zoom out to fit everything">Fit All</div>
+    </div>
+    <div class="topbar-group">
+      <label class="btn btn-sm" style="cursor:pointer;">
+        <input type="checkbox" id="snapToGridCheckbox" style="margin-right:5px;">Snap to Grid
+      </label>
+      <label class="btn btn-sm" style="cursor:pointer;">
+        <input type="checkbox" id="showGridCheckbox" style="margin-right:5px;">Show Grid
+      </label>
+      <input type="number" id="gridSizeInput" class="hidden" min="20" max="300" step="5" value="80" title="Grid cell size (px)" style="width:52px;">
+    </div>
+    <div class="btn btn-sm" id="btnBoardMenu" title="Table theme and saved layouts">Board ▾</div>
+    <div class="btn btn-sm" id="btnUndo" style="margin-left:auto;opacity:.4;pointer-events:none;" title="Undo your last action (⌘Z / Ctrl+Z)">Undo</div>
     <div class="btn btn-sm" id="btnLeaveGame" style="color:var(--danger);">Leave Game</div>
   </header>
+  <!-- Menus/popovers opened from the top bar, the chat tools, and the board's
+       right-click menu. Positioned with position:fixed (see positionMenuNear),
+       so where they sit in the markup doesn't matter. -->
+  <div id="focusMenu" class="hidden"></div>
+  <div id="boardMenu" class="hidden">
+    <div class="focus-item" id="btnTheme">🎨 Table Theme…</div>
+    <div class="focus-item" id="btnExportLayout">⬇️ Export Layout</div>
+    <div class="focus-item" id="btnImportLayout">⬆️ Import Layout</div>
+  </div>
+  <div id="themePopover" class="hidden"></div>
+  <div id="tokenMenu" class="hidden"></div>
+  <div id="dicePopover" class="hidden"></div>
+  <input type="file" id="deckFileInput" accept=".json" style="display:none;">
+  <input type="file" id="customPieceFileInput" accept="image/*" style="display:none;">
+  <input type="file" id="layoutFileInput" accept=".json" style="display:none;">
 
   <div id="boardViewport">
     <div id="boardRotate">
       <div id="boardGrid"></div>
       <div id="boardWorld"></div>
     </div>
-    <div id="chatPanel">
+    <div id="chatPanel" class="board-overlay">
       <div id="chatLog"></div>
       <div id="chatBar">
         <div class="btn btn-icon" id="btnChatToggle" title="Collapse chat">💬</div>
         <div class="btn btn-icon" id="btnChatHistory" title="Full game history">📜</div>
         <input type="text" id="chatInput" placeholder="Say something…" maxlength="200">
+        <div class="btn btn-icon" id="btnDice" title="Roll dice">🎲</div>
+        <div class="btn btn-sm" id="btnPassTurn" title="End your turn and pass to the next player">Pass Turn</div>
       </div>
+      <!-- Whose turn it is, and how many cards each player holds (see renderPlayerCounters). -->
+      <div id="playerCounters"></div>
       <div id="historyFlyout" class="hidden">
         <div class="history-flyout-header">
           <b>Game History</b>
@@ -791,6 +810,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
         <div id="historyFlyoutBody"></div>
       </div>
     </div>
+    <div class="btn board-overlay" id="btnRotateView" title="Rotate the board 90°">⟳</div>
   </div>
 
   <div id="handResizeHandle" title="Drag to resize your hand"></div>
@@ -1523,6 +1543,13 @@ function performUndo(){
   fn();
 }
 document.getElementById('btnUndo').addEventListener('click', performUndo);
+document.addEventListener('keydown', (e)=>{
+  if(e.key.toLowerCase()!=='z' || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+  if(isTextEntryFocused()) return; // the chat box keeps its own text undo
+  if(!document.getElementById('game-screen').classList.contains('active')) return;
+  e.preventDefault();
+  performUndo();
+});
 // For actions with no board-state change at all (peek) — just a synced note that
 // shows as a toast for other players and appears in the browsable history.
 function doNote(text){
@@ -1746,7 +1773,8 @@ function applyRoomEvent(type, payload){
     case 'PLACE_ZONE': {
       state.zones.set(payload.id, { id:payload.id, x:payload.x, y:payload.y, w:payload.w, h:payload.h,
         color:payload.color, strokeColor:payload.strokeColor, strokeWidth:payload.strokeWidth,
-        label:payload.label||'', snapMode:payload.snapMode||'none', locked:payload.locked||false });
+        label:payload.label||'', snapMode:payload.snapMode||'none', locked:payload.locked||false,
+        opacity: payload.opacity!=null ? payload.opacity : ZONE_DEFAULT_OPACITY });
       break;
     }
     case 'SET_PIECE_LOCK': {
@@ -1772,6 +1800,7 @@ function applyRoomEvent(type, payload){
         if(payload.strokeWidth!==undefined) z.strokeWidth = payload.strokeWidth;
         if(payload.label!==undefined) z.label = payload.label;
         if(payload.snapMode!==undefined) z.snapMode = payload.snapMode;
+        if(payload.opacity!==undefined) z.opacity = payload.opacity;
       }
       break;
     }
@@ -2202,13 +2231,15 @@ function applyBoardTheme(theme){
 // "New type…" form is tall enough to land partly off-screen that way. Call
 // this AFTER the menu's content is in place and it's been un-hidden (offset
 // measurements are 0 while `display:none`).
-function positionMenuNear(menuEl, anchorEl){
+// preferAbove: open upward (for controls near the bottom of the screen, like
+// the chat tools), falling back to below only if there's no room above.
+function positionMenuNear(menuEl, anchorEl, preferAbove){
   const rect = anchorEl.getBoundingClientRect();
   menuEl.style.position = 'fixed';
   const vw = window.innerWidth, vh = window.innerHeight;
   const mw = menuEl.offsetWidth || 200, mh = menuEl.offsetHeight || 100;
   let left = Math.min(rect.left, vw - mw - 8);
-  let top = rect.bottom + 4;
+  let top = preferAbove && rect.top - mh - 4 >= 8 ? rect.top - mh - 4 : rect.bottom + 4;
   if(top + mh > vh) top = Math.max(8, rect.top - mh - 4); // not enough room below — flip above the button instead
   menuEl.style.left = Math.max(8, left) + 'px';
   menuEl.style.top = Math.max(8, top) + 'px';
@@ -2226,14 +2257,24 @@ function openThemePopover(){
   document.getElementById('themeBoardColor').addEventListener('change', ()=> doAction('SET_THEME', current())); // commits + syncs
   document.getElementById('themeHandColor').addEventListener('change', ()=> doAction('SET_THEME', current()));
   el.classList.remove('hidden');
-  positionMenuNear(el, document.getElementById('btnTheme'));
+  positionMenuNear(el, document.getElementById('btnBoardMenu')); // btnTheme itself lives in the Board menu, which has just closed
 }
 document.getElementById('btnTheme').addEventListener('click', (e)=>{
   e.stopPropagation();
+  document.getElementById('boardMenu').classList.add('hidden');
   const el = document.getElementById('themePopover');
   if(el.classList.contains('hidden')) openThemePopover(); else el.classList.add('hidden');
 });
 document.addEventListener('click', (e)=>{ if(!e.target.closest('#themePopover') && !e.target.closest('#btnTheme')) document.getElementById('themePopover').classList.add('hidden'); });
+// "Board ▾" — table theme and saved-layout export/import, tucked into one menu.
+document.getElementById('btnBoardMenu').addEventListener('click', (e)=>{
+  e.stopPropagation();
+  const menu = document.getElementById('boardMenu');
+  const willShow = menu.classList.contains('hidden');
+  menu.classList.toggle('hidden');
+  if(willShow) positionMenuNear(menu, document.getElementById('btnBoardMenu'));
+});
+document.addEventListener('click', (e)=>{ if(!e.target.closest('#btnBoardMenu') && !e.target.closest('#btnTheme')) document.getElementById('boardMenu').classList.add('hidden'); });
 
 /* =========================================================================
    DICE ROLLER — rolled locally, then broadcast (result only) to the whole
@@ -2277,7 +2318,7 @@ function openDicePopover(){
   // whose toolbar put the Dice button further along the row. positionMenuNear
   // (see its own comment, already used by the token/theme menus for the same
   // reason) clamps it to the actual viewport instead.
-  positionMenuNear(el, document.getElementById('btnDice'));
+  positionMenuNear(el, document.getElementById('btnDice'), true);
 }
 document.getElementById('btnDice').addEventListener('click', (e)=>{
   e.stopPropagation();
@@ -2390,6 +2431,7 @@ window.addEventListener('mousemove', (e)=>{ lastPointer = {x:e.clientX, y:e.clie
 
 let leftPressState = null, rightPressState = null, middlePressState = null;
 document.getElementById('boardViewport').addEventListener('mousedown', (e)=>{
+  if(e.target.closest('.board-overlay')) return; // the chat panel / rotate button float over the board but aren't part of it
   if(e.button===0){
     // Pieces and tokens stop their own left mousedown before it gets here; a
     // zone lets it through unless it's the one being edited (see wireZoneDrag),
@@ -2438,13 +2480,16 @@ window.addEventListener('mouseup', (e)=>{
     if(Math.hypot(e.clientX-mp.startX, e.clientY-mp.startY) < DRAG_THRESHOLD) pingAtPoint(mp.target, e.clientX, e.clientY);
   }
 });
-document.getElementById('boardViewport').addEventListener('contextmenu', (e)=> e.preventDefault());
+document.getElementById('boardViewport').addEventListener('contextmenu', (e)=>{
+  if(e.target.closest('.board-overlay')) return; // keep the browser's own menu in the chat box (paste, etc.)
+  e.preventDefault();
+});
 // W pings whatever's under the cursor — same targeting as middle-click.
 document.addEventListener('keydown', (e)=>{
   if(e.key.toLowerCase()!=='w' || e.ctrlKey || e.metaKey || e.altKey) return;
   if(isTextEntryFocused()) return;
   const target = document.elementFromPoint(lastPointer.x, lastPointer.y);
-  if(!target || !target.closest('#boardViewport')) return;
+  if(!target || !target.closest('#boardViewport') || target.closest('.board-overlay')) return;
   e.preventDefault();
   pingAtPoint(target, lastPointer.x, lastPointer.y);
 });
@@ -2460,6 +2505,7 @@ function cancelLongPress(){
 function touchMidpoint(touches){ return {x:(touches[0].clientX+touches[1].clientX)/2, y:(touches[0].clientY+touches[1].clientY)/2}; }
 document.getElementById('boardViewport').addEventListener('touchstart', (e)=>{
   longPressFired = false;
+  if(e.target.closest('.board-overlay')) return;
   if(e.touches.length===2){
     cancelLongPress();
     const m = touchMidpoint(e.touches);
@@ -2513,14 +2559,9 @@ function passTurn(){
   doAction('SET_TURN', {turnOrder: order, turnIndex: nextIndex});
 }
 document.getElementById('btnPassTurn').addEventListener('click', passTurn);
-function renderTurnTracker(){
-  const el = document.getElementById('turnIndicator');
-  if(!el) return;
-  if(state.turnIndex<0 || !state.turnOrder.length){ el.textContent = 'Turn: —'; return; }
-  const activeId = state.turnOrder[state.turnIndex];
-  const name = state.players.get(activeId) || (activeId===state.playerId ? state.playerName : 'someone');
-  el.textContent = `Turn: ${name}`;
-}
+// Whose turn it is shows as a highlight on that player's chip under the chat
+// (see renderPlayerCounters), rather than as its own separate label.
+function renderTurnTracker(){ renderPlayerCounters(); }
 
 /* =========================================================================
    VISIBLE GRID OVERLAY — purely a per-viewer display aid (separate from the
@@ -3499,9 +3540,13 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   // which drops any DOM reference we were holding; reacquire it below.
   if(clearSplayPreview()) ctx.tucked = false;
   if(target) showMergeHighlight(target.id); else clearMergeHighlight();
-  if(!ctx.el) ctx.el = document.querySelector(`.piece[data-id="${p.id}"]`);
+  // Also re-find it if it's gone stale: renderBoard rebuilds every piece from
+  // scratch — a flip/rotate (or its little animation) on the held card, or any
+  // other player's action, mid-drag — and moving the old detached element
+  // would leave the visible card frozen in place.
+  if(!ctx.el || !ctx.el.isConnected) ctx.el = document.querySelector(`.piece[data-id="${p.id}"]`);
   if(!ctx.el) return;
-  if(!ctx.ghost) ctx.ghost = createDragGhost();
+  if(!ctx.ghost || !ctx.ghost.isConnected) ctx.ghost = createDragGhost();
   ctx.el.classList.add('dragging-piece');
   ctx.el.style.left=p.x+'px'; ctx.el.style.top=p.y+'px';
   // Only a real multi-card STACK gets the bottom-third "insert below" hint —
@@ -3599,7 +3644,7 @@ function wireGroupHandleDrag(handleEl, p){
         if(target) showMergeHighlight(target.id); else clearMergeHighlight();
       }
       if(rebuilt && ghost){ removeDragGhost(ghost); ghost=null; }
-      if(!ghost) ghost = createDragGhost();
+      if(!ghost || !ghost.isConnected) ghost = createDragGhost(); // renderBoard (a flip/rotate, or anyone else's action) wipes it mid-drag
       const pieceEl = document.querySelector(`.piece[data-id="${p.id}"]`);
       if(pieceEl){
         pieceEl.classList.add('dragging-piece');
@@ -4191,6 +4236,8 @@ document.addEventListener('keydown', (e)=>{
   if(isTextEntryFocused()) return;
   clearSelection();
   exitZoneEdit();
+  closeRadialMenu();
+  ['focusMenu','boardMenu','themePopover','tokenMenu','dicePopover'].forEach(id=> document.getElementById(id).classList.add('hidden'));
 });
 
 // True when the cursor is over the BOTTOM THIRD of the target's own top-card
@@ -5096,6 +5143,10 @@ function openBoardRadialMenu(clientX, clientY){
       document.getElementById('deckFileInput').click();
     })},
     {icon:'🔘', label:'Add Token', action:act(()=> openTokenTypeMenuAt(clientX, clientY))},
+    {icon:'🖼', label:'Custom Piece', action:act(()=>{
+      pendingCustomPieceWorld = clientToWorld(clientX, clientY);
+      document.getElementById('customPieceFileInput').click();
+    })},
     {icon:'▭', label:'Add Zone', action:act(()=> addZoneAt(clientX, clientY))},
   ];
   openRadialMenu(()=> done ? null : items, clientX, clientY);
@@ -5260,15 +5311,21 @@ function syncHandCount(){
   const payload = { playerId: state.playerId, playerName: state.playerName, count: state.hand.length };
   doAction('HAND_COUNT', payload);
 }
+// One chip per player under the chat: "✋ 5 Seth", you first, with the
+// active player's chip highlighted once turns have started (see passTurn).
 function renderPlayerCounters(){
   const el = document.getElementById('playerCounters');
-  const boardCounts = {};
-  state.pieces.forEach(p=>{ boardCounts[p.owner] = (boardCounts[p.owner]||0) + p.cardIds.length; });
+  if(!el) return;
   const known = new Map(state.playerHandCounts);
-  if(!known.has(state.playerId)) known.set(state.playerId, {playerName: state.playerName, count: state.hand.length});
-  el.textContent = [...known.entries()].map(([pid, info])=>
-    `${info.playerName}: ${info.count} in hand, ${boardCounts[pid]||0} on board`
-  ).join(' · ');
+  known.set(state.playerId, {playerName: state.playerName, count: state.hand.length}); // your own count is always live, never waits on an echo
+  state.players.forEach((name, pid)=>{ if(!known.has(pid)) known.set(pid, {playerName: name, count: null}); });
+  const activeId = (state.turnIndex>=0 && state.turnOrder.length) ? state.turnOrder[state.turnIndex] : null;
+  const order = [state.playerId, ...[...known.keys()].filter(pid=>pid!==state.playerId)];
+  el.innerHTML = order.filter(pid=>known.get(pid) && known.get(pid).playerName).map(pid=>{
+    const info = known.get(pid);
+    const active = pid===activeId;
+    return `<span class="player-chip${active?' active-turn':''}" title="${active?'Their turn · ':''}${info.count==null?'Hand size not known yet':info.count+' card'+(info.count===1?'':'s')+' in hand'}">${active?'▶ ':''}✋ ${info.count==null?'?':info.count} <b>${escapeHtml(info.playerName)}</b></span>`;
+  }).join('');
 }
 
 /* =========================================================================
@@ -5278,13 +5335,15 @@ function renderPlayerCounters(){
    everyone for the rest of the game. Standalone on the board, or attached to
    a specific piece (rendered anchored to its corner, moving with it).
    ========================================================================= */
-// Where the token menu opens and where its token lands: the Add Token button
-// and the view's center by default, or the board spot that was right-clicked
-// when opened from the board menu (see openTokenTypeMenuAt).
+// Where the token menu opens and where its token lands: the board spot that
+// was right-clicked (see openTokenTypeMenuAt), or the middle of the board.
 let tokenMenuAnchor = null, tokenPlaceAtWorld = null;
 function tokenMenuAnchorEl(){
-  if(!tokenMenuAnchor) return document.getElementById('btnAddToken');
-  const {x, y} = tokenMenuAnchor;
+  let {x, y} = tokenMenuAnchor || {};
+  if(!tokenMenuAnchor){
+    const r = document.getElementById('boardViewport').getBoundingClientRect();
+    x = r.left + r.width/2; y = r.top + r.height/2;
+  }
   return { getBoundingClientRect: ()=>({left:x, right:x, top:y, bottom:y, width:0, height:0}) };
 }
 function openTokenTypeMenuAt(clientX, clientY){
@@ -5367,13 +5426,7 @@ function openEditTokenTypeForm(oldName){
   });
   positionMenuNear(menu, tokenMenuAnchorEl());
 }
-document.getElementById('btnAddToken').addEventListener('click', (e)=>{
-  e.stopPropagation();
-  const menu = document.getElementById('tokenMenu');
-  tokenMenuAnchor = null; tokenPlaceAtWorld = null;
-  if(menu.classList.contains('hidden')) openTokenTypeMenu(); else menu.classList.add('hidden');
-});
-document.addEventListener('click', (e)=>{ if(!e.target.closest('#tokenMenu') && !e.target.closest('#btnAddToken')) document.getElementById('tokenMenu').classList.add('hidden'); });
+document.addEventListener('click', (e)=>{ if(!e.target.closest('#tokenMenu')) document.getElementById('tokenMenu').classList.add('hidden'); });
 
 function placeNewToken(type){
   const vp = document.getElementById('boardViewport');
@@ -5538,8 +5591,9 @@ function wireTokenDrag(el, t){
       const start = tokenRenderPos(t);
       const d = screenDeltaToWorldDelta(dx, dy);
       const nx = start.x+d.x, ny = start.y+d.y;
-      el.style.left = nx+'px'; el.style.top = ny+'px';
-      if(!ghost) ghost = createDragGhost();
+      const liveEl = el.isConnected ? el : document.querySelector(`.token[data-id="${t.id}"]`); // see driveWholePieceDrag on re-renders mid-drag
+      if(liveEl){ liveEl.style.left = nx+'px'; liveEl.style.top = ny+'px'; }
+      if(!ghost || !ghost.isConnected) ghost = createDragGhost(); // renderBoard (a flip/rotate, or anyone else's action) wipes it mid-drag
       updateDragGhost(ghost, nx, ny, 44, 44);
       const mergeTarget = findTokenMergeTarget(t, nx+22, ny+22);
       if(mergeTarget) showTokenMergeHighlight(mergeTarget.id); else clearTokenMergeHighlight();
@@ -5562,9 +5616,9 @@ function wireTokenGroupHandleDrag(handleEl, t){
     onMove: (dx, dy)=>{
       const d = screenDeltaToWorldDelta(dx, dy);
       const nx = startPos.x+d.x, ny = startPos.y+d.y;
-      const tokenEl = handleEl.closest('.token');
+      const tokenEl = handleEl.isConnected ? handleEl.closest('.token') : document.querySelector(`.token[data-id="${t.id}"]`);
       if(tokenEl){ tokenEl.style.left = nx+'px'; tokenEl.style.top = ny+'px'; }
-      if(!ghost) ghost = createDragGhost();
+      if(!ghost || !ghost.isConnected) ghost = createDragGhost(); // renderBoard (a flip/rotate, or anyone else's action) wipes it mid-drag
       const size = tokenSize(t);
       updateDragGhost(ghost, nx, ny, size, size);
       const mergeTarget = findTokenMergeTarget(t, nx+22, ny+22);
@@ -5587,7 +5641,7 @@ function wireTokenPeelInteraction(faceEl, t){
   wirePressDragClick(faceEl, {
     onDown: (e)=>{ if(handleTokenSelectionOnDown(t, e)) return false; },
     onMove: (dx, dy, ev)=>{
-      if(!ghost) ghost = createDragGhost();
+      if(!ghost || !ghost.isConnected) ghost = createDragGhost(); // renderBoard (a flip/rotate, or anyone else's action) wipes it mid-drag
       const world = clientToWorld(ev.clientX, ev.clientY);
       const size = tokenSize(t);
       updateDragGhost(ghost, world.x-size/2, world.y-size/2, size, size);
@@ -5734,18 +5788,22 @@ async function uploadCustomPieceImage(file){
 // Default placement scales the image down to fit comfortably on the board (long
 // edge capped at 240px) but never up — a small icon stays a small icon until the
 // player deliberately scales it larger via the Scale radial-menu item.
+// Set by the board menu's Custom Piece (see openBoardRadialMenu) so the image
+// lands centered where you right-clicked; otherwise the middle of the view.
+let pendingCustomPieceWorld = null;
 function placeCustomImagePiece(url, naturalW, naturalH){
   const maxEdge = 240;
   const scale = Math.min(1, maxEdge/Math.max(naturalW, naturalH));
   const w = Math.max(20, Math.round(naturalW*scale)), h = Math.max(20, Math.round(naturalH*scale));
   const vp = document.getElementById('boardViewport');
-  const worldX = (vp.clientWidth/2 - state.view.x)/state.view.scale - w/2;
-  const worldY = (vp.clientHeight/2 - state.view.y)/state.view.scale - h/2;
+  const at = pendingCustomPieceWorld;
+  pendingCustomPieceWorld = null;
+  const worldX = (at ? at.x : (vp.clientWidth/2 - state.view.x)/state.view.scale) - w/2;
+  const worldY = (at ? at.y : (vp.clientHeight/2 - state.view.y)/state.view.scale) - h/2;
   const id = newPieceId();
   doAction('PLACE_PIECE', { id, x:worldX, y:worldY, owner:state.playerId, kind:'image', imageUrl:url, w, h, naturalW, naturalH });
   setUndo(()=> doAction('REMOVE_PIECE', {id}));
 }
-document.getElementById('btnCustomPiece').addEventListener('click', ()=> document.getElementById('customPieceFileInput').click());
 document.getElementById('customPieceFileInput').addEventListener('change', (e)=>{
   const file = e.target.files[0];
   e.target.value = ''; // allow re-selecting the same file next time
@@ -5799,6 +5857,7 @@ function applyZoneSnap(x, y, w, h){
   });
   return {x,y};
 }
+const ZONE_DEFAULT_OPACITY = 0.28; // fill opacity for zones made before opacity was editable
 function renderZones(){
   const world = document.getElementById('boardWorld');
   state.zones.forEach(z=>{
@@ -5807,7 +5866,7 @@ function renderZones(){
     el.className = 'zone' + (editing?' zone-editable':'');
     el.dataset.id = z.id;
     el.style.left=z.x+'px'; el.style.top=z.y+'px'; el.style.width=z.w+'px'; el.style.height=z.h+'px';
-    el.style.background = hexToRgba(z.color||'#3d7dca', 0.28);
+    el.style.background = hexToRgba(z.color||'#3d7dca', z.opacity!=null ? z.opacity : ZONE_DEFAULT_OPACITY);
     el.style.border = `${z.strokeWidth!=null?z.strokeWidth:2}px solid ${z.strokeColor||'#3d7dca'}`;
     el.innerHTML = (z.label ? `<div class="zone-label">${escapeHtml(z.label)}</div>` : '') + (z.locked ? `<div class="lock-badge">🔒</div>` : '');
     if(editing && !z.locked){
@@ -5843,10 +5902,11 @@ function wireZoneDrag(el, z){
     },
     onMove: (dx, dy)=>{
       if(!canDrag) return;
-      if(!ghost) ghost = createDragGhost();
+      if(!ghost || !ghost.isConnected) ghost = createDragGhost(); // renderBoard (a flip/rotate, or anyone else's action) wipes it mid-drag
       const d = screenDeltaToWorldDelta(dx, dy);
       z.x = startX+d.x; z.y = startY+d.y;
-      el.style.left=z.x+'px'; el.style.top=z.y+'px';
+      const liveEl = el.isConnected ? el : document.querySelector(`.zone[data-id="${z.id}"]`); // see driveWholePieceDrag on re-renders mid-drag
+      if(liveEl){ liveEl.style.left=z.x+'px'; liveEl.style.top=z.y+'px'; }
       updateDragGhost(ghost, z.x, z.y, z.w, z.h);
     },
     onContext: (e)=> enterZoneEdit(z.id, e.clientX, e.clientY),
@@ -5876,7 +5936,7 @@ function addZoneAt(clientX, clientY){
   const c = clientToWorld(clientX, clientY);
   const w = 320, h = 220;
   const zone = { id:newZoneId(), x:snapCoord(c.x-w/2), y:snapCoord(c.y-h/2), w, h,
-    color:'#3d7dca', strokeColor:'#3d7dca', strokeWidth:2, label:'', snapMode:'none', locked:false };
+    color:'#3d7dca', strokeColor:'#3d7dca', strokeWidth:2, label:'', snapMode:'none', locked:false, opacity:ZONE_DEFAULT_OPACITY };
   doAction('PLACE_ZONE', zone);
   setUndo(()=> doAction('REMOVE_ZONE', {id:zone.id}));
   enterZoneEdit(zone.id, clientX, clientY);
@@ -5904,7 +5964,8 @@ function wireZoneResize(handleEl, z, dir){
       if(dir.includes('w')){ w = Math.max(40, startW - d.x); x = startX + (startW - w); }
       if(dir.includes('n')){ h = Math.max(40, startH - d.y); y = startY + (startH - h); }
       z.x=x; z.y=y; z.w=w; z.h=h;
-      const zoneEl = handleEl.closest('.zone');
+      const zoneEl = handleEl.isConnected ? handleEl.closest('.zone') : document.querySelector(`.zone[data-id="${z.id}"]`);
+      if(!zoneEl) return;
       zoneEl.style.left = z.x+'px'; zoneEl.style.top = z.y+'px';
       zoneEl.style.width = z.w+'px'; zoneEl.style.height = z.h+'px';
     }
@@ -5923,11 +5984,13 @@ function wireZoneResize(handleEl, z, dir){
 // delete) in one place rather than needing an Edit item in a pie menu first.
 function openZoneEditPopover(zoneId, clientX, clientY){
   const z = state.zones.get(zoneId); if(!z) return;
-  const old = { label:z.label, color:z.color, strokeColor:z.strokeColor, strokeWidth:z.strokeWidth, snapMode:z.snapMode };
+  const opacityPct = Math.round((z.opacity!=null ? z.opacity : ZONE_DEFAULT_OPACITY)*100);
+  const old = { label:z.label, color:z.color, strokeColor:z.strokeColor, strokeWidth:z.strokeWidth, snapMode:z.snapMode, opacity:opacityPct/100 };
   const el = document.getElementById('zonePopover');
   el.innerHTML = `
     <div class="popover-row"><label>Label</label><input type="text" id="zoneLabelInput" value="${escapeHtml(z.label||'')}" placeholder="(none)"></div>
     <div class="popover-row"><label>Fill color</label><input type="color" id="zoneColorInput" value="${z.color}"></div>
+    <div class="popover-row"><label>Fill opacity</label><input type="range" id="zoneOpacityInput" min="0" max="100" step="5" value="${opacityPct}"></div>
     <div class="popover-row"><label>Stroke color</label><input type="color" id="zoneStrokeColorInput" value="${z.strokeColor}"></div>
     <div class="popover-row"><label>Stroke width</label><input type="range" id="zoneStrokeWidthInput" min="0" max="8" step="1" value="${z.strokeWidth}"></div>
     <div class="popover-row"><label>Snap</label>
@@ -5951,6 +6014,7 @@ function openZoneEditPopover(zoneId, clientX, clientY){
       strokeColor: document.getElementById('zoneStrokeColorInput').value,
       strokeWidth: Number(document.getElementById('zoneStrokeWidthInput').value),
       snapMode: document.getElementById('zoneSnapInput').value,
+      opacity: Number(document.getElementById('zoneOpacityInput').value)/100,
     };
   }
   function preview(){
@@ -5962,7 +6026,7 @@ function openZoneEditPopover(zoneId, clientX, clientY){
     doAction('SET_ZONE_STYLE', {id:zoneId, ...readForm()});
     setUndo(()=> doAction('SET_ZONE_STYLE', {id:zoneId, ...old}));
   }
-  ['zoneColorInput','zoneStrokeColorInput','zoneStrokeWidthInput'].forEach(id=>{
+  ['zoneColorInput','zoneOpacityInput','zoneStrokeColorInput','zoneStrokeWidthInput'].forEach(id=>{
     document.getElementById(id).addEventListener('input', preview);
     document.getElementById(id).addEventListener('change', commit);
   });
@@ -6353,9 +6417,8 @@ function playHandCardToBoard(pick, clientX, clientY){
    DECK IMPORT WIRING
    ========================================================================= */
 // Set by the board menu's Import Deck (see openBoardRadialMenu) so the deck
-// lands where you right-clicked; the toolbar button clears it.
+// lands where you right-clicked.
 let pendingDeckDropWorld = null;
-document.getElementById('btnImportDeck').addEventListener('click', ()=>{ pendingDeckDropWorld = null; document.getElementById('deckFileInput').click(); });
 document.getElementById('deckFileInput').addEventListener('change', (e)=>{
   const file = e.target.files[0]; if(!file) return;
   toast('Reading deck file…');
