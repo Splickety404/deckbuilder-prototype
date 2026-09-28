@@ -141,6 +141,9 @@ select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(
 #signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
 #signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
 #signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
+/* The request-access form can be opened from the sign-in gate (signed in, but no
+   sets), so it has to sit above the gate rather than at the normal modal layer. */
+#requestAccessModal{z-index:350;}
 .signin-spinner{
   width:26px;height:26px;border-radius:50%;
   border:3px solid var(--border);border-top-color:var(--accent);
@@ -474,7 +477,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
 #toast{
   position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
   background:var(--text);color:var(--bg);
-  padding:10px 16px;font-size:13px;z-index:100;
+  padding:10px 16px;font-size:13px;z-index:400; /* above #signin-gate, so the access-request confirmation shows there too */
   border-radius:var(--radius-sm);display:none;
   max-width:70vw;box-shadow:var(--shadow);
 }
@@ -490,12 +493,43 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     <div class="signin-spinner" id="signinSpinner" style="display:none;"></div>
     <div class="signin-status" id="signinStatus"></div>
     <div class="signin-error" id="signinError"></div>
+    <div class="btn" id="btnSigninRequestAccess" style="display:none;">Request access…</div>
   </div>
 </div>
 
 <div id="loading-overlay">
   <div class="loading-spinner"></div>
   <div class="loading-text">Loading card data…</div>
+</div>
+
+<!-- The request-access modal and #toast live outside #app for the same reason as
+     #gameSelectModal below: they're also used from the sign-in gate (signed in, but
+     no sets), before #app is ever shown. -->
+<div id="toast"></div>
+
+<!-- Request access to a set — Game/Set are plain text (not a dropdown of known
+     sets) so this form never reveals which games/sets actually exist to someone
+     who doesn't already have access to at least one. -->
+<div class="modal-overlay hidden" id="requestAccessModal">
+  <div class="modal-box" style="width:min(440px,92vw);">
+    <div class="modal-header"><h2>Request set access</h2><div class="btn btn-icon" data-close="requestAccessModal">✕</div></div>
+    <div class="modal-body">
+      <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">This sends a request to whoever administers the card sets. They'll follow up once your account has been given access.</p>
+      <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Game</label>
+      <input type="text" id="requestAccessGame" placeholder="Which game" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+      <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Set</label>
+      <input type="text" id="requestAccessSet" placeholder="Which set" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+      <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Your Gmail address</label>
+      <input type="text" id="requestAccessEmail" placeholder="you@gmail.com" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+      <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Note (optional)</label>
+      <textarea id="requestAccessNote" rows="3" placeholder="Anything else worth mentioning" style="width:100%;box-sizing:border-box;resize:vertical;margin-bottom:12px;font-family:var(--font);"></textarea>
+      <p id="requestAccessError" style="color:var(--danger);font-size:12.5px;min-height:1.2em;margin:0 0 8px;"></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <div class="btn" data-close="requestAccessModal">Cancel</div>
+        <div class="btn btn-accent" id="btnSubmitRequestAccess">Send request</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Game selection — shown at sign-in when an account can see more than one game,
@@ -679,30 +713,6 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     </div>
   </div>
 
-  <!-- Request access to a set — Game/Set are plain text (not a dropdown of known
-       sets) so this form never reveals which games/sets actually exist to someone
-       who doesn't already have access to at least one. -->
-  <div class="modal-overlay hidden" id="requestAccessModal">
-    <div class="modal-box" style="width:min(440px,92vw);">
-      <div class="modal-header"><h2>Request set access</h2><div class="btn btn-icon" data-close="requestAccessModal">✕</div></div>
-      <div class="modal-body">
-        <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">This sends a request to whoever administers the card sets. They'll follow up once your account has been given access.</p>
-        <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Game</label>
-        <input type="text" id="requestAccessGame" placeholder="Which game" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
-        <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Set</label>
-        <input type="text" id="requestAccessSet" placeholder="Which set" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
-        <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Your Gmail address</label>
-        <input type="text" id="requestAccessEmail" placeholder="you@gmail.com" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
-        <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Note (optional)</label>
-        <textarea id="requestAccessNote" rows="3" placeholder="Anything else worth mentioning" style="width:100%;box-sizing:border-box;resize:vertical;margin-bottom:12px;font-family:var(--font);"></textarea>
-        <p id="requestAccessError" style="color:var(--danger);font-size:12.5px;min-height:1.2em;margin:0 0 8px;"></p>
-        <div style="display:flex;gap:8px;justify-content:flex-end;">
-          <div class="btn" data-close="requestAccessModal">Cancel</div>
-          <div class="btn btn-accent" id="btnSubmitRequestAccess">Send request</div>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <!-- Sealed deck: choose which set -->
   <div class="modal-overlay hidden" id="sealedSetModal">
@@ -778,7 +788,6 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
   </div>
 
   <div id="hover-preview"><div class="hp-frame" id="hoverPreviewFrame"><img id="hoverPreviewImg" src=""></div><div class="hp-name" id="hoverPreviewName"></div></div>
-  <div id="toast"></div>
 </div>
 
 <script>
@@ -1344,6 +1353,7 @@ async function fetchWhoAmIWithRetry(idToken){
 
 async function onGoogleSignIn(response){
   setSigninError('');
+  showSigninRequestAccess(false);
   setSigninStatus('Checking your access…');
   setSigninChecking(true);
   try{
@@ -1351,7 +1361,9 @@ async function onGoogleSignIn(response){
     if(!who.games || !who.games.length){
       setSigninStatus('');
       setSigninChecking(false);
-      setSigninError(`Signed in as ${who.email}, but that account doesn't have access to any card sets yet. Ask whoever administers the sets to share a set's Drive folder with this account.`);
+      setSigninError(`Signed in as ${who.email}, but that account doesn't have access to any card sets yet.`);
+      noAccessEmail = who.email;
+      showSigninRequestAccess(true);
       return;
     }
     state.idToken = response.credential;
@@ -1473,6 +1485,7 @@ function signOut(){
   if(window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
   setSigninStatus('');
   setSigninError('');
+  showSigninRequestAccess(false);
   showSigninGate();
 }
 document.getElementById('signinAccountLine').addEventListener('click', ()=>{
@@ -1613,15 +1626,24 @@ document.getElementById('btnManageSets').addEventListener('click', openSetsModal
    requestAccess endpoint). Game/Set are free text the requester types themselves,
    never picked from a list, so this form can't be used to fish for which games/sets
    actually exist. ---- */
-function openRequestAccessModal(){
+function openRequestAccessModal(prefillEmail){
   document.getElementById('requestAccessGame').value = '';
   document.getElementById('requestAccessSet').value = '';
-  document.getElementById('requestAccessEmail').value = state.userEmail || '';
+  document.getElementById('requestAccessEmail').value = prefillEmail || state.userEmail || '';
   document.getElementById('requestAccessNote').value = '';
   document.getElementById('requestAccessError').textContent = '';
   document.getElementById('requestAccessModal').classList.remove('hidden');
 }
-document.getElementById('btnRequestAccess').addEventListener('click', openRequestAccessModal);
+document.getElementById('btnRequestAccess').addEventListener('click', ()=>openRequestAccessModal());
+
+// Someone who signs in but has access to no sets at all never gets past the sign-in
+// gate (so never sees the Sets button) — offer the same request form right there.
+// Their email isn't stored in state.userEmail since they aren't really signed in.
+let noAccessEmail = '';
+function showSigninRequestAccess(show){
+  document.getElementById('btnSigninRequestAccess').style.display = show ? 'inline-flex' : 'none';
+}
+document.getElementById('btnSigninRequestAccess').addEventListener('click', ()=>openRequestAccessModal(noAccessEmail));
 
 // Same fetch-with-timeout-then-JSONP-fallback shape as fetchWhoAmI/fetchSetData/etc
 // above — this endpoint is UNGATED (no idToken), so it works even for someone who
