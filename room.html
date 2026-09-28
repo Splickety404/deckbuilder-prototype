@@ -195,50 +195,23 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .piece.image-piece img{border-radius:var(--radius);box-shadow:var(--shadow);object-fit:contain;}
 
 /* "Move whole stack" handle — the pile's label doubles as its whole-stack drag
-   handle (rather than a separate circular button that used to sit right on
-   top of the label and cover it), AND carries the card count baked right into
-   its text ("Deck (41)", or just "(41)" with no custom label) instead of a
-   separate corner badge — see pieceLabelText(). It's always rendered for a
-   multi-card pile, even with no custom label set, so there's always something
-   to grab. Deliberately anchored to a FIXED spot matching the anchor (top)
-   card's own footprint (140x196, the same box every splay direction anchors
-   its depth-0 card to) rather than spanning the whole piece element, whose
-   width/height balloon out however far the pile is splayed — anything
-   computed from the piece's own dynamic box would either stretch to match a
-   huge splay (for 'right'/'down') or get left anchored to the wrong edge
-   entirely, off in empty space, for a 'left'/'up' splay (whose fan grows the
-   OPPOSITE way the box itself grows). Docking to the fixed anchor footprint
-   instead means the label sits in the same place relative to the top card no
-   matter the splay direction, spacing, or card count. Horizontally centered
-   under that card (left:70px = half of 140, offset back by its own half-width
-   via the transform) so it grows outward evenly as its text gets longer,
-   rather than being pinned to a fixed 140px box; sits slightly HIGH, overlapping
-   up onto the bottom of the top card itself, rather than hanging fully below it. */
-.piece .piece-label.stack-handle{cursor:move;min-width:26px;min-height:14px;transition:filter .15s var(--bounce),transform .15s var(--bounce),background .1s,color .1s;
-  left:70px;right:auto;bottom:auto;top:202px;width:max-content;max-width:260px;
-  transform:translateX(-50%) rotate(var(--counter-rotate,0deg));}
-/* Floats just below the anchor (top) card by default. A 'down' splay fans its
-   own cards out into exactly that space, so a below-docked label would sit
-   on top of (or under) the fanned cards — flipped to the polar opposite side
-   (above the anchor) instead in that one case. Every other splay direction,
-   including 'up' (whose fan grows the opposite way), leaves the space below
-   the anchor clear, so only 'down' needs the flip — see the labelFlip check
-   in renderBoard. */
-/* NOTE: this used to be `top:auto;bottom:202px` — anchoring the label a fixed
-   distance up from the piece element's own BOTTOM edge. That edge is NOT the
-   anchor (top) card: for a 'down' splay the element's bottom edge is wherever
-   the LAST fanned-out card ends, which moves every time the splay's total
-   spacing/card count changes — so the label visibly drifted relative to the
-   anchor card any time the splay was resized. The anchor card's top edge is
-   always local y:0 (see depthFor/offsetFor above — depth 0 is always (0,0)
-   regardless of splay direction), so anchoring to `top:0` and translating
-   fully above it, instead of pinning to the piece's own dynamic bottom, keeps
-   this locked to the anchor card no matter how the splay is resized. */
-.piece .piece-label.stack-handle.label-flip{top:0;bottom:auto;
-  transform:translateX(-50%) translateY(calc(-100% - 6px)) rotate(var(--counter-rotate,0deg));}
-.piece .piece-label.stack-handle:hover{filter:brightness(1.35);transform:translateX(-50%) rotate(var(--counter-rotate,0deg)) scale(1.16);}
-.piece .piece-label.stack-handle.label-flip:hover{filter:brightness(1.35);
-  transform:translateX(-50%) translateY(calc(-100% - 6px)) rotate(var(--counter-rotate,0deg)) scale(1.16);}
+   handle AND carries the card count baked into its text ("Deck (41)", or just
+   "(41)") — see pieceLabelText(). Always rendered for a multi-card pile, so
+   there's always something to grab. */
+.piece .piece-label.stack-handle{cursor:move;min-width:26px;min-height:14px;
+  transition:filter .15s var(--bounce),transform .15s var(--bounce),background .1s,color .1s;}
+/* Viewer-relative ("POV") placement for everything that hangs off a card or
+   zone: labels, lock badges, search badges. renderBoard/renderZones work out,
+   for the current board + piece rotation, which edge of the card is nearest
+   the viewer and set left/top to that spot (see placePieceBadges); the element
+   is centered on that point and counter-rotated so its text reads upright. */
+.pov{position:absolute;right:auto;bottom:auto;width:max-content;
+  transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg));}
+.piece .piece-label.pov, .lock-badge.pov{right:auto;bottom:auto;width:max-content;
+  transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg));}
+.piece .piece-label.pov{max-width:260px;}
+.lock-badge.pov{width:20px;}
+.piece .piece-label.stack-handle.pov:hover{filter:brightness(1.35);transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg)) scale(1.16);}
 
 /* Ghost/silhouette preview shown while dragging a piece or token — a faint
    outline at the snapped position it will actually land at if released right
@@ -285,8 +258,11 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    contest at all — that's the other stated exception, satisfied for free. */
 .token{position:absolute;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   font-weight:700;font-size:14px;color:#fff;cursor:grab;box-shadow:var(--shadow);border:2px solid rgba(255,255,255,.3);user-select:none;
-  transition:transform .15s var(--bounce),filter .15s;z-index:2;}
-.token:hover{transform:scale(1.18);filter:brightness(1.1);}
+  transition:transform .15s var(--bounce),filter .15s;z-index:2;
+  /* A token is a circle, so counter-rotating the whole thing against the board
+     keeps its letter upright and its count bubble at the viewer's top-right. */
+  transform:rotate(var(--counter-rotate,0deg));}
+.token:hover{transform:rotate(var(--counter-rotate,0deg)) scale(1.18);filter:brightness(1.1);}
 .token.attached{width:28px;height:28px;font-size:11px;}
 /* The type letter never changes; a stack's quantity (when >1) shows as its
    own small bubble instead of replacing the letter (unlike a card pile,
@@ -304,7 +280,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    inside or outside their bounds. Rendered behind pieces/tokens. ---------- */
 .zone{position:absolute;border-radius:var(--radius);box-sizing:border-box;}
 .zone.zone-editable{cursor:move;}
-.zone-label{position:absolute;top:4px;left:6px;font-size:11px;font-weight:700;color:var(--text);
+.zone-label{position:absolute;top:0;left:0;transform-origin:0 0;transform:rotate(var(--counter-rotate,0deg)) translate(6px,4px);font-size:11px;font-weight:700;color:var(--text);
   background:rgba(20,22,27,.55);border-radius:var(--radius-pill);padding:2px 10px;pointer-events:none;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 12px);}
 .zone-handle{position:absolute;width:16px;height:16px;background:var(--accent);border:2px solid var(--accent-contrast);
@@ -689,7 +665,9 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    inherits the shared pan/zoom/rotation transform for free, exactly like
    pieces and tokens — no per-viewer math needed here. */
 .presence-cursor{position:absolute;top:0;left:0;pointer-events:none;z-index:500;
-  transform:translate(-2px,-2px);transition:left .08s linear, top .08s linear;}
+  /* Counter-rotated around its own tip so the pointer and name tag stay upright
+     however the board is turned. */
+  transform-origin:2px 2px;transform:translate(-2px,-2px) rotate(var(--counter-rotate,0deg));transition:left .08s linear, top .08s linear;}
 .presence-cursor .dot{width:14px;height:14px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);
   box-shadow:0 1px 4px rgba(0,0,0,.45);}
 .presence-cursor.holding .dot{animation:presencePulse .9s ease-in-out infinite;}
@@ -1094,8 +1072,16 @@ function attachedTokenPos(t){
     const vis = cardVisibleRect(host, t.attachedCardIndex);
     return { x: vis.x + vis.w/2 - size/2, y: vis.y + vis.h/2 - size/2 };
   }
-  const hb = pieceBounds(host);
-  return { x: hb.x + hb.w - 14, y: hb.y - 14 };
+  // Rides the host's top-right corner as the VIEWER sees it — the host's
+  // visible box (a lone card/unsplayed pile turned 90° is wider than tall),
+  // then whichever of its corners is top-right on screen.
+  let hb = pieceBounds(host);
+  if(!(host.splayed && host.cardIds.length>1) && (effectivePieceRotation(host) % 180) !== 0){
+    const cx = hb.x + hb.w/2, cy = hb.y + hb.h/2;
+    hb = {x:cx-hb.h/2, y:cy-hb.w/2, w:hb.h, h:hb.w};
+  }
+  const corner = boxPointToward(hb, state.viewRotation||0, 1, -1, 0);
+  return { x: corner.x - size/2, y: corner.y - size/2 };
 }
 
 /* =========================================================================
@@ -2140,14 +2126,74 @@ function applyView(){
 // Rotation is a SEPARATE outer layer (#boardRotate) around the already-panned/zoomed
 // content, pivoting on the viewport's own visual center — this avoids needing to
 // recompute a moving pivot point every time the user pans or zooms.
+let rotationSettleTimer = null;
 function applyRotation(){
   const el = document.getElementById('boardRotate');
   el.style.transform = `rotate(${state.viewRotation}deg)`;
-  // Read by .piece-label's own transform (a CSS custom property inherits down
-  // through every descendant, including ones with their own transforms) so every
-  // piece's label spins back upright to face the viewer, without this function
-  // needing to know or touch any individual label element itself.
-  el.style.setProperty('--counter-rotate', (-state.viewRotation) + 'deg');
+  // Labels, badges, attached tokens and resize cursors are all placed relative
+  // to the VIEWER (see placePieceBadges/renderZones), and every piece's own
+  // --counter-rotate includes the board angle — so they're all recomputed for
+  // the new angle. Deferred until the board's .35s turn animation (see
+  // #boardRotate's CSS) finishes, so they ride along with the board and then
+  // settle upright, rather than jumping to their final spots while the board
+  // underneath them is still turning.
+  clearTimeout(rotationSettleTimer);
+  rotationSettleTimer = setTimeout(()=>{
+    // Read by every descendant that counter-rotates (zone labels, tokens,
+    // badges) — a CSS custom property inherits through their own transforms.
+    el.style.setProperty('--counter-rotate', (-state.viewRotation) + 'deg');
+    renderBoard();
+  }, 360);
+}
+// Board and piece rotations are always exact multiples of 90°. Given a
+// direction on SCREEN (sx, sy each -1/0/1 — e.g. 0,1 = toward the viewer, the
+// bottom of the screen), this is the matching direction in the local,
+// unrotated frame of something that appears rotated by `deg` on screen.
+function screenDirToLocal(sx, sy, deg){
+  const v = rotateVector(sx, sy, deg);
+  return { x: Math.round(v.x), y: Math.round(v.y) };
+}
+// The point on `box` (local coords) lying in screen direction (sx, sy) from
+// its center — an edge midpoint or a corner — pushed `pad` px further out.
+function boxPointToward(box, deg, sx, sy, pad){
+  const d = screenDirToLocal(sx, sy, deg);
+  const len = Math.hypot(d.x, d.y) || 1;
+  return { x: box.x + box.w/2 + d.x*box.w/2 + d.x/len*pad,
+           y: box.y + box.h/2 + d.y*box.h/2 + d.y/len*pad };
+}
+function placeAtPoint(el, pt){ el.style.left = pt.x+'px'; el.style.top = pt.y+'px'; }
+// Compass resize directions ('n','ne',…), turned by `deg` clockwise — which
+// way a zone handle actually points on screen once the board is rotated.
+function rotateCompass(dir, deg){
+  const order = ['n','ne','e','se','s','sw','w','nw'];
+  return order[((order.indexOf(dir) + Math.round(deg/45)) % 8 + 8) % 8];
+}
+function resizeCursorFor(screenDir){
+  return {n:'ns-resize', s:'ns-resize', e:'ew-resize', w:'ew-resize', ne:'nesw-resize', sw:'nesw-resize', nw:'nwse-resize', se:'nwse-resize'}[screenDir];
+}
+const POV_LABEL_OFFSET = 16; // card edge → label center: a small gap plus half the label's height
+// Places a piece's label, lock badge and search badge relative to the VIEWER:
+// the label centered just past the anchor card's edge nearest the viewer
+// (or its far edge, if the splay fans out toward the viewer and would run
+// into it), the lock on the anchor's viewer-top-right corner, the search
+// badge past the whole fan's viewer-top edge. anchorBox/fanBox are in the
+// piece element's own local coords; splayDir is the pile's fan direction
+// (null if not splayed).
+function placePieceBadges(el, p, anchorBox, fanBox, splayDir){
+  const deg = (state.viewRotation||0) + effectivePieceRotation(p);
+  let labelFar = false;
+  const label = el.querySelector(':scope > .piece-label');
+  if(label){
+    const near = screenDirToLocal(0, 1, deg);
+    const fan = {right:{x:1,y:0}, left:{x:-1,y:0}, down:{x:0,y:1}, up:{x:0,y:-1}}[splayDir];
+    labelFar = !!fan && fan.x===near.x && fan.y===near.y;
+    label.classList.add('pov');
+    placeAtPoint(label, boxPointToward(anchorBox, deg, 0, labelFar ? -1 : 1, POV_LABEL_OFFSET));
+  }
+  const lock = el.querySelector(':scope > .lock-badge');
+  if(lock){ lock.classList.add('pov'); placeAtPoint(lock, boxPointToward(anchorBox, deg, 1, -1, 0)); }
+  const badge = el.querySelector(':scope > .search-alert-badge');
+  if(badge){ badge.classList.add('pov'); placeAtPoint(badge, boxPointToward(fanBox, deg, 0, -1, POV_LABEL_OFFSET + (labelFar ? 22 : 0))); }
 }
 // Converts a screen-space drag delta into true (unrotated) board-space delta —
 // needed for every drag interaction so dragging still feels natural regardless of
@@ -2777,11 +2823,15 @@ function renderBoard(){
     el.style.setProperty('--counter-rotate', (-(state.viewRotation + containerRotation)) + 'deg');
     el.dataset.id = p.id;
     let topCardOffset = null; // non-null for any multi-card pile — flags that its (always-rendered) piece-label should double as the move-whole-stack handle
+    // For placePieceBadges: the anchor (top) card's visible box, the whole
+    // fan's box, and the fan direction — all in this element's local coords.
+    let badgeAnchor = {x:0, y:0, w:PIECE_W, h:PIECE_H}, badgeFan = null, badgeSplayDir = null;
     if(p.kind==='image'){
       // Custom player-uploaded piece — any scale the uploader picked (or later resized
       // to), no card faces/splay/merge/flip/draw, just an image, label, and lock badge.
       el.style.width = pieceW(p)+'px';
       el.style.height = pieceH(p)+'px';
+      badgeAnchor = {x:0, y:0, w:pieceW(p), h:pieceH(p)};
       el.innerHTML = `
         <div class="piece-face"><img src="${p.imageUrl||''}" draggable="false"></div>
         ${p.label ? `<div class="piece-label">${escapeHtml(p.label)}</div>` : ''}
@@ -2939,8 +2989,19 @@ function renderBoard(){
         html += `<div class="${cls}" style="left:${left}px;top:${top}px;${rotStyle}">${inner}</div>`;
       }
       html += afterCards.join('');
-      const labelFlip = dir==='down'; // see the CSS comment on .piece-label.stack-handle.label-flip
-      el.innerHTML = html + `<div class="piece-label stack-handle${labelFlip?' label-flip':''}" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`;
+      // The anchor card's VISIBLE box (a 90°-turned anchor is wider than tall)
+      // and the whole fan's box — where placePieceBadges hangs the label from.
+      {
+        const anchorRot = cardRotations[topIndex]||0;
+        const off = offsetFor(depthFor(topIndex), anchorRot);
+        const cx = off.left + PIECE_W/2, cy = off.top + PIECE_H/2;
+        const turned = (anchorRot % 180) !== 0;
+        const w = turned ? PIECE_H : PIECE_W, h = turned ? PIECE_W : PIECE_H;
+        badgeAnchor = {x:cx-w/2, y:cy-h/2, w, h};
+        badgeFan = {x:0, y:0, w:PIECE_W + (horizontal?extent:0), h:PIECE_H + (horizontal?0:extent)};
+        badgeSplayDir = dir;
+      }
+      el.innerHTML = html + `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`;
       topCardOffset = {left:0, top:0}; // the top card is always the anchor now
       [...el.querySelectorAll('.splay-card:not(.splay-gap)')].forEach(cardEl=>{
         const i = Number(cardEl.dataset.i);
@@ -2996,6 +3057,7 @@ function renderBoard(){
       badge.textContent = `🔍 ${state.searchingBy.get(p.id)} is searching`;
       el.appendChild(badge);
     }
+    placePieceBadges(el, p, badgeAnchor, badgeFan || badgeAnchor, badgeSplayDir);
     applyPingHighlight(el, p.id); // survives this rebuild — see pingHighlights
     world.appendChild(el);
     if(hoveredPieceId===p.id) showHotkeyHint(el); // re-anchor the hint to the freshly-rebuilt element
@@ -3005,6 +3067,8 @@ function renderBoard(){
   refreshStackPerimeter();
   renderTokens();
   renderPlayerCounters();
+  // Other players' cursors live in #boardWorld too — put them back after the wipe above.
+  if(presenceCursors) presenceCursors.forEach(c=>{ if(!c.isConnected) world.appendChild(c); });
 }
 function boardBounds(){
   if(!state.pieces.size && !state.tokens.size && !state.zones.size) return {minX:-400,minY:-400,maxX:400,maxY:400};
@@ -3030,7 +3094,12 @@ function fitAll(){
   const vp = document.getElementById('boardViewport');
   const b = boardBounds();
   const w = b.maxX-b.minX, h = b.maxY-b.minY;
-  const scale = Math.min(vp.clientWidth/w, vp.clientHeight/h, 1); // never zoom IN past 1:1 just because the board is small
+  // Turned 90°/270°, the board's width runs up the screen — fit it against the
+  // viewport's height instead (centering below is unaffected: the view spins
+  // around the viewport's own center).
+  const sideways = ((state.viewRotation||0) % 180) !== 0;
+  const fitW = sideways ? h : w, fitH = sideways ? w : h;
+  const scale = Math.min(vp.clientWidth/fitW, vp.clientHeight/fitH, 1); // never zoom IN past 1:1 just because the board is small
   state.view.scale = Math.max(0.08, scale);
   state.view.x = -b.minX*state.view.scale + (vp.clientWidth - w*state.view.scale)/2;
   state.view.y = -b.minY*state.view.scale + (vp.clientHeight - h*state.view.scale)/2;
@@ -5869,6 +5938,17 @@ function renderZones(){
     el.style.background = hexToRgba(z.color||'#3d7dca', z.opacity!=null ? z.opacity : ZONE_DEFAULT_OPACITY);
     el.style.border = `${z.strokeWidth!=null?z.strokeWidth:2}px solid ${z.strokeColor||'#3d7dca'}`;
     el.innerHTML = (z.label ? `<div class="zone-label">${escapeHtml(z.label)}</div>` : '') + (z.locked ? `<div class="lock-badge">🔒</div>` : '');
+    // Label in the zone's corner at the VIEWER's top-left (text upright — see
+    // .zone-label's CSS), lock on the viewer's top-right, whichever way the
+    // board is turned.
+    const view = state.viewRotation||0, box = {x:0, y:0, w:z.w, h:z.h};
+    const labelEl = el.querySelector('.zone-label');
+    if(labelEl){
+      placeAtPoint(labelEl, boxPointToward(box, view, -1, -1, 0));
+      labelEl.style.maxWidth = ((view % 180 ? z.h : z.w) - 12) + 'px'; // the zone's on-screen width
+    }
+    const lockEl = el.querySelector('.lock-badge');
+    if(lockEl){ lockEl.classList.add('pov'); placeAtPoint(lockEl, boxPointToward(box, view, 1, -1, 0)); }
     if(editing && !z.locked){
       // All 4 edges + all 4 corners (see wireZoneResize's own comment for how
       // each direction maps to which of x/y/w/h it actually adjusts) —
@@ -5878,6 +5958,7 @@ function renderZones(){
       ['nw','n','ne','e','se','s','sw','w'].forEach(dir=>{
         const handle = document.createElement('div');
         handle.className = 'zone-handle ' + dir;
+        handle.style.cursor = resizeCursorFor(rotateCompass(dir, state.viewRotation||0)); // the way this edge moves ON SCREEN
         el.appendChild(handle);
         wireZoneResize(handle, z, dir);
       });
@@ -6621,7 +6702,7 @@ function ablyConfigured(){ return !!ABLY_API_KEY; }
 
 let ablyClient = null;
 let roomChannel = null;
-const presenceCursors = new Map(); // playerId -> DOM element in #boardWorld
+var presenceCursors = new Map(); // playerId -> DOM element in #boardWorld. `var` (hoisted) because renderBoard, defined earlier, reads it
 let presenceLastSent = 0;
 const PRESENCE_SEND_MS = 150; // ~6-7 updates/sec — smooth, and easier on the free tier's message quota now that this channel also carries every game action
 let presenceHolding = false;
@@ -6662,9 +6743,11 @@ function renderPresenceMembers(members){
       el.innerHTML = `<div class="dot" style="background:${color};border:2px solid rgba(255,255,255,.85);"></div>`+
         `<div class="tag" style="background:${color};">${escapeHtml(p.name||'Player')}</div>`+
         `<div class="chip" style="display:none;"></div>`;
-      world.appendChild(el);
       presenceCursors.set(pid, el);
     }
+    // renderBoard empties #boardWorld on nearly every interaction — put the
+    // cursor back if that happened since we last saw this player move.
+    if(!el.isConnected) world.appendChild(el);
     el.style.left = (p.x||0)+'px';
     el.style.top = (p.y||0)+'px';
     el.classList.toggle('holding', !!p.holding);
