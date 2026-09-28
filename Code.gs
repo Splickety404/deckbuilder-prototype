@@ -1070,6 +1070,12 @@ function getOrCreateHistorySheet(currentHeaders) {
 //                                        caller without access to the set
 //                                        gets id-only "classified" placeholder
 //                                        data rather than a hard failure)
+//   ?requestAccess=1&game=<text>&set=<text>&email=<text>&note=<text> ->
+//                                        UNGATED (no idToken) — emails
+//                                        smcbride@ghostgalaxy.com the game/set
+//                                        someone typed in by hand and wants
+//                                        access to, plus their own email and an
+//                                        optional note. See requestAccess().
 //   (none of the above)               -> no action specified (see below —
 //                                        this used to be an unauthenticated
 //                                        Set 1 data dump; it no longer is)
@@ -1099,6 +1105,9 @@ function doGet(e) {
   if (e.parameter.cardsForSheet) {
     return getCardsBySheetId(e.parameter.cardsForSheet, e.parameter.idToken, e.parameter.callback);
   }
+  if (e.parameter.requestAccess) {
+    return requestAccess(e.parameter.game, e.parameter.set, e.parameter.email, e.parameter.note, e.parameter.callback);
+  }
 
   // No recognized action. This used to fall through to an unauthenticated
   // dump of Set 1's raw card data — every set (Set 1 included) is now
@@ -1107,6 +1116,47 @@ function doGet(e) {
   const json = JSON.stringify({ ok: false, error: 'No action specified.' });
   if (e.parameter.callback) {
     return ContentService.createTextOutput(e.parameter.callback + '(' + json + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
+}
+
+// UNGATED (no idToken check) — the whole point is to hear from someone the server
+// does NOT already recognize as having access to anything. game/set are free text the
+// requester typed themselves (the client never offers a dropdown of real game/set
+// names here, specifically so this endpoint can't be used to enumerate which games
+// exist just by watching what autocompletes). Nothing here confirms or denies that
+// what they typed matches a real game/set — it just relays the request by email for a
+// human to act on.
+function requestAccess(game, setName, requesterEmail, note, callback) {
+  const g = String(game || '').trim();
+  const s = String(setName || '').trim();
+  const email = String(requesterEmail || '').trim();
+  let result;
+  if (!g || !s || !email) {
+    result = { ok: false, error: 'Game, Set, and your Gmail address are all required.' };
+  } else {
+    try {
+      MailApp.sendEmail({
+        to: 'smcbride@ghostgalaxy.com',
+        subject: 'Echo of Omens Deckbuilder — access request: ' + g + ' / ' + s,
+        body: [
+          'A new set-access request came in from the deckbuilder.',
+          '',
+          'Game: ' + g,
+          'Set: ' + s,
+          'Requester email: ' + email,
+          'Note: ' + (String(note || '').trim() || '(none)'),
+        ].join('\n'),
+        replyTo: email,
+      });
+      result = { ok: true };
+    } catch (sendErr) {
+      result = { ok: false, error: 'Could not send the request email: ' + sendErr.message };
+    }
+  }
+  const json = JSON.stringify(result);
+  if (callback) {
+    return ContentService.createTextOutput(callback + '(' + json + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
   }
   return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
 }
@@ -1385,6 +1435,11 @@ function getHelpArticles(gameFolderId, callback) {
     return ContentService.createTextOutput(callback + '(' + json + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
   }
   return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
+}
+
+function authorizeMail() {
+  MailApp.sendEmail('smcbride@ghostgalaxy.com', 'EOO mail test',
+    'If you got this, the deckbuilder can send access requests.');
 }
 
 // No doPost here — this script no longer handles any game-session writes.
