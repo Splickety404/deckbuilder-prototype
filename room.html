@@ -132,7 +132,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .piece.dragging-piece.insert-below{z-index:0;}
 .piece .piece-face{width:140px;height:196px;border-radius:var(--radius-sm);border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden;background:var(--surface-2);position:relative;}
 .piece img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;}
-.piece .cardback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+.piece .cardback,.hand-card .cardback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
   background:repeating-linear-gradient(45deg,var(--accent-soft),var(--accent-soft) 8px,var(--surface-2) 8px,var(--surface-2) 16px);
   color:var(--accent);font-size:11px;font-weight:700;text-align:center;padding:8px;}
 /* A card whose set you're not authorized to see — the piece is still fully real
@@ -351,6 +351,11 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    floating above the hand panel instead of being clipped by the board
    viewport or painted underneath the panel's own background. */
 .hand-drop-ghost{position:fixed;pointer-events:none;z-index:200;opacity:.85;}
+/* Rides under a card being dragged out of the hand: press F to flip it before
+   it lands (see wireHandCardDrag). */
+.hand-drop-ghost .ghost-hint{position:absolute;left:50%;top:100%;margin-top:5px;transform:translateX(-50%);white-space:nowrap;
+  font-size:10.5px;font-weight:700;color:var(--text);background:rgba(20,22,27,.9);border:1px solid var(--border);
+  border-radius:var(--radius-pill);padding:2px 8px;}
 
 #toast{position:fixed;bottom:120px;left:50%;transform:translateX(-50%);background:var(--surface);color:var(--text);
   border:1px solid var(--border);padding:10px 18px;font-size:13px;z-index:100;border-radius:var(--radius-pill);
@@ -1385,6 +1390,7 @@ const state = {
   zones: new Map(),    // id -> { id, x, y, w, h, color, strokeColor, strokeWidth, label, snapMode }
   theme: { boardColor:'#1a1c22', handColor:'#1c1f26' }, // shared table theme, synced
   hand: [],            // array of cardIds — private, never synced except as a count
+  handFaceDown: [],    // parallel to hand: true = that hand card is flipped face down (see syncHandFaceDown) — private, never synced
   playerHandCounts: new Map(), // playerId -> {playerName, count} — public, synced
   view: { x:0, y:0, scale:0.6 }, // board-world panning/zoom, local per-viewer, never synced
   viewRotation: 0,      // 0/90/180/270 — local per-viewer, never synced
@@ -1993,11 +1999,12 @@ function rotatePopEl(el, fromDeg, toDeg){
 // history flyout (see loadHistoryFlyout()).
 function describeEvent(type, payload, playerName){
   switch(type){
-    case 'PLACE_PIECE': return payload.kind==='image' ? `${playerName} placed a custom piece` : `${playerName} placed a pile (${(payload.cardIds||[]).length} cards)`;
+    case 'PLACE_PIECE': if(payload.fromHand) return `${playerName} played a card from hand${payload.fromHand==='faceDown'?' face down':''}`;
+      return payload.kind==='image' ? `${playerName} placed a custom piece` : `${playerName} placed a pile (${(payload.cardIds||[]).length} cards)`;
     case 'MOVE_PIECE': return `${playerName} moved a pile`;
     case 'FLIP_TOP': return `${playerName} flipped a card ${payload.faceUp?'face up':'face down'}`;
     case 'REMOVE_PIECE': return `${playerName} removed a pile from the board`;
-    case 'MERGE_PIECES': return `${playerName} combined two piles`;
+    case 'MERGE_PIECES': return payload.fromHand ? `${playerName} played a card from hand onto a pile${payload.fromHand==='faceDown'?' face down':''}` : `${playerName} combined two piles`;
     case 'SHUFFLE_PIECE': return `${playerName} shuffled a pile`;
     case 'FLIP_STACK': return `${playerName} flipped a stack over`;
     case 'SET_SPLAY': return `${playerName} ${payload.splayed?`splayed a pile (${payload.dir||'right'})`:'unsplayed a pile'}`;
@@ -3830,6 +3837,7 @@ function setSplayPreview(targetId, insertIndex, cardInfo, newSplayInfo){
   next.newSplay = newSplayInfo ? {dir:newSplayInfo.dir, spacing:newSplayInfo.spacing} : null;
   if(splayPreview && splayPreview.targetId===next.targetId && splayPreview.insertIndex===next.insertIndex
      && splayPreview.sourceId===next.sourceId && splayPreview.cardId===next.cardId && splayPreview.rotation===next.rotation
+     && splayPreview.faceUp===next.faceUp
      && !!splayPreview.newSplay===!!next.newSplay
      && (!next.newSplay || (splayPreview.newSplay.dir===next.newSplay.dir && splayPreview.newSplay.spacing===next.newSplay.spacing))) return false;
   splayPreview = next;
@@ -4145,6 +4153,7 @@ function showHotkeyHint(el){
 function hideHotkeyHint(){ document.getElementById('hotkeyHint').classList.add('hidden'); }
 document.addEventListener('keydown', (e)=>{
   if(!hoveredPieceId) return;
+  if(activeHandDrag) return; // F flips the card being dragged out of the hand instead — see wireHandCardDrag
   if(isTextEntryFocused()) return;
   if(e.ctrlKey || e.metaKey || e.altKey) return; // leave browser shortcuts (copy, reload, …) alone
   const p = state.pieces.get(hoveredPieceId);
@@ -6138,6 +6147,7 @@ function leaveGame(){
   state.theme = { boardColor:'#1a1c22', handColor:'#1c1f26' };
   applyBoardTheme(state.theme);
   state.hand = [];
+  state.handFaceDown = [];
   state.playerHandCounts.clear();
   state.undoFn = null;
   state.editingZoneId = null;
@@ -6154,28 +6164,70 @@ document.getElementById('btnLeaveGame').addEventListener('click', ()=>{
   leaveGame();
 });
 
+// Face-down hand cards: state.handFaceDown runs parallel to state.hand. Every
+// change to the hand outside the drag code below only ever adds or removes
+// cards at the END (draw, search-to-hand, and their undos), so re-aligning
+// by length here — pad new cards as face up, trim removed ones — keeps each
+// flag on its own card. The drag code splices both arrays together itself.
+function syncHandFaceDown(){
+  const f = state.handFaceDown;
+  while(f.length < state.hand.length) f.push(false);
+  f.length = state.hand.length;
+}
+function handCardFaceHtml(cardId, faceDown){
+  return faceDown ? cardFaceHtml(cardId, false) : cardFrontInnerHtml(cardsById.get(cardId), 300);
+}
 function renderHand(){
+  syncHandFaceDown();
   const el = document.getElementById('handCards');
   el.innerHTML = state.hand.map((cardId,i)=>{
-    const card = cardsById.get(cardId);
-    return `<div class="hand-card" data-idx="${i}"><div class="face">${cardFrontInnerHtml(card,300)}</div></div>`;
+    const faceDown = state.handFaceDown[i];
+    return `<div class="hand-card${faceDown?' face-down':''}" data-idx="${i}" title="Click to flip · drag onto the board to play (press F while dragging to flip it)"><div class="face">${handCardFaceHtml(cardId, faceDown)}</div></div>`;
   }).join('');
   [...el.children].forEach((cardEl,i)=>{
-    wireHoverPreview(cardEl, ()=>({card:cardsById.get(state.hand[i]), faceUp:true})); // your own hand always shows its front to you
+    wireHoverPreview(cardEl, ()=>({card:cardsById.get(state.hand[i]), faceUp:!state.handFaceDown[i]}));
     wireHandCardDrag(cardEl, i);
   });
 }
-// Drag a hand card onto the board to play it (face up); drag it onto another
-// hand card to reorder instead. A small movement threshold avoids treating an
-// ordinary click as a drag.
+// Left-click a hand card: flip it in place (it then plays face down).
+function toggleHandCardFaceDown(idx){
+  if(idx >= state.hand.length) return;
+  syncHandFaceDown();
+  state.handFaceDown[idx] = !state.handFaceDown[idx];
+  renderHand();
+}
+// The hand card currently being dragged out of the hand, if any — lets F flip
+// it mid-drag (see the keydown listener below) and keeps F from also flipping
+// whatever board card the cursor happens to be over at that moment.
+let activeHandDrag = null;
+document.addEventListener('keydown', (e)=>{
+  if(!activeHandDrag || e.key.toLowerCase()!=='f' || e.ctrlKey || e.metaKey || e.altKey) return;
+  if(isTextEntryFocused()) return;
+  e.preventDefault();
+  activeHandDrag.toggle();
+});
+// Drag a hand card onto the board to play it — face up, or face down if it
+// was flipped in the hand (click it) or F is pressed mid-drag; drag it onto
+// another hand card to reorder instead. A small movement threshold avoids
+// treating an ordinary click as a drag — a plain click flips the card.
 function wireHandCardDrag(el, idx){
   el.addEventListener('mousedown', (e)=>{
+    if(e.button!==0) return;
     e.stopPropagation();
     const startX=e.clientX, startY=e.clientY;
-    let dragging=false, pick=null;
+    let dragging=false, pick=null, lastEv=null;
     const ghost = el.cloneNode(true); // cloned BEFORE the card ever leaves the hand, so it still shows the right face
     ghost.classList.add('hand-drop-ghost');
+    ghost.removeAttribute('title');
+    const ghostHint = document.createElement('div');
+    ghostHint.className = 'ghost-hint';
+    ghost.appendChild(ghostHint);
+    function refreshGhost(){
+      ghost.querySelector('.face').innerHTML = handCardFaceHtml(pick.cardId, pick.faceDown);
+      ghostHint.textContent = pick.faceDown ? 'F · play face up' : 'F · play face down';
+    }
     function onMove(ev){
+      lastEv = ev;
       if(!dragging){
         if(Math.abs(ev.clientX-startX)<4 && Math.abs(ev.clientY-startY)<4) return;
         dragging=true; document.body.appendChild(ghost);
@@ -6183,8 +6235,12 @@ function wireHandCardDrag(el, idx){
         // board pile, which now also removes on pickup rather than on
         // release), so the hand's own count/layout updates immediately
         // instead of waiting for wherever this drag eventually lands.
-        pick = { cardId: state.hand[idx], originalIdx: idx };
+        syncHandFaceDown();
+        pick = { cardId: state.hand[idx], originalIdx: idx, faceDown: !!state.handFaceDown[idx] };
         state.hand.splice(idx,1);
+        state.handFaceDown.splice(idx,1);
+        refreshGhost();
+        activeHandDrag = { toggle: ()=>{ pick.faceDown = !pick.faceDown; refreshGhost(); if(lastEv) onMove(lastEv); } };
         renderHand();
         syncHandCount();
       }
@@ -6219,11 +6275,11 @@ function wireHandCardDrag(el, idx){
         // land if placed standalone, so its would-be top-left corner is half
         // a card up and to the left of that; splayInsertIndex wants that
         // corner, same as every other caller, not the raw cursor point.
-        setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x-PIECE_W/2, world.y-PIECE_H/2), {sourceId:null, cardId:pick.cardId, faceUp:true});
+        setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x-PIECE_W/2, world.y-PIECE_H/2), {sourceId:null, cardId:pick.cardId, faceUp:!pick.faceDown});
         ghost.style.visibility = 'hidden';
       } else if(newSplay){
         clearMergeHighlight();
-        setSplayPreview(target.id, 0, {sourceId:null, cardId:pick.cardId, faceUp:true}, newSplay);
+        setSplayPreview(target.id, 0, {sourceId:null, cardId:pick.cardId, faceUp:!pick.faceDown}, newSplay);
         ghost.style.visibility = 'hidden';
       } else {
         clearSplayPreview();
@@ -6236,7 +6292,8 @@ function wireHandCardDrag(el, idx){
       window.removeEventListener('mouseup', onUp);
       clearMergeHighlight();
       clearSplayPreview();
-      if(!dragging) return;
+      activeHandDrag = null;
+      if(!dragging){ toggleHandCardFaceDown(idx); return; }
       ghost.remove();
       const boardRect = document.getElementById('boardViewport').getBoundingClientRect();
       const overBoard = ev.clientX>=boardRect.left && ev.clientX<=boardRect.right && ev.clientY>=boardRect.top && ev.clientY<=boardRect.bottom;
@@ -6250,6 +6307,7 @@ function wireHandCardDrag(el, idx){
         const targetCard = dropEl && dropEl.closest('.hand-card');
         const insertAt = targetCard ? Math.min(Number(targetCard.dataset.idx), state.hand.length) : Math.min(pick.originalIdx, state.hand.length);
         state.hand.splice(insertAt, 0, pick.cardId);
+        state.handFaceDown.splice(insertAt, 0, pick.faceDown);
         renderHand();
         syncHandCount();
       }
@@ -6280,15 +6338,15 @@ function playHandCardToBoard(pick, clientX, clientY){
       : (target.cardIds.length>1) ? (shouldInsertBelow(target, world.x, world.y) ? 0 : target.cardIds.length)
       : target.cardIds.length;
     const cardIds = [...target.cardIds.slice(0,insertIndex), pick.cardId, ...target.cardIds.slice(insertIndex)];
-    const faceStates = [...target.faceStates.slice(0,insertIndex), true, ...target.faceStates.slice(insertIndex)];
+    const faceStates = [...target.faceStates.slice(0,insertIndex), !pick.faceDown, ...target.faceStates.slice(insertIndex)];
     const targetCardRotations = target.cardRotations || target.cardIds.map(()=>0);
     const cardRotations = [...targetCardRotations.slice(0,insertIndex), 0, ...targetCardRotations.slice(insertIndex)]; // a hand card always plays in upright
     const splay = newSplayInfo ? { dir: newSplayInfo.dir, spacing: Math.max(SPLAY_MIN, newSplayInfo.spacing) } : null;
-    doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: null, splay });
+    doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: null, splay, fromHand: pick.faceDown ? 'faceDown' : 'faceUp' });
     return;
   }
   const worldX = world.x - PIECE_W/2, worldY = world.y - PIECE_H/2;
-  doAction('PLACE_PIECE', { id:newPieceId(), x:worldX, y:worldY, cardIds:[pick.cardId], faceStates:[true], owner:state.playerId });
+  doAction('PLACE_PIECE', { id:newPieceId(), x:worldX, y:worldY, cardIds:[pick.cardId], faceStates:[!pick.faceDown], owner:state.playerId, fromHand: pick.faceDown ? 'faceDown' : 'faceUp' });
 }
 
 /* =========================================================================
