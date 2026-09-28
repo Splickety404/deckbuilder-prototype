@@ -116,7 +116,6 @@ input[type="range"]{accent-color:var(--accent);}
    element's own `cursor` CSS says. */
 body.force-cursor-ew, body.force-cursor-ew *{cursor:ew-resize!important;}
 body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
-#boardViewport.zone-drawing{cursor:crosshair;}
 #boardRotate{width:100%;height:100%;transform-origin:center center;transition:transform .35s var(--bounce);}
 #boardWorld{position:absolute;top:0;left:0;transform-origin:0 0;}
 
@@ -482,6 +481,14 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 /* ---------- Ping — a temporary ring dropped on the board, visible to everyone ---------- */
 .ping-ring{position:absolute;width:36px;height:36px;margin-left:-18px;margin-top:-18px;border:3px solid var(--accent);
   border-radius:50%;pointer-events:none;animation:pingPulse 1.1s ease-out forwards;}
+/* A pinged card or stack glows for a couple of seconds on every player's
+   screen (see flashPingHighlight). box-shadow rather than outline so it
+   follows the card's rounded corners and doesn't fight .selected's outline. */
+.ping-highlight{animation:pingGlow .7s ease-in-out infinite alternate;z-index:4;}
+@keyframes pingGlow{
+  from{box-shadow:0 0 0 3px var(--accent), 0 0 10px 2px var(--accent);}
+  to{box-shadow:0 0 0 5px var(--accent), 0 0 26px 10px var(--accent);}
+}
 @keyframes pingPulse{
   0%{transform:scale(0.4);opacity:1;}
   100%{transform:scale(2.6);opacity:0;}
@@ -733,9 +740,6 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
     <div id="tokenMenu" class="hidden"></div>
     <div class="btn btn-sm" id="btnCustomPiece">🖼 Custom Piece</div>
     <input type="file" id="customPieceFileInput" accept="image/*" style="display:none;">
-    <label class="btn btn-sm" style="cursor:pointer;">
-      <input type="checkbox" id="zoneEditCheckbox" style="margin-right:5px;">Edit Zones
-    </label>
     <div class="btn btn-sm" id="btnTheme">Table Theme</div>
     <div id="themePopover" class="hidden"></div>
     <div class="btn btn-sm" id="btnFocus">Focus ▾</div>
@@ -1387,7 +1391,7 @@ const state = {
   handScale: 70,         // px, local per-viewer, persisted in localStorage
   undoFn: null,          // single-level undo for the local player's last action
   snapToGrid: false,    // local per-viewer, never synced
-  zoneEditMode: false,  // local per-viewer, never synced — gates left-drag move/resize of zones
+  editingZoneId: null,  // local per-viewer, never synced — the one zone (if any) currently open for editing via right-click; only it can be moved/resized
   peekAlertIds: new Set(), // pieceIds with a brief "someone just peeked here" highlight — self-clears after PEEK_ALERT_MS
   searchingBy: new Map(), // pieceId -> playerName currently rifling through it — cleared on SEARCH_END
   players: new Map(),   // playerId -> playerName — everyone who has ever joined, synced via PLAYER_JOINED
@@ -1800,6 +1804,7 @@ function applyRoomEvent(type, payload){
     }
     case 'PING': {
       showPing(payload.x, payload.y);
+      if(payload.pieceId && state.pieces.has(payload.pieceId)) flashPingHighlight(payload.pieceId, payload.cardIndex);
       break;
     }
     case 'ROLL_DICE': {
@@ -2030,7 +2035,7 @@ function describeEvent(type, payload, playerName){
       const activeName = state.players.get(activeId) || 'someone';
       return `${playerName} passed the turn — now ${activeName}'s turn`;
     }
-    case 'PING': return `${playerName} pinged the board`;
+    case 'PING': return payload.desc ? `📍 ${playerName} pinged ${payload.desc}` : `${playerName} pinged the board`;
     case 'ROLL_DICE': return `${playerName} rolled a d${payload.sides} → ${payload.result}`;
     case 'CHAT': return `${payload.playerName}: "${payload.text}"`;
     case 'NOTE': return `${playerName} ${payload.text}`;
@@ -2276,14 +2281,28 @@ document.addEventListener('click', (e)=>{ if(!e.target.closest('#dicePopover') &
 
 
 /* =========================================================================
-   PING/POINT TOOL — right-click, or press-and-hold (long-press) anywhere on
-   the board (empty space or not, even right on top of a piece/token) drops a
-   brief animated ring everyone at the table sees. No arming step/button —
-   both gestures fire immediately at the point pressed. Rendered as a child
-   of #boardWorld so it inherits the shared pan/zoom transform for free, then
-   removes itself after the animation ends.
+   BOARD MOUSE CONTROLS + PING/POINT TOOL
+     - Left-drag on empty board space → box-select (see beginBoxSelect).
+       Shift adds to the current selection instead of replacing it.
+     - Right-drag anywhere on the board → pan the view.
+     - Right-click (no drag) → whatever was clicked's own menu: a card/stack/
+       token opens its radial menu, a zone opens its editor, empty space
+       opens the board menu (see openBoardRadialMenu). Each element registers
+       its handler as `el._ctx` via wirePressDragClick's onContext (see
+       dispatchContextClick).
+     - Middle-click, or W while hovering → ping. Pinging a card or stack also
+       highlights it for everyone for a moment (see flashPingHighlight);
+       anywhere else just drops the ring.
+     - Touch: long-press a card/token/zone for its menu, long-press empty
+       space to ping, two-finger drag to pan.
+   Click-vs-drag for every button is decided off mousedown/mousemove/mouseup,
+   never the 'contextmenu' event — Chromium fires that right after mousedown,
+   before any drag could possibly be detected (an earlier version keyed off
+   it and every right-drag misfired as a click). 'contextmenu' is only used
+   to silence the native menu.
    ========================================================================= */
 const LONG_PRESS_MS = 500;
+const PING_HIGHLIGHT_MS = 2000;
 function showPing(x, y){
   const ring = document.createElement('div');
   ring.className = 'ping-ring';
@@ -2291,84 +2310,186 @@ function showPing(x, y){
   document.getElementById('boardWorld').appendChild(ring);
   setTimeout(()=> ring.remove(), 1200);
 }
+// pieceId -> {cardIndex, until}. Kept in a map (rather than just adding a
+// class to the element once) because renderBoard rebuilds every element
+// from scratch on nearly every interaction — applyPingHighlight re-applies
+// it to the fresh element for as long as the highlight should last.
+const pingHighlights = new Map();
+function flashPingHighlight(pieceId, cardIndex){
+  pingHighlights.set(pieceId, {cardIndex, until: Date.now()+PING_HIGHLIGHT_MS});
+  const el = document.querySelector(`.piece[data-id="${pieceId}"]`);
+  if(el) applyPingHighlight(el, pieceId);
+  setTimeout(()=>{
+    const h = pingHighlights.get(pieceId);
+    if(h && h.until<=Date.now()) pingHighlights.delete(pieceId);
+    document.querySelectorAll(`.piece[data-id="${pieceId}"] .ping-highlight, .piece[data-id="${pieceId}"].ping-highlight`)
+      .forEach(n=>{ if(!pingHighlights.has(pieceId)) n.classList.remove('ping-highlight'); });
+  }, PING_HIGHLIGHT_MS);
+}
+function applyPingHighlight(el, pieceId){
+  const h = pingHighlights.get(pieceId);
+  if(!h || h.until<=Date.now()) return;
+  const cardEl = h.cardIndex!=null ? el.querySelector(`.splay-card[data-i="${h.cardIndex}"]`) : null;
+  (cardEl || el).classList.add('ping-highlight');
+}
+// What a ping on this piece should say in chat. Never names a card that
+// isn't face up (or that the pinger can't actually see) — a ping must not
+// leak hidden information.
+function describePingTarget(p, cardIndex){
+  if(p.kind==='image') return p.label ? `"${p.label}"` : 'a custom piece';
+  if(cardIndex==null){
+    const n = p.cardIds.length;
+    return `a stack${p.label ? ` "${p.label}"` : ''} (${n} card${n!==1?'s':''})`;
+  }
+  const card = cardsById.get(p.cardIds[cardIndex]);
+  const visible = p.faceStates[cardIndex] && card && !card._classified && !card._pending && card.name;
+  return visible ? `"${card.name}"` : 'a face-down card';
+}
 function firePing(clientX, clientY){
   const world = clientToWorld(clientX, clientY);
   doAction('PING', {x:world.x, y:world.y});
 }
-// Right-click alone still pings (below) — but right-click-and-DRAG instead
-// draws the multi-select box (see beginBoxSelect), exactly like holding
-// shift and left-dragging does. Tracked here (rather than in beginBoxSelect
-// itself) purely to tell the two right-button gestures apart.
-//
-// NOTE this deliberately does NOT use the 'contextmenu' event to make that
-// call (an earlier version did, and it never worked): Chromium fires
-// 'contextmenu' immediately after 'mousedown' — before the mouse has moved
-// at all, let alone past the drag threshold — not after 'mouseup' the way
-// you'd expect from a "right click" gesture. So by the time 'contextmenu'
-// fires, no drag could possibly have been detected yet, and keying off it
-// meant every right click fired a ping and reset the drag state before a
-// real drag ever got a chance to start. Deciding click-vs-drag off the
-// mousedown/mousemove/mouseup trio instead — exactly like every other
-// press-vs-drag gesture in this file — works regardless of when a given
-// browser happens to fire 'contextmenu'. That event is now used only to
-// silence the native right-click menu.
-let rightPressState = null;
+// Pings whatever is under (clientX, clientY): a specific card picked out of a
+// splay, a whole stack (its label, or an unsplayed pile's face — only the top
+// card is visible there, so the pile is the thing being pointed at), a lone
+// card, or — if nothing — just that spot on the board.
+function pingAtPoint(target, clientX, clientY){
+  const world = clientToWorld(clientX, clientY);
+  const pieceEl = target && target.closest && target.closest('.piece');
+  const p = pieceEl ? state.pieces.get(pieceEl.dataset.id) : null;
+  if(!p){ doAction('PING', {x:world.x, y:world.y}); return; }
+  let cardIndex = null;
+  if(p.kind!=='image' && !target.closest('.stack-handle')){
+    const splayCard = target.closest('.splay-card:not(.splay-gap)');
+    if(splayCard) cardIndex = Number(splayCard.dataset.i);
+    else if(p.cardIds.length===1) cardIndex = 0;
+  }
+  if(p.kind==='image') cardIndex = null;
+  doAction('PING', {x:world.x, y:world.y, pieceId:p.id, cardIndex, desc:describePingTarget(p, cardIndex)});
+}
+// Right-click (no drag) routing — walks up from whatever was clicked to the
+// nearest element that registered a context handler (see wirePressDragClick's
+// onContext); nothing found means empty board space.
+function dispatchContextClick(target, clientX, clientY){
+  const zoneEl = target && target.closest && target.closest('.zone');
+  if(state.editingZoneId && !(zoneEl && zoneEl.dataset.id===state.editingZoneId)) exitZoneEdit();
+  for(let n=target; n && n.id!=='boardViewport'; n=n.parentElement){
+    if(n._ctx){ n._ctx({clientX, clientY, target}); return; }
+  }
+  openBoardRadialMenu(clientX, clientY);
+}
+let lastPointer = {x:-1, y:-1};
+window.addEventListener('mousemove', (e)=>{ lastPointer = {x:e.clientX, y:e.clientY}; });
+
+let leftPressState = null, rightPressState = null, middlePressState = null;
 document.getElementById('boardViewport').addEventListener('mousedown', (e)=>{
-  if(e.button!==2) return;
-  rightPressState = {startX:e.clientX, startY:e.clientY, additive:e.shiftKey, dragging:false};
+  if(e.button===0){
+    // Pieces and tokens stop their own left mousedown before it gets here; a
+    // zone lets it through unless it's the one being edited (see wireZoneDrag),
+    // so a big zone still behaves like the empty board underneath it.
+    if(e.target.closest('.piece') || e.target.closest('.token')) return;
+    if(!e.shiftKey) clearSelection();
+    leftPressState = {startX:e.clientX, startY:e.clientY, additive:e.shiftKey, dragging:false};
+  } else if(e.button===2){
+    rightPressState = {startX:e.clientX, startY:e.clientY, target:e.target, viewX:state.view.x, viewY:state.view.y, dragging:false};
+  } else if(e.button===1){
+    e.preventDefault(); // no browser autoscroll
+    middlePressState = {startX:e.clientX, startY:e.clientY, target:e.target};
+  }
 });
 window.addEventListener('mousemove', (e)=>{
-  if(!rightPressState || rightPressState.dragging) return;
-  if(Math.hypot(e.clientX-rightPressState.startX, e.clientY-rightPressState.startY) >= DRAG_THRESHOLD){
-    rightPressState.dragging = true;
-    beginBoxSelect(rightPressState.startX, rightPressState.startY, rightPressState.additive);
+  if(leftPressState && !leftPressState.dragging
+     && Math.hypot(e.clientX-leftPressState.startX, e.clientY-leftPressState.startY) >= DRAG_THRESHOLD){
+    leftPressState.dragging = true;
+    beginBoxSelect(leftPressState.startX, leftPressState.startY, leftPressState.additive);
+  }
+  if(rightPressState){
+    const dx = e.clientX-rightPressState.startX, dy = e.clientY-rightPressState.startY;
+    if(!rightPressState.dragging && Math.hypot(dx, dy) >= DRAG_THRESHOLD){
+      rightPressState.dragging = true;
+      document.getElementById('boardViewport').classList.add('panning');
+    }
+    if(rightPressState.dragging){
+      const d = rotateVector(dx, dy, state.viewRotation);
+      state.view.x = rightPressState.viewX + d.x;
+      state.view.y = rightPressState.viewY + d.y;
+      applyView();
+    }
   }
 });
 window.addEventListener('mouseup', (e)=>{
-  if(e.button!==2 || !rightPressState) return;
-  const wasDragging = rightPressState.dragging;
-  rightPressState = null;
-  if(wasDragging) return; // beginBoxSelect's own mouseup listener (armed when the drag started) already finished the box itself
-  firePing(e.clientX, e.clientY);
+  if(e.button===0) leftPressState = null; // beginBoxSelect's own mouseup listener finishes a real box
+  if(e.button===2 && rightPressState){
+    const rp = rightPressState;
+    rightPressState = null;
+    document.getElementById('boardViewport').classList.remove('panning');
+    if(!rp.dragging) dispatchContextClick(rp.target, e.clientX, e.clientY);
+  }
+  if(e.button===1 && middlePressState){
+    const mp = middlePressState;
+    middlePressState = null;
+    if(Math.hypot(e.clientX-mp.startX, e.clientY-mp.startY) < DRAG_THRESHOLD) pingAtPoint(mp.target, e.clientX, e.clientY);
+  }
 });
-document.getElementById('boardViewport').addEventListener('contextmenu', (e)=>{
-  e.preventDefault(); // always suppress the native menu here — see note above for why click-vs-drag isn't decided in this handler
+document.getElementById('boardViewport').addEventListener('contextmenu', (e)=> e.preventDefault());
+// W pings whatever's under the cursor — same targeting as middle-click.
+document.addEventListener('keydown', (e)=>{
+  if(e.key.toLowerCase()!=='w' || e.ctrlKey || e.metaKey || e.altKey) return;
+  if(isTextEntryFocused()) return;
+  const target = document.elementFromPoint(lastPointer.x, lastPointer.y);
+  if(!target || !target.closest('#boardViewport')) return;
+  e.preventDefault();
+  pingAtPoint(target, lastPointer.x, lastPointer.y);
 });
-// Long-press: held on the CAPTURE phase so it still fires even when the press
-// lands on a piece/token/zone whose own mousedown handler stops the event's
-// bubble-phase propagation before it would otherwise reach #boardViewport.
-// Cancelled the moment the press turns into an actual drag (moves past the
-// same threshold every other click-vs-drag gesture uses) or is released early.
-let longPressTimer = null, longPressStart = null;
-function startLongPress(clientX, clientY){
-  cancelLongPress();
-  longPressStart = {x:clientX, y:clientY};
-  longPressTimer = setTimeout(()=>{
-    longPressTimer = null;
-    firePing(clientX, clientY);
-  }, LONG_PRESS_MS);
-}
+
+// Touch: long-press → the pressed thing's menu (or a ping on empty space);
+// two fingers → pan. Taps arrive as ordinary mouse clicks, so a tap on a
+// card flips it exactly like a left-click does.
+let longPressTimer = null, longPressStart = null, longPressFired = false, touchPan = null;
 function cancelLongPress(){
   if(longPressTimer){ clearTimeout(longPressTimer); longPressTimer = null; }
   longPressStart = null;
 }
-document.getElementById('boardViewport').addEventListener('mousedown', (e)=>{
-  if(e.button!==0) return;
-  startLongPress(e.clientX, e.clientY);
-}, true);
-window.addEventListener('mousemove', (e)=>{
-  if(longPressStart && Math.hypot(e.clientX-longPressStart.x, e.clientY-longPressStart.y) >= DRAG_THRESHOLD) cancelLongPress();
-});
-window.addEventListener('mouseup', cancelLongPress);
+function touchMidpoint(touches){ return {x:(touches[0].clientX+touches[1].clientX)/2, y:(touches[0].clientY+touches[1].clientY)/2}; }
 document.getElementById('boardViewport').addEventListener('touchstart', (e)=>{
+  longPressFired = false;
+  if(e.touches.length===2){
+    cancelLongPress();
+    const m = touchMidpoint(e.touches);
+    touchPan = {startX:m.x, startY:m.y, viewX:state.view.x, viewY:state.view.y};
+    return;
+  }
   const t = e.touches[0]; if(!t) return;
-  startLongPress(t.clientX, t.clientY);
+  cancelLongPress();
+  const target = e.target, x = t.clientX, y = t.clientY;
+  longPressStart = {x, y};
+  longPressTimer = setTimeout(()=>{
+    longPressTimer = null;
+    longPressFired = true;
+    let hasCtx = false;
+    for(let n=target; n && n.id!=='boardViewport'; n=n.parentElement){ if(n._ctx){ hasCtx = true; break; } }
+    if(hasCtx) dispatchContextClick(target, x, y); else firePing(x, y);
+  }, LONG_PRESS_MS);
 }, {capture:true, passive:true});
 window.addEventListener('touchmove', (e)=>{
+  if(touchPan && e.touches.length===2){
+    const m = touchMidpoint(e.touches);
+    const d = rotateVector(m.x-touchPan.startX, m.y-touchPan.startY, state.viewRotation);
+    state.view.x = touchPan.viewX + d.x;
+    state.view.y = touchPan.viewY + d.y;
+    applyView();
+    return;
+  }
   const t = e.touches[0]; if(!t || !longPressStart) return;
   if(Math.hypot(t.clientX-longPressStart.x, t.clientY-longPressStart.y) >= DRAG_THRESHOLD) cancelLongPress();
 }, {passive:true});
-window.addEventListener('touchend', cancelLongPress);
+window.addEventListener('touchend', (e)=>{
+  cancelLongPress();
+  if(e.touches.length<2) touchPan = null;
+  // A long-press already did its thing — don't let the browser's follow-up
+  // synthetic click also flip the card underneath.
+  if(longPressFired){ longPressFired = false; if(e.cancelable) e.preventDefault(); }
+}, {passive:false});
 
 /* =========================================================================
    TURN ORDER TRACKER — turn order is built lazily from every player who has
@@ -2816,7 +2937,6 @@ function renderBoard(){
         wireStackLabelHover(labelHandle, p.id); // see hoveredLabelId — scopes the R/F/S hotkeys to the whole pile
       }
     }
-    if(p.kind!=='image') el.addEventListener('dblclick', ()=> flipTopCard(p.id));
     wireHotkeyHint(el, p.id);
     // Anti-cheat visibility: applied uniformly here (rather than inside any one
     // of the branches above) so it shows up on an image piece, a plain card, or
@@ -2828,6 +2948,7 @@ function renderBoard(){
       badge.textContent = `🔍 ${state.searchingBy.get(p.id)} is searching`;
       el.appendChild(badge);
     }
+    applyPingHighlight(el, p.id); // survives this rebuild — see pingHighlights
     world.appendChild(el);
     if(hoveredPieceId===p.id) showHotkeyHint(el); // re-anchor the hint to the freshly-rebuilt element
   });
@@ -2869,7 +2990,7 @@ function fitAll(){
 }
 document.getElementById('btnZoomFit').addEventListener('click', fitAll);
 
-/* Pan (drag empty space) + zoom (wheel), clamped between a "see everything"
+/* Zoom (wheel — panning is right-drag, see BOARD MOUSE CONTROLS), clamped between a "see everything"
    minimum and a "one card fills the screen" maximum. */
 document.getElementById('boardViewport').addEventListener('wheel', (e)=>{
   e.preventDefault();
@@ -2893,28 +3014,16 @@ document.getElementById('boardViewport').addEventListener('wheel', (e)=>{
   applyView();
 }, {passive:false});
 
-let panDrag = null;
-document.getElementById('boardViewport').addEventListener('mousedown', (e)=>{
-  if(e.button!==0) return;
-  if(state.zoneEditMode && !e.target.closest('.piece') && !e.target.closest('.token') && !e.target.closest('.zone')){ startZoneDraw(e); return; }
-  if(e.shiftKey && !e.target.closest('.piece') && !e.target.closest('.token') && !e.target.closest('.zone')){ beginBoxSelect(e.clientX, e.clientY, true); return; }
-  if(e.target.closest('.piece') || e.target.closest('.token')) return; // each one's own onDown (see handlePieceSelectionOnDown/handleTokenSelectionOnDown) already decided what a plain click here means
-  if(e.target.closest('.zone') && state.zoneEditMode) return; // the zone's own drag handler moves it instead
-  clearSelection();
-  panDrag = { startX:e.clientX, startY:e.clientY, viewX:state.view.x, viewY:state.view.y };
-  document.getElementById('boardViewport').classList.add('panning');
-});
-// Rubber-band box-select: right-click-drag (see the PING/POINT TOOL section
-// further down, which is what actually triggers this — a plain right-click
-// with no real movement still pings as always) or shift+left-drag over empty
-// board space draws this box; on release, every UNLOCKED piece and every
-// UNATTACHED token whose footprint touches even a little of it gets
-// selected (a stack, a splayed stack, a single card, a token — never a zone,
-// and never anything locked). `additive` (shift held) unions onto whatever
-// was already selected instead of replacing it — the usual "shift adds"
-// convention. A live "N selected" pill rides along next to the cursor the
-// whole time, and every item that's newly swept in gets a little one-shot
-// bounce the instant the box closes (see selectPop) — both purely for feel.
+// Rubber-band box-select: a left-drag over empty board space (see BOARD
+// MOUSE CONTROLS above, which is what actually triggers this) draws this
+// box; on release, every UNLOCKED piece and every UNATTACHED token whose
+// footprint touches even a little of it gets selected (a stack, a splayed
+// stack, a single card, a token — never a zone, and never anything locked).
+// `additive` (shift held) unions onto whatever was already selected instead
+// of replacing it — the usual "shift adds" convention. A live "N selected"
+// pill rides along next to the cursor the whole time, and every item that's
+// newly swept in gets a little one-shot bounce the instant the box closes
+// (see selectPop) — both purely for feel.
 function beginBoxSelect(startClientX, startClientY, additive){
   const start = clientToWorld(startClientX, startClientY);
   const box = document.createElement('div');
@@ -2982,14 +3091,6 @@ function beginBoxSelect(startClientX, startClientY, additive){
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
 }
-window.addEventListener('mousemove', (e)=>{
-  if(!panDrag) return;
-  const d = rotateVector(e.clientX-panDrag.startX, e.clientY-panDrag.startY, state.viewRotation);
-  state.view.x = panDrag.viewX + d.x;
-  state.view.y = panDrag.viewY + d.y;
-  applyView();
-});
-window.addEventListener('mouseup', ()=>{ panDrag=null; document.getElementById('boardViewport').classList.remove('panning'); });
 
 // Multi-select — shift-click toggles a piece/token in/out of state.selectedIds/
 // selectedTokenIds (local only, never synced); dragging any piece or token
@@ -3055,9 +3156,10 @@ function selectPop(pieceIds, tokenIds){
 }
 /* =========================================================================
    PIECE INTERACTION MODEL
-   A plain click/tap on a piece opens its radial menu (no more right-click or
-   long-press needed). A click-and-DRAG moves something instead — exactly what
-   depends on where you grabbed it:
+   A plain left-click/tap on a card flips it; a right-click (or touch
+   long-press) opens its radial menu — see BOARD MOUSE CONTROLS. A
+   click-and-DRAG moves something instead — exactly what depends on where
+   you grabbed it:
      - Grab a card face directly (the top card, or, on a splayed pile, any
        specific card in the fan) → that ONE card peels off into a new piece
        that follows the cursor and lands where you release it.
@@ -3076,7 +3178,12 @@ const DRAG_THRESHOLD = 5; // px of screen movement before a press counts as a dr
 // onClick (pointer never moved past the threshold) or onMove repeatedly plus
 // onDrop once (real dragging happened), with onDrop given the total
 // screen-space delta and the raw mouseup event for its client coordinates.
-function wirePressDragClick(el, {onDown, onMove, onClick, onDrop, threshold=DRAG_THRESHOLD}){
+// onContext (optional) is what a right-click on `el` does — it isn't wired
+// here directly; it's stored as el._ctx for dispatchContextClick (see BOARD
+// MOUSE CONTROLS) to find, since right-drag has to pan no matter where it
+// starts.
+function wirePressDragClick(el, {onDown, onMove, onClick, onDrop, onContext, threshold=DRAG_THRESHOLD}){
+  if(onContext) el._ctx = onContext;
   // The mousedown/mouseup pair above is what actually decides click-vs-drag and
   // calls onClick/onDrop — but the BROWSER also fires its own native 'click'
   // event afterward (since mousedown and mouseup both landed on this element),
@@ -3438,7 +3545,8 @@ function wireWholeInteraction(el, p){
       ctx = { p, el, ghost:null, tucked:false, startX:p.x, startY:p.y };
     },
     onMove: (dx, dy, ev)=> driveWholePieceDrag(ctx, dx, dy, ev),
-    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
+    onClick: ()=>{ if(p.kind!=='image') flipTopCard(p.id); },
+    onContext: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
       finalizeWholePieceDrop(ctx, ev);
       ctx = null;
@@ -3494,7 +3602,9 @@ function wireGroupHandleDrag(handleEl, p){
       { const b = pieceBounds(p); updateDragGhost(ghost, b.x, b.y, b.w, b.h, effectivePieceRotation(p)); }
       repositionAttachedTokens(p.id);
     },
-    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY), // the Stack menu — see comment above
+    // Left-click on the label does nothing (flipping a whole stack by a stray
+    // click would be too easy); right-click opens the Stack menu.
+    onContext: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY), // the Stack menu — see comment above
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
       clearMergeHighlight();
@@ -3528,7 +3638,8 @@ function wirePeelInteraction(cardEl, p, cardIndex){
       if(!ctx){ ctx = beginPeelAsPiece(p, cardIndex, ev.clientX, ev.clientY); if(!ctx) return; }
       driveWholePieceDrag(ctx, ev.clientX-ctx.pickupClientX, ev.clientY-ctx.pickupClientY, ev);
     },
-    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, cardIndex), // single-card menu for THIS card specifically
+    onClick: ()=> flipTopCard(p.id, cardIndex),
+    onContext: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, cardIndex), // single-card menu for THIS card specifically
     onDrop: (dx, dy, ev)=>{
       if(!ctx) return;
       finalizeWholePieceDrop(ctx, ev);
@@ -3588,8 +3699,13 @@ function beginGroupDrag(anchor, downEvent){
     window.removeEventListener('mousemove', onMove);
     window.removeEventListener('mouseup', onUp);
     if(!moved){
-      if(anchor.kind==='piece') openPieceRadialMenu(anchor.id, downEvent.clientX, downEvent.clientY);
-      else openTokenRadialMenu(anchor.id, downEvent.clientX, downEvent.clientY);
+      // A plain left-click on a selected card flips just that card, same as
+      // outside a selection (right-click still opens its menu).
+      if(anchor.kind==='piece'){
+        const ap = state.pieces.get(anchor.id);
+        const splayCard = downEvent.target.closest && downEvent.target.closest('.splay-card:not(.splay-gap)');
+        if(ap && ap.kind!=='image' && !downEvent.target.closest('.stack-handle')) flipTopCard(anchor.id, splayCard ? Number(splayCard.dataset.i) : undefined);
+      }
       return;
     }
     const d = screenDeltaToWorldDelta(ev.clientX-startClientX, ev.clientY-startClientY);
@@ -3980,24 +4096,48 @@ function showHotkeyHint(el){
   // the keydown handler) rather than the pile as a whole — reworded here so
   // the hint actually matches what pressing the key will do.
   const perCard = !!(p && p.splayed && p.cardIds.length>1);
+  const isStack = !!(p && p.kind!=='image' && p.cardIds.length>1);
   const rotateLabel = perCard ? 'Rotate card' : 'Rotate';
   const flipLabel = perCard ? 'Flip card' : 'Flip';
   const drawLabel = perCard ? 'Draw card' : 'Draw';
   const peekLabel = perCard ? 'Peek card' : 'Peek';
+  const rotateItem = `<div class="hk-item"><kbd>R</kbd>/<kbd>E</kbd> ${rotateLabel}</div>`;
+  const pingItem = `<div class="hk-item"><kbd>W</kbd> Ping</div>`;
   hint.innerHTML = (p && p.kind==='image')
-    ? `<div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> Rotate</div>` // an image piece has no card faces to flip, draw, or peek at
+    ? rotateItem + pingItem // an image piece has no card faces to flip, draw, or peek at
     : `
     <div class="hk-item"><kbd>F</kbd> ${flipLabel}</div>
-    <div class="hk-item"><kbd>R</kbd>/<kbd>⇧R</kbd> ${rotateLabel}</div>
+    ${rotateItem}
     <div class="hk-item"><kbd>D</kbd> ${drawLabel}</div>
     <div class="hk-item"><kbd>P</kbd> ${peekLabel}</div>
+    ${pingItem}
+    ${isStack ? `<div class="hk-item"><kbd>S</kbd> Shuffle</div><div class="hk-item"><kbd>Q</kbd> Search</div>` : ''}
   `;
-  const rect = el.getBoundingClientRect();
+  // Keep clear of the whole pile INCLUDING its label: a 'down' splay docks
+  // its label (which carries the card count) above the anchor card, outside
+  // the piece's own box, so placing the hint just above the box used to sit
+  // right on top of it.
+  const r = el.getBoundingClientRect();
+  let avoid = {left:r.left, top:r.top, right:r.right, bottom:r.bottom};
+  el.querySelectorAll('.piece-label, .search-alert-badge').forEach(lbl=>{
+    const lr = lbl.getBoundingClientRect();
+    if(!lr.width && !lr.height) return;
+    avoid = {left:Math.min(avoid.left, lr.left), top:Math.min(avoid.top, lr.top), right:Math.max(avoid.right, lr.right), bottom:Math.max(avoid.bottom, lr.bottom)};
+  });
   hint.classList.remove('hidden');
   const hintRect = hint.getBoundingClientRect();
-  let left = rect.left + rect.width/2 - hintRect.width/2;
-  let top = rect.top - hintRect.height - 8;
-  if(top < 4) top = rect.bottom + 8; // not enough room above — show below instead
+  const gap = 8;
+  let left = (avoid.left+avoid.right)/2 - hintRect.width/2;
+  let top = avoid.top - hintRect.height - gap;
+  if(top < 4){
+    top = avoid.bottom + gap; // not enough room above — show below instead
+    if(top + hintRect.height > window.innerHeight - 4){
+      // No room above or below either (a tall pile) — sit beside it instead.
+      top = Math.max(4, Math.min(r.top, window.innerHeight - hintRect.height - 4));
+      left = avoid.right + gap;
+      if(left + hintRect.width > window.innerWidth - 4) left = avoid.left - hintRect.width - gap;
+    }
+  }
   left = Math.max(4, Math.min(left, window.innerWidth - hintRect.width - 4));
   hint.style.left = left+'px';
   hint.style.top = top+'px';
@@ -4006,6 +4146,7 @@ function hideHotkeyHint(){ document.getElementById('hotkeyHint').classList.add('
 document.addEventListener('keydown', (e)=>{
   if(!hoveredPieceId) return;
   if(isTextEntryFocused()) return;
+  if(e.ctrlKey || e.metaKey || e.altKey) return; // leave browser shortcuts (copy, reload, …) alone
   const p = state.pieces.get(hoveredPieceId);
   if(!p) return;
   const key = e.key.toLowerCase();
@@ -4014,23 +4155,23 @@ document.addEventListener('keydown', (e)=>{
   // flipTopCard/drawTopCard's own "no cardIndex given" default of the top
   // card, same as rotateCardAt/rotatePiece already does with null.
   const cardIdx = (p.splayed && p.cardIds.length>1 && hoveredCardIndex!=null && hoveredCardIndex<p.cardIds.length) ? hoveredCardIndex : undefined;
-  // Hovering the pile's own LABEL (rather than a card face) reuses these same
-  // letters for the STACK-wide equivalents instead — same actions the split
-  // radial menu's Rotate/Flip/Search stack-only items call (see
-  // openPieceRadialMenu) — so R/F/S never have to mean two different scopes
-  // depending on a pixel you can't see the boundary of; only a multi-card
-  // pile actually has a label to hover in the first place.
-  if(hoveredLabelId===hoveredPieceId && p.cardIds.length>1){
-    if(key==='r'){ e.preventDefault(); rotateCardAt(hoveredPieceId, null, e.shiftKey ? -1 : 1); return; }
+  const isStack = p.kind!=='image' && p.cardIds.length>1;
+  const rotateDir = key==='r' ? 1 : key==='e' ? -1 : 0;
+  // S/Q are always stack-wide, from any card in the stack.
+  if(isStack && key==='s'){ e.preventDefault(); shufflePiece(hoveredPieceId); return; }
+  if(isStack && key==='q'){ e.preventDefault(); openSearchModal(hoveredPieceId); return; }
+  // Hovering the pile's own LABEL (rather than a card face) makes R/E/F
+  // stack-wide instead — same actions as the Stack radial menu's Rotate/Flip
+  // (see openPieceRadialMenu). Only a multi-card pile has a label to hover.
+  if(hoveredLabelId===hoveredPieceId && isStack){
+    if(rotateDir){ e.preventDefault(); rotateCardAt(hoveredPieceId, null, rotateDir); return; }
     if(key==='f'){ e.preventDefault(); flipStack(hoveredPieceId); return; }
-    if(key==='s'){ e.preventDefault(); openSearchModal(hoveredPieceId); return; }
   }
-  if(key==='r'){ e.preventDefault(); rotatePiece(hoveredPieceId, e.shiftKey ? -1 : 1); }
+  if(rotateDir){ e.preventDefault(); rotatePiece(hoveredPieceId, rotateDir); }
   else if(p.kind!=='image' && key==='f'){ e.preventDefault(); flipTopCard(hoveredPieceId, cardIdx); }
   else if(p.kind!=='image' && key==='d'){ e.preventDefault(); drawTopCard(hoveredPieceId, 'hand', cardIdx); }
-  // P hotkey (item 5): same hoveredPieceId/cardIdx targeting convention as
-  // F/D above — peeks at whichever card is under the cursor (the pile's own
-  // top card by default, or the specific splay card being hovered).
+  // P peeks at whichever card is under the cursor (the pile's own top card
+  // by default, or the specific splay card being hovered).
   else if(p.kind!=='image' && key==='p'){ e.preventDefault(); peekTopCard(hoveredPieceId, cardIdx); }
 });
 // Escape clears the current multi-selection — a quick, always-available "never
@@ -4040,6 +4181,7 @@ document.addEventListener('keydown', (e)=>{
   if(e.key!=='Escape') return;
   if(isTextEntryFocused()) return;
   clearSelection();
+  exitZoneEdit();
 });
 
 // True when the cursor is over the BOTTOM THIRD of the target's own top-card
@@ -4503,7 +4645,8 @@ function wireStackInteraction(el, p){
     // clicking the card's own face always opens the single-card menu, same
     // as picking any other card out of a splay does. The pile-wide menu now
     // lives exclusively behind the label handle (see wireGroupHandleDrag).
-    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, p.cardIds.length-1),
+    onClick: ()=> flipTopCard(p.id, p.cardIds.length-1),
+    onContext: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, p.cardIds.length-1),
     onDrop: (dx, dy, ev)=>{
       document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
       if(mode==='edge'){
@@ -4668,7 +4811,8 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
       if(!ctx){ ctx = beginPeelAsPiece(p, cardIndex, ev.clientX, ev.clientY); if(!ctx) return; }
       driveWholePieceDrag(ctx, ev.clientX-ctx.pickupClientX, ev.clientY-ctx.pickupClientY, ev);
     },
-    onClick: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, cardIndex), // single-card menu for THIS card specifically
+    onClick: ()=> flipTopCard(p.id, cardIndex),
+    onContext: (e)=> openPieceRadialMenu(p.id, e.clientX, e.clientY, cardIndex), // single-card menu for THIS card specifically
     onDrop: (dx, dy, ev)=>{
       if(mode==='anchor-adjust'){
         document.body.classList.remove('force-cursor-ew', 'force-cursor-ns');
@@ -4927,6 +5071,26 @@ function closeRadialMenu(){
   menu.innerHTML = '';
 }
 document.addEventListener('click', (e)=>{ if(!e.target.closest('#radialMenu')) closeRadialMenu(); });
+// Cards stop their own click events (see wirePressDragClick), so the listener
+// above never sees a left-click that flips a card — close on any left-press
+// outside the menu too, in capture phase so nothing can swallow it first.
+document.addEventListener('mousedown', (e)=>{ if(e.button===0 && !e.target.closest('#radialMenu')) closeRadialMenu(); }, true);
+
+// Right-click on empty board space. Each item closes the ring (openRadialMenu
+// normally redraws after an action) and acts at the spot that was clicked.
+function openBoardRadialMenu(clientX, clientY){
+  let done = false;
+  const act = (fn)=> ()=>{ done = true; fn(); };
+  const items = [
+    {icon:'📥', label:'Import Deck', action:act(()=>{
+      pendingDeckDropWorld = clientToWorld(clientX, clientY);
+      document.getElementById('deckFileInput').click();
+    })},
+    {icon:'🔘', label:'Add Token', action:act(()=> openTokenTypeMenuAt(clientX, clientY))},
+    {icon:'▭', label:'Add Zone', action:act(()=> addZoneAt(clientX, clientY))},
+  ];
+  openRadialMenu(()=> done ? null : items, clientX, clientY);
+}
 function closeImageScalePopover(){ document.getElementById('imageScalePopover').classList.add('hidden'); }
 document.addEventListener('click', (e)=>{
   if(e.target.closest('#imageScalePopover') || e.target.closest('.radial-item')) return;
@@ -5105,6 +5269,20 @@ function renderPlayerCounters(){
    everyone for the rest of the game. Standalone on the board, or attached to
    a specific piece (rendered anchored to its corner, moving with it).
    ========================================================================= */
+// Where the token menu opens and where its token lands: the Add Token button
+// and the view's center by default, or the board spot that was right-clicked
+// when opened from the board menu (see openTokenTypeMenuAt).
+let tokenMenuAnchor = null, tokenPlaceAtWorld = null;
+function tokenMenuAnchorEl(){
+  if(!tokenMenuAnchor) return document.getElementById('btnAddToken');
+  const {x, y} = tokenMenuAnchor;
+  return { getBoundingClientRect: ()=>({left:x, right:x, top:y, bottom:y, width:0, height:0}) };
+}
+function openTokenTypeMenuAt(clientX, clientY){
+  tokenMenuAnchor = {x:clientX, y:clientY};
+  tokenPlaceAtWorld = clientToWorld(clientX, clientY);
+  openTokenTypeMenu();
+}
 function openTokenTypeMenu(){
   const menu = document.getElementById('tokenMenu');
   const types = [...state.tokenTypes.entries()];
@@ -5136,7 +5314,7 @@ function openTokenTypeMenu(){
     });
   });
   menu.classList.remove('hidden');
-  positionMenuNear(menu, document.getElementById('btnAddToken'));
+  positionMenuNear(menu, tokenMenuAnchorEl());
 }
 function openNewTokenTypeForm(){
   const menu = document.getElementById('tokenMenu');
@@ -5155,7 +5333,7 @@ function openNewTokenTypeForm(){
   });
   // The form is taller than the plain type list it replaced — re-measure and
   // re-clamp now that the (bigger) content is actually in the DOM.
-  positionMenuNear(menu, document.getElementById('btnAddToken'));
+  positionMenuNear(menu, tokenMenuAnchorEl());
 }
 // Same markup/logic as openNewTokenTypeForm above, in "edit" mode: prefilled
 // with the type's current name/color, saving edits an existing type in place
@@ -5178,19 +5356,20 @@ function openEditTokenTypeForm(oldName){
     setUndo(()=> doAction('EDIT_TOKEN_TYPE', {oldName:name, name:oldName, color:oldColor}));
     menu.classList.add('hidden');
   });
-  positionMenuNear(menu, document.getElementById('btnAddToken'));
+  positionMenuNear(menu, tokenMenuAnchorEl());
 }
 document.getElementById('btnAddToken').addEventListener('click', (e)=>{
   e.stopPropagation();
   const menu = document.getElementById('tokenMenu');
+  tokenMenuAnchor = null; tokenPlaceAtWorld = null;
   if(menu.classList.contains('hidden')) openTokenTypeMenu(); else menu.classList.add('hidden');
 });
 document.addEventListener('click', (e)=>{ if(!e.target.closest('#tokenMenu') && !e.target.closest('#btnAddToken')) document.getElementById('tokenMenu').classList.add('hidden'); });
 
 function placeNewToken(type){
   const vp = document.getElementById('boardViewport');
-  const worldX = (vp.clientWidth/2 - state.view.x)/state.view.scale - 22;
-  const worldY = (vp.clientHeight/2 - state.view.y)/state.view.scale - 22;
+  const worldX = tokenPlaceAtWorld ? tokenPlaceAtWorld.x - 22 : (vp.clientWidth/2 - state.view.x)/state.view.scale - 22;
+  const worldY = tokenPlaceAtWorld ? tokenPlaceAtWorld.y - 22 : (vp.clientHeight/2 - state.view.y)/state.view.scale - 22;
   const id = newTokenId();
   doAction('PLACE_TOKEN', { id, x:worldX, y:worldY, type, count:1, attachedTo:null });
   setUndo(()=> doAction('REMOVE_TOKEN', {id}));
@@ -5356,7 +5535,7 @@ function wireTokenDrag(el, t){
       const mergeTarget = findTokenMergeTarget(t, nx+22, ny+22);
       if(mergeTarget) showTokenMergeHighlight(mergeTarget.id); else clearTokenMergeHighlight();
     },
-    onClick: (e)=> openTokenRadialMenu(t.id, e.clientX, e.clientY),
+    onContext: (e)=> openTokenRadialMenu(t.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
       clearTokenMergeHighlight();
@@ -5404,7 +5583,7 @@ function wireTokenPeelInteraction(faceEl, t){
       const size = tokenSize(t);
       updateDragGhost(ghost, world.x-size/2, world.y-size/2, size, size);
     },
-    onClick: (e)=> openTokenRadialMenu(t.id, e.clientX, e.clientY),
+    onContext: (e)=> openTokenRadialMenu(t.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
       peelTokenToBoard(t.id, ev.clientX, ev.clientY);
@@ -5566,10 +5745,10 @@ document.getElementById('customPieceFileInput').addEventListener('change', (e)=>
 
 /* =========================================================================
    ZONES — colored/labeled/stroked board regions, optionally snapping pieces
-   and tokens inside or outside their bounds. Drawn by dragging on the board
-   ("New Zone" arms the next drag); repositioned/resized afterward only while
-   "Edit Zones" is checked, so they stay out of the way of ordinary play; the
-   right-click Edit/Delete menu always works regardless of that toggle.
+   and tokens inside or outside their bounds. Created from the board's
+   right-click menu ("Add Zone"); right-clicking a zone opens its own editor
+   (style popover + move/resize handles), which closes on the next click
+   elsewhere — otherwise a zone stays out of the way of ordinary play.
    ========================================================================= */
 // Converts a point in CLIENT (screen) space into the coordinate frame #boardWorld's
 // own pan/zoom transform operates in. #boardRotate wraps #boardWorld and rotates
@@ -5615,13 +5794,14 @@ function renderZones(){
   const world = document.getElementById('boardWorld');
   state.zones.forEach(z=>{
     const el = document.createElement('div');
-    el.className = 'zone' + (state.zoneEditMode?' zone-editable':'');
+    const editing = state.editingZoneId===z.id;
+    el.className = 'zone' + (editing?' zone-editable':'');
     el.dataset.id = z.id;
     el.style.left=z.x+'px'; el.style.top=z.y+'px'; el.style.width=z.w+'px'; el.style.height=z.h+'px';
     el.style.background = hexToRgba(z.color||'#3d7dca', 0.28);
     el.style.border = `${z.strokeWidth!=null?z.strokeWidth:2}px solid ${z.strokeColor||'#3d7dca'}`;
     el.innerHTML = (z.label ? `<div class="zone-label">${escapeHtml(z.label)}</div>` : '') + (z.locked ? `<div class="lock-badge">🔒</div>` : '');
-    if(state.zoneEditMode && !z.locked){
+    if(editing && !z.locked){
       // All 4 edges + all 4 corners (see wireZoneResize's own comment for how
       // each direction maps to which of x/y/w/h it actually adjusts) —
       // previously just the one bottom-right corner, which meant a zone
@@ -5638,19 +5818,18 @@ function renderZones(){
     world.appendChild(el);
   });
 }
-// A plain click on a zone has no effect at all unless Edit Zones mode is on —
-// outside that mode a zone is just background, so clicking or dragging it
-// does nothing. In Edit Zones mode, a click opens its edit popover directly
-// (no separate radial-menu step first, since every action a zone offers —
-// label, colors, snap mode, lock, delete — already lives in that one panel;
-// see openZoneEditPopover), and a drag actually moves it (never for a locked
-// zone).
+// A zone is just background unless it's the one being edited: a left-press
+// on it falls through to the board underneath (so left-drag box-selects and
+// right-drag pans across zones like anywhere else). Right-click opens this
+// zone's own editor — its style popover plus move/resize handles — which
+// closes again as soon as you click anything else (see exitZoneEdit).
 function wireZoneDrag(el, z){
   let startX, startY, canDrag=false, ghost=null;
   wirePressDragClick(el, {
     onDown: (e)=>{
+      if(state.editingZoneId!==z.id) return false; // not being edited — let the press reach the board
       if(e.target.closest('.zone-handle')) return false; // the resize handle drags itself
-      canDrag = state.zoneEditMode && !z.locked;
+      canDrag = !z.locked;
       startX = z.x; startY = z.y;
     },
     onMove: (dx, dy)=>{
@@ -5661,7 +5840,7 @@ function wireZoneDrag(el, z){
       el.style.left=z.x+'px'; el.style.top=z.y+'px';
       updateDragGhost(ghost, z.x, z.y, z.w, z.h);
     },
-    onClick: (e)=>{ if(state.zoneEditMode) openZoneEditPopover(z.id, e.clientX, e.clientY); },
+    onContext: (e)=> enterZoneEdit(z.id, e.clientX, e.clientY),
     onDrop: ()=>{
       removeDragGhost(ghost); ghost=null;
       if(!canDrag) return;
@@ -5669,6 +5848,29 @@ function wireZoneDrag(el, z){
       setUndo(()=> doAction('SET_ZONE_RECT', {id:z.id, x:startX, y:startY, w:z.w, h:z.h}));
     },
   });
+}
+function enterZoneEdit(zoneId, clientX, clientY){
+  if(!state.zones.has(zoneId)) return;
+  state.editingZoneId = zoneId;
+  renderBoard();
+  openZoneEditPopover(zoneId, clientX, clientY);
+}
+function exitZoneEdit(){
+  if(!state.editingZoneId) return;
+  state.editingZoneId = null;
+  closeZoneEditPopover();
+  renderBoard();
+}
+// Board menu's "Add Zone": a default-sized zone centered where you
+// right-clicked, opened straight into its editor.
+function addZoneAt(clientX, clientY){
+  const c = clientToWorld(clientX, clientY);
+  const w = 320, h = 220;
+  const zone = { id:newZoneId(), x:snapCoord(c.x-w/2), y:snapCoord(c.y-h/2), w, h,
+    color:'#3d7dca', strokeColor:'#3d7dca', strokeWidth:2, label:'', snapMode:'none', locked:false };
+  doAction('PLACE_ZONE', zone);
+  setUndo(()=> doAction('REMOVE_ZONE', {id:zone.id}));
+  enterZoneEdit(zone.id, clientX, clientY);
 }
 // `dir` is which edge(s)/corner this particular handle drags — any
 // combination of 'n'/'s' (top/bottom) and 'e'/'w' (right/left). An 'e'/'s'
@@ -5681,6 +5883,7 @@ function wireZoneDrag(el, z){
 // compensate. Same Math.max(40, …) minimum as before, now applied per-axis.
 function wireZoneResize(handleEl, z, dir){
   handleEl.addEventListener('mousedown', (e)=>{
+    if(e.button!==0) return; // right-drag pans, even starting on a handle
     e.stopPropagation();
     const startClientX=e.clientX, startClientY=e.clientY;
     const startX=z.x, startY=z.y, startW=z.w, startH=z.h;
@@ -5706,49 +5909,9 @@ function wireZoneResize(handleEl, z, dir){
     window.addEventListener('mouseup', onUp);
   });
 }
-// There's no separate "New Zone" button or armed state: whenever Edit Zones
-// mode is on, a plain click-and-drag on empty board space IS drawing a new
-// zone (see the boardViewport mousedown handler, which dispatches here
-// directly based on state.zoneEditMode).
-function startZoneDraw(e){
-  const start = clientToWorld(e.clientX, e.clientY);
-  const previewEl = document.createElement('div');
-  previewEl.className = 'zone';
-  previewEl.style.background = hexToRgba('#3d7dca', 0.22);
-  previewEl.style.border = '2px dashed #3d7dca';
-  previewEl.style.left = start.x+'px'; previewEl.style.top = start.y+'px';
-  previewEl.style.width = '0px'; previewEl.style.height = '0px';
-  document.getElementById('boardWorld').appendChild(previewEl);
-  function rectFrom(ev){
-    const cur = clientToWorld(ev.clientX, ev.clientY);
-    return { x:Math.min(start.x,cur.x), y:Math.min(start.y,cur.y), w:Math.abs(cur.x-start.x), h:Math.abs(cur.y-start.y) };
-  }
-  function onMove(ev){
-    const r = rectFrom(ev);
-    previewEl.style.left=r.x+'px'; previewEl.style.top=r.y+'px'; previewEl.style.width=r.w+'px'; previewEl.style.height=r.h+'px';
-  }
-  function onUp(ev){
-    window.removeEventListener('mousemove', onMove);
-    window.removeEventListener('mouseup', onUp);
-    previewEl.remove();
-    const r = rectFrom(ev);
-    const zone = { id:newZoneId(), x:r.x, y:r.y, w:Math.max(40,r.w), h:Math.max(40,r.h),
-      color:'#3d7dca', strokeColor:'#3d7dca', strokeWidth:2, label:'', snapMode:'none', locked:false };
-    doAction('PLACE_ZONE', zone);
-    setUndo(()=> doAction('REMOVE_ZONE', {id:zone.id}));
-    openZoneEditPopover(zone.id, ev.clientX, ev.clientY);
-  }
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', onUp);
-}
-document.getElementById('zoneEditCheckbox').addEventListener('change', (e)=>{
-  state.zoneEditMode = e.target.checked;
-  document.getElementById('boardViewport').classList.toggle('zone-drawing', state.zoneEditMode);
-  renderBoard();
-});
-// A zone's "radial menu" IS this panel — clicking a zone opens it directly
-// (see wireZoneDrag), with every action (style, snap, lock, delete) in one
-// place rather than needing an Edit item in a separate pie menu first.
+// A zone's "radial menu" IS this panel — right-clicking a zone opens it
+// directly (see enterZoneEdit), with every action (style, snap, lock,
+// delete) in one place rather than needing an Edit item in a pie menu first.
 function openZoneEditPopover(zoneId, clientX, clientY){
   const z = state.zones.get(zoneId); if(!z) return;
   const old = { label:z.label, color:z.color, strokeColor:z.strokeColor, strokeWidth:z.strokeWidth, snapMode:z.snapMode };
@@ -5806,42 +5969,27 @@ function openZoneEditPopover(zoneId, clientX, clientY){
     const clone = {...state.zones.get(zoneId)};
     doAction('REMOVE_ZONE', {id:zoneId});
     setUndo(()=> doAction('PLACE_ZONE', clone));
-    closeZoneEditPopover();
+    exitZoneEdit();
   });
-  document.getElementById('btnZoneDone').addEventListener('click', closeZoneEditPopover);
+  document.getElementById('btnZoneDone').addEventListener('click', exitZoneEdit);
   const vw=window.innerWidth, vh=window.innerHeight;
   el.style.left = Math.min(clientX, vw-230)+'px';
   el.style.top = Math.min(clientY, vh-280)+'px';
   el.classList.remove('hidden');
 }
 function closeZoneEditPopover(){ document.getElementById('zonePopover').classList.add('hidden'); }
-document.addEventListener('click', (e)=>{
-  if(e.target.closest('#zonePopover')) return;
-  closeZoneEditPopover();
-});
-// Auto-exits "Edit Zones" mode the instant the user touches anything that
-// ISN'T part of editing a zone — a card, a deck label, a token, or any other
-// button (Seth: leaving it on invites accidentally dragging/resizing a zone
-// later when the user thought they'd moved on). Deliberately a CAPTURE-phase
-// listener, not the ordinary bubble-phase 'click' handler just above: every
-// piece is wired through wirePressDragClick, which calls e.stopPropagation()
-// on both its own mousedown AND its native click — so a ordinary document
-// click listener never even sees a click that landed on a card. Capture runs
-// top-down BEFORE any of that, so it sees every mousedown regardless.
+// The zone editor closes the instant you left-press anything other than that
+// zone or its own popover. Capture phase, because pieces stop their own
+// mousedown before it would ever bubble up to document. (Right-clicking
+// something else closes it too — see dispatchContextClick — but right-DRAG
+// panning deliberately doesn't, so you can pan while editing.)
 document.addEventListener('mousedown', (e)=>{
-  if(!state.zoneEditMode) return;
+  if(!state.editingZoneId || e.button!==0) return;
   const t = e.target;
-  if(t.closest('#zonePopover')) return; // working within a zone's own edit popover
-  if(t.closest('.zone')) return; // clicking a zone itself (move/resize, or opens its popover)
-  const editZonesLabel = document.getElementById('zoneEditCheckbox').closest('label');
-  if(editZonesLabel && t.closest('label')===editZonesLabel) return; // toggling the checkbox itself
-  // Empty board space (not a piece/token) is the "draw a new zone" gesture —
-  // itself part of editing zones, so it doesn't turn the mode off.
-  if(t.closest('#boardViewport') && !t.closest('.piece') && !t.closest('.token')) return;
-  state.zoneEditMode = false;
-  document.getElementById('zoneEditCheckbox').checked = false;
-  document.getElementById('boardViewport').classList.remove('zone-drawing');
-  renderBoard();
+  if(t.closest('#zonePopover')) return;
+  const zoneEl = t.closest('.zone');
+  if(zoneEl && zoneEl.dataset.id===state.editingZoneId) return;
+  exitZoneEdit();
 }, true);
 
 /* =========================================================================
@@ -5992,13 +6140,12 @@ function leaveGame(){
   state.hand = [];
   state.playerHandCounts.clear();
   state.undoFn = null;
-  state.zoneEditMode = false;
+  state.editingZoneId = null;
   state.players.clear();
   state.turnOrder = [];
   state.turnIndex = -1;
   state.selectedIds.clear();
   cancelLongPress();
-  document.getElementById('boardViewport').classList.remove('zone-drawing');
   document.getElementById('game-screen').classList.remove('active');
   document.getElementById('setup-screen').classList.remove('hidden');
 }
@@ -6147,7 +6294,10 @@ function playHandCardToBoard(pick, clientX, clientY){
 /* =========================================================================
    DECK IMPORT WIRING
    ========================================================================= */
-document.getElementById('btnImportDeck').addEventListener('click', ()=> document.getElementById('deckFileInput').click());
+// Set by the board menu's Import Deck (see openBoardRadialMenu) so the deck
+// lands where you right-clicked; the toolbar button clears it.
+let pendingDeckDropWorld = null;
+document.getElementById('btnImportDeck').addEventListener('click', ()=>{ pendingDeckDropWorld = null; document.getElementById('deckFileInput').click(); });
 document.getElementById('deckFileInput').addEventListener('change', (e)=>{
   const file = e.target.files[0]; if(!file) return;
   toast('Reading deck file…');
@@ -6155,9 +6305,15 @@ document.getElementById('deckFileInput').addEventListener('change', (e)=>{
   reader.onload = async ()=>{
     try{
       const json = JSON.parse(reader.result);
-      const b = boardBounds();
-      await importDeckJson(json, (b.minX+b.maxX)/2, (b.minY+b.maxY)/2);
-      fitAll();
+      const drop = pendingDeckDropWorld;
+      pendingDeckDropWorld = null;
+      if(drop){
+        await importDeckJson(json, snapCoord(drop.x - PIECE_W/2), snapCoord(drop.y - PIECE_H/2)); // centered on the click
+      } else {
+        const b = boardBounds();
+        await importDeckJson(json, (b.minX+b.maxX)/2, (b.minY+b.maxY)/2);
+        fitAll();
+      }
     }catch(err){
       toast('Could not read that deck file: '+err.message);
     }
