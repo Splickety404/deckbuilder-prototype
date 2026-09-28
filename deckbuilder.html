@@ -674,6 +674,32 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
       <div class="modal-body">
         <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">The sets below are the ones your signed-in Google account currently has access to. This list is entirely server-controlled — to get access to another set, ask whoever administers the sets to share its Drive folder with your account.</p>
         <div id="setsList"></div>
+        <div class="btn" id="btnRequestAccess" style="width:100%;justify-content:center;margin-top:12px;">Request access to another set…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Request access to a set — Game/Set are plain text (not a dropdown of known
+       sets) so this form never reveals which games/sets actually exist to someone
+       who doesn't already have access to at least one. -->
+  <div class="modal-overlay hidden" id="requestAccessModal">
+    <div class="modal-box" style="width:min(440px,92vw);">
+      <div class="modal-header"><h2>Request set access</h2><div class="btn btn-icon" data-close="requestAccessModal">✕</div></div>
+      <div class="modal-body">
+        <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">This sends a request to whoever administers the card sets. They'll follow up once your account has been given access.</p>
+        <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Game</label>
+        <input type="text" id="requestAccessGame" placeholder="Which game" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+        <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Set</label>
+        <input type="text" id="requestAccessSet" placeholder="Which set" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+        <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Your Gmail address</label>
+        <input type="text" id="requestAccessEmail" placeholder="you@gmail.com" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+        <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Note (optional)</label>
+        <textarea id="requestAccessNote" rows="3" placeholder="Anything else worth mentioning" style="width:100%;box-sizing:border-box;resize:vertical;margin-bottom:12px;font-family:var(--font);"></textarea>
+        <p id="requestAccessError" style="color:var(--danger);font-size:12.5px;min-height:1.2em;margin:0 0 8px;"></p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <div class="btn" data-close="requestAccessModal">Cancel</div>
+          <div class="btn btn-accent" id="btnSubmitRequestAccess">Send request</div>
+        </div>
       </div>
     </div>
   </div>
@@ -851,6 +877,7 @@ const state = {
   filtersByType: {
     overlord: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
     champion: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
+    scheme: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
     generic: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
   },
   openFilterGroups: new Set(['type','aspect','loyalty']),
@@ -868,9 +895,15 @@ const state = {
 // deck-editing code without a single one of those call sites knowing the difference.
 function activeDeckKey(){ return state.isEchoMode ? state.deckType : 'generic'; }
 function curDeck(){ return state.decks[activeDeckKey()]; }
-function curFilters(){ return state.filtersByType[activeDeckKey()]; }
-
 function activeIsSchemeMode(){ return state.isEchoMode && state.deckType==='overlord' && curDeck().overlordMode==='scheme'; }
+// Filters are a browsing preference tied to which TAB is showing, not which deck slot
+// is being edited — the Overlord main-deck view and its Scheme view browse the same
+// underlying deck slot (curDeck() stays 'overlord' either way, since schemeIds live on
+// the overlord slot), but they're different card pools with different useful filters
+// (rarity/cost matter for the main deck, less so for a 5-card scheme pool), so they get
+// their own bucket here rather than sharing Overlord's.
+function activeFilterKey(){ return activeIsSchemeMode() ? 'scheme' : activeDeckKey(); }
+function curFilters(){ return state.filtersByType[activeFilterKey()]; }
 
 /* =========================================================================
    DATA LOADING
@@ -1376,6 +1409,7 @@ function resetGameSpecificState(){
   state.filtersByType = {
     overlord: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
     champion: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
+    scheme: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
     generic: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
   };
   state.selection = new Set();
@@ -1574,6 +1608,72 @@ function openSetsModal(){
   document.getElementById('setsModal').classList.remove('hidden');
 }
 document.getElementById('btnManageSets').addEventListener('click', openSetsModal);
+
+/* ---- Request access to a set (emails smcbride@ghostgalaxy.com — see Code.gs's
+   requestAccess endpoint). Game/Set are free text the requester types themselves,
+   never picked from a list, so this form can't be used to fish for which games/sets
+   actually exist. ---- */
+function openRequestAccessModal(){
+  document.getElementById('requestAccessGame').value = '';
+  document.getElementById('requestAccessSet').value = '';
+  document.getElementById('requestAccessEmail').value = state.userEmail || '';
+  document.getElementById('requestAccessNote').value = '';
+  document.getElementById('requestAccessError').textContent = '';
+  document.getElementById('requestAccessModal').classList.remove('hidden');
+}
+document.getElementById('btnRequestAccess').addEventListener('click', openRequestAccessModal);
+
+// Same fetch-with-timeout-then-JSONP-fallback shape as fetchWhoAmI/fetchSetData/etc
+// above — this endpoint is UNGATED (no idToken), so it works even for someone who
+// isn't signed in to anything yet.
+async function submitAccessRequest(game, setName, email, note){
+  const url = `${WEBAPP_URL}?requestAccess=1&game=${encodeURIComponent(game)}&set=${encodeURIComponent(setName)}&email=${encodeURIComponent(email)}&note=${encodeURIComponent(note)}`;
+  let result;
+  try{
+    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
+  }catch(fetchErr){
+    result = await new Promise((resolve,reject)=>{
+      const cbName = '__eooReqAccessCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to send that request. Try again in a moment.')); }, 30000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+  if(!result.ok) throw new Error(result.error || 'Unknown error sending that request.');
+  return result;
+}
+document.getElementById('btnSubmitRequestAccess').addEventListener('click', async ()=>{
+  const game = document.getElementById('requestAccessGame').value.trim();
+  const setName = document.getElementById('requestAccessSet').value.trim();
+  const email = document.getElementById('requestAccessEmail').value.trim();
+  const note = document.getElementById('requestAccessNote').value.trim();
+  const errEl = document.getElementById('requestAccessError');
+  if(!game || !setName || !email){
+    errEl.textContent = 'Game, Set, and your Gmail address are all required.';
+    return;
+  }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    errEl.textContent = 'That doesn\'t look like a valid email address.';
+    return;
+  }
+  errEl.textContent = '';
+  const btn = document.getElementById('btnSubmitRequestAccess');
+  const originalText = btn.textContent;
+  btn.textContent = 'Sending…';
+  try{
+    await submitAccessRequest(game, setName, email, note);
+    document.getElementById('requestAccessModal').classList.add('hidden');
+    toast('Access request sent — you\'ll hear back once your account has been granted access.');
+  }catch(err){
+    errEl.textContent = 'Could not send that request: ' + err.message;
+  }finally{
+    btn.textContent = originalText;
+  }
+});
 
 /* Neutral cards are identified by their aspect value itself (e.g. "OLNeutral"/"CHNeutral"
    in the live data) rather than by process-of-elimination against leader cards. */
@@ -3130,7 +3230,7 @@ document.getElementById('deckViewCheckbox').addEventListener('change', (e)=>{
   renderAll();
 });
 document.getElementById('btnClearFilters').addEventListener('click', ()=>{
-  state.filtersByType[state.deckType] = {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()};
+  state.filtersByType[activeFilterKey()] = {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()};
   document.getElementById('searchBox').value='';
   renderAll();
 });
