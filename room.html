@@ -220,21 +220,25 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .drag-ghost{position:absolute;border:2px dashed rgba(255,255,255,.55);border-radius:var(--radius-sm);
   background:rgba(255,255,255,.08);pointer-events:none;z-index:1;}
 
-/* Outline of a pile's TRUE visual footprint (per pieceBounds — the same
-   rectangle a drag-ghost would use, and correct for 'left'/'up' splays whose
-   fan grows backward out of the piece's own x/y origin), shown while
-   hovering that pile's stack-handle label so it's obvious exactly how far
-   the fan actually reaches. Purely visual, like .drag-ghost, and lives in
-   #boardWorld for the same reason. */
-/* Seth: make this read as an obvious "this whole stack" highlight, not a
-   faint sliver — a thicker, brighter accent-colored border plus a real glow
-   in the same color (rgba here is just --accent's own #8385f5 broken into
-   its r,g,b — CSS can't tint box-shadow off a color var directly) rather than
-   the old barely-visible white sliver. */
-.stack-perimeter{position:absolute;border:3px solid var(--accent);border-radius:var(--radius-sm);
-  box-shadow:0 0 0 4px rgba(131,133,245,.35), 0 0 18px 3px rgba(131,133,245,.5);pointer-events:none;z-index:1;
-  opacity:0;transition:opacity .15s var(--bounce);}
-.stack-perimeter.visible{opacity:1;}
+/* Highlights outline each CARD in a pile rather than one box around the
+   whole pile. A single box can't follow a splay whose cards are individually
+   rotated, or a pile rotated around its anchor, while each card's own element
+   is already exactly where it's drawn — so an outline on it can't go wrong.
+   Covers: hovering a stack's label (stack-hover), a selected splayed pile,
+   and a pinged splayed pile (see flashPingHighlight). */
+.piece.stack-hover > .splay-card:not(.splay-gap), .piece.stack-hover > .piece-face{
+  outline:3px solid var(--accent);outline-offset:2px;
+  box-shadow:0 0 0 4px rgba(131,133,245,.35), 0 0 18px 3px rgba(131,133,245,.5);}
+.piece.splayed.selected{outline:none;box-shadow:none;animation:none;}
+.piece.splayed.selected > .splay-card:not(.splay-gap){outline:2px solid var(--accent);outline-offset:3px;
+  animation:selectedGlow 1.8s ease-in-out infinite;}
+.piece.splayed.ping-highlight{animation:none;}
+.piece.splayed.ping-highlight > .splay-card:not(.splay-gap){animation:pingGlow .7s ease-in-out infinite alternate;}
+/* Drag silhouette for a pile: one dashed outline per card, laid out exactly
+   like the real cards (see updatePieceDragGhost). */
+.drag-ghost.piece-ghost{border:none;background:none;}
+.drag-ghost .ghost-card{position:absolute;border:2px dashed rgba(255,255,255,.55);border-radius:var(--radius-sm);
+  background:rgba(255,255,255,.08);}
 
 /* Token color comes entirely from its user-defined type (state.tokenTypes) and is
    applied inline per-instance in renderTokens() — there are no more fixed built-in
@@ -1974,7 +1978,7 @@ function flipPopEl(pieceId, cardIndex, oldFaceHtml){
   // are genuinely different images/text, not something a single element's
   // style alone can cross-fade or reveal.
   const newFaceHtml = el.innerHTML;
-  const duration = 320;
+  const duration = 180; // quick and snappy, in line with the rotate animation
   if(oldFaceHtml!=null){
     el.innerHTML = oldFaceHtml;
     setTimeout(()=>{ if(el.isConnected) el.innerHTML = newFaceHtml; }, duration/2);
@@ -2896,7 +2900,7 @@ function renderBoard(){
       // fine — but wrong for anything that reads the container's own CSS
       // box directly instead of going through pieceBounds, like the plain
       // .selected/.peek-alert/.search-alert outlines (pieceBounds exists
-      // specifically because drag-ghost/stack-perimeter/hit-testing/etc.
+      // specifically because drag-ghost/hit-testing/etc.
       // can't rely on the container's own box either — see its own comment).
       // Shifting the container's own left/top back by this same `extent`,
       // and compensating every child's own offset forward by that same
@@ -3375,6 +3379,25 @@ function updateDragGhost(ghost, x, y, w, h, rotation){
   // instead of always sitting flat no matter how the piece itself is turned.
   ghost.style.transform = rotation ? `rotate(${rotation}deg)` : '';
 }
+// A pile's drag silhouette: mirrors the live piece element's own box and
+// rotation at the snapped landing spot, with one outline per card copied from
+// each real card's position/rotation — so it traces a rotated or splayed pile
+// (including individually rotated cards) exactly.
+function updatePieceDragGhost(ghost, p, pieceEl){
+  if(!ghost || !ghost.isConnected) return;
+  const b = pieceBounds(p);
+  if(!pieceEl){ updateDragGhost(ghost, b.x, b.y, b.w, b.h, effectivePieceRotation(p)); return; }
+  const snapped = applyZoneSnap(snapCoord(b.x), snapCoord(b.y), b.w, b.h);
+  ghost.classList.add('piece-ghost');
+  ghost.style.left = snapped.x+'px'; ghost.style.top = snapped.y+'px';
+  ghost.style.width = b.w+'px'; ghost.style.height = b.h+'px';
+  ghost.style.transform = pieceEl.style.transform;
+  ghost.style.transformOrigin = pieceEl.style.transformOrigin;
+  const cards = [...pieceEl.querySelectorAll(':scope > .splay-card:not(.splay-gap), :scope > .piece-face')];
+  ghost.innerHTML = cards.map(c=>
+    `<div class="ghost-card" style="left:${c.offsetLeft}px;top:${c.offsetTop}px;width:${c.offsetWidth}px;height:${c.offsetHeight}px;transform:${c.style.transform||'none'};"></div>`
+  ).join('');
+}
 function removeDragGhost(ghost){
   if(ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
 }
@@ -3634,7 +3657,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   // its old, much-smaller threshold used to leak through and make this look
   // identical to hovering a real stack).
   ctx.el.classList.toggle('insert-below', !!target && target.cardIds.length>1 && shouldInsertBelow(target, world.x, world.y));
-  { const b = pieceBounds(p); updateDragGhost(ctx.ghost, b.x, b.y, b.w, b.h, effectivePieceRotation(p)); }
+  updatePieceDragGhost(ctx.ghost, p, ctx.el);
   repositionAttachedTokens(p.id);
 }
 // Lands a drag driven by driveWholePieceDrag, whichever gesture started it —
@@ -3729,7 +3752,7 @@ function wireGroupHandleDrag(handleEl, p){
         placePieceEl(pieceEl, p);
         pieceEl.classList.toggle('insert-below', !!target && !splayTarget && shouldInsertBelow(target, world.x, world.y));
       }
-      { const b = pieceBounds(p); updateDragGhost(ghost, b.x, b.y, b.w, b.h, effectivePieceRotation(p)); }
+      updatePieceDragGhost(ghost, p, pieceEl);
       repositionAttachedTokens(p.id);
     },
     // Left-click on the label does nothing (flipping a whole stack by a stray
@@ -4161,48 +4184,13 @@ function wireStackLabelHover(labelEl, pieceId){
   labelEl.addEventListener('mouseenter', ()=>{ hoveredLabelId = pieceId; refreshStackPerimeter(); });
   labelEl.addEventListener('mouseleave', ()=>{ if(hoveredLabelId===pieceId) hoveredLabelId = null; refreshStackPerimeter(); });
 }
-// The dashed outline shown while hovering a stack's label (see the CSS on
-// .stack-perimeter) — a single shared element, repositioned to match
-// whichever pile's label is currently hovered (or hidden if none is).
-// renderBoard calls this again after every rebuild (see its own tail) so the
-// outline stays correctly placed even while a hovered pile is actively being
-// resplayed/dragged/edited by someone else, without needing its own
-// mouseenter/mouseleave to survive the DOM nodes being replaced out from
-// under it.
-let stackPerimeterEl = null;
 function refreshStackPerimeter(){
-  const p = hoveredLabelId ? state.pieces.get(hoveredLabelId) : null;
-  if(!p){
-    if(stackPerimeterEl) stackPerimeterEl.classList.remove('visible');
-    return;
-  }
-  // renderBoard() rebuilds #boardWorld from scratch (world.innerHTML='') on
-  // basically every interaction, which silently detaches this element from
-  // the document without ever clearing the stackPerimeterEl variable itself
-  // — so the plain `if(!stackPerimeterEl)` this used to be only ever created
-  // the element ONCE, on the very first hover of the whole session; every
-  // hover after the next re-render (i.e. almost immediately, in real play)
-  // was just repositioning a detached node nothing could ever see. Checking
-  // isConnected catches that stale case too, not just a never-created one.
-  if(!stackPerimeterEl || !stackPerimeterEl.isConnected){
-    stackPerimeterEl = document.createElement('div');
-    stackPerimeterEl.className = 'stack-perimeter';
-    document.getElementById('boardWorld').appendChild(stackPerimeterEl);
-  }
-  const b = pieceBounds(p);
-  stackPerimeterEl.style.left = b.x+'px';
-  stackPerimeterEl.style.top = b.y+'px';
-  stackPerimeterEl.style.width = b.w+'px';
-  stackPerimeterEl.style.height = b.h+'px';
-  // Same fix as updateDragGhost's rotation param, and for the same reason:
-  // b above is pieceBounds' UNROTATED box, so without this the perimeter sat
-  // flat over a rotated pile no matter which way its actual cards were
-  // turned. Rotating around the default center pivot matches .piece's own
-  // (see renderBoard) since effectivePieceRotation is only ever nonzero here
-  // for the kind of piece that also rotates around its plain box center.
-  const rot = effectivePieceRotation(p);
-  stackPerimeterEl.style.transform = rot ? `rotate(${rot}deg)` : '';
-  stackPerimeterEl.classList.add('visible');
+  // Outlines every card of the pile whose label is hovered (see .stack-hover's
+  // CSS). Re-run after each renderBoard, which rebuilds the elements.
+  document.querySelectorAll('.piece.stack-hover').forEach(el=>{ if(el.dataset.id!==hoveredLabelId) el.classList.remove('stack-hover'); });
+  if(!hoveredLabelId) return;
+  const el = document.querySelector(`.piece[data-id="${hoveredLabelId}"]`);
+  if(el) el.classList.add('stack-hover');
 }
 function isTextEntryFocused(){
   const a = document.activeElement;
