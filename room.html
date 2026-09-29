@@ -262,13 +262,43 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    the DOM (#hand-panel, not #boardWorld) so they're never in this stacking
    contest at all — that's the other stated exception, satisfied for free. */
 .token{position:absolute;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  font-weight:700;font-size:14px;color:#fff;cursor:grab;box-shadow:var(--shadow);border:2px solid rgba(255,255,255,.3);user-select:none;
+  font-weight:700;font-size:14px;color:#fff;cursor:grab;user-select:none;
   transition:transform .15s var(--bounce),filter .15s;z-index:2;
   /* A token is a circle, so counter-rotating the whole thing against the board
      keeps its letter upright and its count bubble at the viewer's top-right. */
   transform:rotate(var(--counter-rotate,0deg));}
 .token:hover{transform:rotate(var(--counter-rotate,0deg)) scale(1.18);filter:brightness(1.1);}
 .token.attached{width:28px;height:28px;font-size:11px;}
+/* A token's look (color, symbol/emoji, image, shape — see tokenFaceMarkup).
+   The shape lives on this inner face, not the token itself, so a hexagon's
+   clip never cuts off the count bubble. */
+.token .token-face{position:absolute;inset:0;}
+.tface{display:inline-flex;align-items:center;justify-content:center;flex:none;overflow:hidden;color:#fff;font-weight:700;line-height:1;
+  border-radius:50%;border:2px solid rgba(255,255,255,.3);box-shadow:var(--shadow);background-size:cover;background-position:center;
+  text-shadow:0 1px 2px rgba(0,0,0,.45);box-sizing:border-box;}
+.tface.shape-square{border-radius:22%;}
+.tface.shape-hex{border-radius:0;border:none;clip-path:polygon(25% 4%,75% 4%,100% 50%,75% 96%,25% 96%,0 50%);}
+/* Token type editor (see openTokenTypeEditor). */
+.tt-editor{width:250px;}
+/* Token chips inside a card/stack label (see attachedTokenChipsHtml). */
+.label-token{display:inline-flex;align-items:center;gap:2px;margin-left:6px;cursor:grab;vertical-align:middle;}
+.label-token:first-child{margin-left:0;}
+.label-token b{font-size:10px;}
+.label-token .lt-face{width:16px;height:16px;font-size:8.5px;border-width:1px;box-shadow:none;}
+.label-token:hover .lt-face{filter:brightness(1.2);transform:scale(1.15);}
+.lt-ghost{width:28px;height:28px;font-size:12px;}
+.tt-top{display:flex;align-items:center;gap:8px;padding:10px 10px 4px;}
+.tt-top input{flex:1;min-width:0;}
+.tt-preview{width:40px;height:40px;font-size:16px;}
+.tt-choices{display:flex;gap:4px;}
+.tt-choice{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid var(--border);cursor:pointer;}
+.tt-choice.on{border-color:var(--accent);background:var(--accent-soft);}
+.tt-choice .tface{width:18px;height:18px;border-width:1px;}
+.tt-emojis{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;padding:2px 10px 6px;}
+.tt-emoji{cursor:pointer;text-align:center;font-size:15px;border-radius:5px;padding:2px 0;}
+.tt-emoji:hover{background:var(--surface-2);}
+.tt-error{color:var(--danger);font-size:11.5px;padding:0 10px;min-height:0;}
+.tt-error:empty{display:none;}
 /* The type letter never changes; a stack's quantity (when >1) shows as its
    own small bubble instead of replacing the letter (unlike a card pile,
    whose count now lives right inside its label text — see pieceLabelText).
@@ -329,8 +359,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   padding-right:10px;border-right:1px solid var(--border);}
 #handTokens:empty{display:none;}
 .hand-token{display:flex;align-items:center;gap:6px;cursor:grab;user-select:none;font-size:12px;font-weight:700;color:var(--text);}
-.hand-token .dot, .chip-token{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:700;
-  border:2px solid rgba(255,255,255,.3);}
+.hand-token .dot, .chip-token{color:#fff;font-weight:700;} /* shape/look: see .tface */
 .hand-token .dot{width:28px;height:28px;font-size:11px;box-shadow:var(--shadow);}
 .hand-token-ghost{position:fixed;pointer-events:none;z-index:200;opacity:.9;}
 .hand-token .dot, .hand-token .qty{cursor:grab;}
@@ -426,7 +455,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 #tokenMenu.hidden, #focusMenu.hidden, #boardMenu.hidden, #gridMenu.hidden{display:none;}
 .token-type-item, .focus-item{padding:9px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .12s;}
 .token-type-item:hover, .focus-item:hover{background:var(--surface-2);}
-.token-dot{width:12px;height:12px;border-radius:50%;flex:none;}
+.token-dot{width:18px;height:18px;border-radius:50%;flex:none;font-size:9px;border-width:1px;}
 /* Edit affordance on an existing token type row (see openTokenTypeMenu) —
    pushed to the far right via margin-left:auto in the row's own flex layout,
    dimmed until hovered so the row doesn't look cluttered at rest, and its
@@ -436,7 +465,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 #tokenMenu input{width:100%;margin:6px 10px 10px 10px;width:calc(100% - 20px);}
 /* The generic rule above was meant for the plain-text name field, but its
    bare `input` selector also matches the color swatch in the very same
-   popover (see openNewTokenTypeForm/openEditTokenTypeForm) — stretching it
+   popover (see openTokenTypeEditor) — stretching it
    to nearly the whole popover's width and overflowing outside it, instead of
    the small square swatch `.popover-row input[type="color"]` already
    describes elsewhere. `#tokenMenu input[type="color"]` is more specific
@@ -1441,6 +1470,7 @@ const state = {
   pieces: new Map(),   // id -> { id, x, y, cardIds:[...], faceStates:[bool,...], owner, splayed, splayDir, splaySpacing, label }
   tokens: new Map(),   // id -> { id, x, y, type, count, attachedTo: pieceId|null, attachedCardIndex: number|null }
   tokenTypes: new Map(), // name -> color (hex) — shared table-wide, user-defined; no built-in types
+  tokenTypeStyles: new Map(), // name -> {symbol, image, shape} — the rest of a type's look (see tokenFaceMarkup)
   zones: new Map(),    // id -> { id, x, y, w, h, color, strokeColor, strokeWidth, label, snapMode }
   theme: { boardColor:'#1a1c22', handColor:'#1c1f26' }, // shared table theme, synced
   hand: [],            // array of cardIds — private, never synced except as a count
@@ -1808,9 +1838,10 @@ function applyRoomEvent(type, payload){
     }
     case 'DEFINE_TOKEN_TYPE': {
       state.tokenTypes.set(payload.name, payload.color);
+      setTokenTypeStyle(payload.name, payload);
       break;
     }
-    // Editing an EXISTING token type (see openEditTokenTypeForm) rather than
+    // Editing an EXISTING token type (see openTokenTypeEditor) rather than
     // defining a new one. A placed token references its type by NAME
     // (t.type), looked up live against state.tokenTypes at render time (see
     // renderTokens) rather than a copied color snapshot — so a pure color
@@ -1824,6 +1855,7 @@ function applyRoomEvent(type, payload){
     case 'EDIT_TOKEN_TYPE': {
       if(payload.oldName !== payload.name){
         state.tokenTypes.delete(payload.oldName);
+        state.tokenTypeStyles.delete(payload.oldName);
         state.tokens.forEach(t=>{ if(t.type===payload.oldName) t.type = payload.name; });
         // Renamed tokens in your own hand, and in everyone's public counts, too.
         if(state.handTokens.has(payload.oldName)){
@@ -1838,6 +1870,7 @@ function applyRoomEvent(type, payload){
         });
       }
       state.tokenTypes.set(payload.name, payload.color);
+      setTokenTypeStyle(payload.name, payload);
       renderHandTokens(); renderPlayerCounters(); // new name/color on the hand tray and player chips
       break;
     }
@@ -1885,8 +1918,9 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'LOAD_LAYOUT': {
-      state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear();
+      state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear(); state.tokenTypeStyles.clear();
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
+      (payload.tokenTypeStyles||[]).forEach(([name,st])=> setTokenTypeStyle(name, st));
       (payload.zones||[]).forEach(z=> state.zones.set(z.id, {...z}));
       (payload.pieces||[]).forEach(p=>{ const np = {...p}; if(np.cardIds && np.cardIds.length===1) np.cardRotations = [0]; state.pieces.set(p.id, np); }); // see ROTATION MODEL
       (payload.tokens||[]).forEach(t=> state.tokens.set(t.id, {...t}));
@@ -1967,8 +2001,9 @@ function applyRoomEvent(type, payload){
     }
     case 'STATE_SNAPSHOT': {
       if(payload.to !== state.playerId) break; // addressed to a different requester — not for us
-      state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear();
+      state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear(); state.tokenTypeStyles.clear();
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
+      (payload.tokenTypeStyles||[]).forEach(([name,st])=> setTokenTypeStyle(name, st));
       (payload.zones||[]).forEach(z=> state.zones.set(z.id, {...z}));
       (payload.pieces||[]).forEach(p=>{ const np = {...p}; if(np.cardIds && np.cardIds.length===1) np.cardRotations = [0]; state.pieces.set(p.id, np); }); // see ROTATION MODEL
       (payload.tokens||[]).forEach(t=> state.tokens.set(t.id, {...t}));
@@ -2939,6 +2974,9 @@ function renderBoard(){
     // For placePieceBadges: the anchor (top) card's visible box, the whole
     // fan's box, and the fan direction — all in this element's local coords.
     let badgeAnchor = {x:0, y:0, w:PIECE_W, h:PIECE_H}, badgeFan = null, badgeSplayDir = null;
+    // Tokens attached to this card/stack show as chips in its label (a lone
+    // card gets a label just for them) — see attachedTokenChipsHtml.
+    const attachedChips = attachedTokenChipsHtml(p);
     if(p.kind==='image'){
       // Custom player-uploaded piece — any scale the uploader picked (or later resized
       // to), no card faces/splay/merge/flip/draw, just an image, label, and lock badge.
@@ -2947,7 +2985,7 @@ function renderBoard(){
       badgeAnchor = {x:0, y:0, w:pieceW(p), h:pieceH(p)};
       el.innerHTML = `
         <div class="piece-face"><img src="${p.imageUrl||''}" draggable="false"></div>
-        ${p.label ? `<div class="piece-label">${escapeHtml(p.label)}</div>` : ''}
+        ${(p.label || attachedChips) ? `<div class="piece-label">${escapeHtml(p.label||'')}${attachedChips}</div>` : ''}
         ${p.locked ? `<div class="lock-badge">🔒</div>` : ''}
       `;
       wireWholeInteraction(el, p);
@@ -3114,7 +3152,7 @@ function renderBoard(){
         badgeFan = {x:0, y:0, w:PIECE_W + (horizontal?extent:0), h:PIECE_H + (horizontal?0:extent)};
         badgeSplayDir = dir;
       }
-      el.innerHTML = html + `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`;
+      el.innerHTML = html + `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}${attachedChips}</div>`;
       topCardOffset = {left:0, top:0}; // the top card is always the anchor now
       [...el.querySelectorAll('.splay-card:not(.splay-gap)')].forEach(cardEl=>{
         const i = Number(cardEl.dataset.i);
@@ -3140,8 +3178,8 @@ function renderBoard(){
       el.innerHTML = `
         <div class="piece-face"${topRot ? ` style="transform:rotate(${topRot}deg)"` : ''}>${pieceFaceHtml(p)}</div>
         ${isStack
-          ? `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`
-          : (p.label ? `<div class="piece-label">${escapeHtml(p.label)}</div>` : '')}
+          ? `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}${attachedChips}</div>`
+          : ((p.label || attachedChips) ? `<div class="piece-label">${escapeHtml(p.label||'')}${attachedChips}</div>` : '')}
         ${p.locked ? `<div class="lock-badge">🔒</div>` : ''}
       `;
       wireHoverPreview(el, ()=>pieceTopFace(p), {pieceId:p.id, cardIndex:p.cardIds.length-1});
@@ -3174,6 +3212,7 @@ function renderBoard(){
       badge.textContent = state.searchingBy.get(p.id);
       el.appendChild(badge);
     }
+    el.querySelectorAll('.label-token').forEach(chip=>{ const t = state.tokens.get(chip.dataset.id); if(t) wireLabelTokenChip(chip, t); });
     placePieceBadges(el, p, badgeAnchor, badgeFan || badgeAnchor, badgeSplayDir);
     applyPingHighlight(el, p.id); // survives this rebuild — see pingHighlights
     world.appendChild(el);
@@ -3248,7 +3287,7 @@ function wheelPreviewScale(e){
 }
 const TOKEN_WHEEL_STEP = 50;
 document.getElementById('boardViewport').addEventListener('wheel', (e)=>{
-  const tokenEl = e.target.closest && e.target.closest('.token');
+  const tokenEl = e.target.closest && e.target.closest('.token, .label-token');
   if(!tokenEl){
     // Over a card: resize its preview instead of zooming the board.
     if(e.target.closest && e.target.closest('.piece')){ e.preventDefault(); e.stopImmediatePropagation(); wheelPreviewScale(e); }
@@ -5675,7 +5714,7 @@ function renderPlayerCounters(){
     const info = known.get(pid);
     const active = pid===activeId;
     const tokens = Object.entries(info.tokens||{}).filter(([,n])=>n>0);
-    const tokenHtml = tokens.map(([type,n])=>`<span class="chip-token" style="background:${state.tokenTypes.get(type)||'#546178'}" title="${escapeHtml(type)}">${escapeHtml((type[0]||'?').toUpperCase())}</span>${n}`).join('');
+    const tokenHtml = tokens.map(([type,n])=>`${tokenFaceMarkup(type, 'chip-token')}${n}`).join('');
     const tokenTitle = tokens.map(([type,n])=>` · ${n} ${type}`).join('');
     return `<span class="player-chip${active?' active-turn':''}" title="${active?'Their turn · ':''}${info.count==null?'Hand size not known yet':info.count+' card'+(info.count===1?'':'s')+' in hand'}${escapeHtml(tokenTitle)}">${active?'▶ ':''}✋ ${info.count==null?'?':info.count}${tokenHtml} <b>${escapeHtml(info.playerName)}</b></span>`;
   }).join('');
@@ -5704,80 +5743,132 @@ function openTokenTypeMenuAt(clientX, clientY){
   tokenPlaceAtWorld = clientToWorld(clientX, clientY);
   openTokenTypeMenu();
 }
+// ---- Token looks. A type's color lives in state.tokenTypes (as it always
+// has); everything else — symbol (letter, emoji or short text), uploaded
+// image, shape — lives in state.tokenTypeStyles. Every place a token is drawn
+// (board, card labels, hand tray, player chips, menus) goes through
+// tokenFaceMarkup so they all match.
+function setTokenTypeStyle(name, src){
+  const st = { symbol:(src && src.symbol)||'', image:(src && src.image)||'', shape:(src && src.shape)||'circle' };
+  if(st.symbol || st.image || st.shape!=='circle') state.tokenTypeStyles.set(name, st); else state.tokenTypeStyles.delete(name);
+}
+function tokenFaceMarkup(type, cls, styleOverride){
+  const color = state.tokenTypes.get(type) || '#546178';
+  const st = styleOverride || state.tokenTypeStyles.get(type) || {};
+  const bg = `background-color:${color};` + (st.image ? `background-image:url('${st.image}');` : '');
+  const sym = st.image ? '' : escapeHtml(st.symbol || ((type||'?')[0]||'?').toUpperCase());
+  return `<span class="${cls} tface shape-${st.shape||'circle'}" style="${bg}">${sym}</span>`;
+}
 function openTokenTypeMenu(){
   const menu = document.getElementById('tokenMenu');
-  const types = [...state.tokenTypes.entries()];
-  // Each existing type gets its own small pencil (data-edit) alongside the
-  // dot+name (data-type) that places a token of it — a separate element
-  // (not the same click target) so "place a token" and "edit this type"
-  // stay two distinct, unambiguous gestures rather than overloading one
-  // click with a modifier key or a long-press.
-  menu.innerHTML = types.map(([name,color])=>
-    `<div class="token-type-item" data-type="${escapeHtml(name)}"><span class="token-dot" style="background:${color}"></span>${escapeHtml(name)}<span class="token-type-edit" data-edit="${escapeHtml(name)}" title="Edit this token type">✎</span></div>`
+  const types = [...state.tokenTypes.keys()];
+  // Each type: click the row to place one; the pencil edits the type.
+  menu.innerHTML = types.map(name=>
+    `<div class="token-type-item" data-type="${escapeHtml(name)}">${tokenFaceMarkup(name,'token-dot')}${escapeHtml(name)}<span class="token-type-edit" data-edit="${escapeHtml(name)}" title="Edit this token type">✎</span></div>`
   ).join('') + `<div class="token-type-item" data-type="__new"><span class="token-dot" style="background:var(--surface-2);border:1px dashed var(--text-soft);"></span>New type…</div>`;
   menu.querySelectorAll('[data-edit]').forEach(el=>{
-    el.addEventListener('click', (e)=>{
-      e.stopPropagation(); // don't also trigger the row's own data-type click (placeNewToken)
-      openEditTokenTypeForm(el.dataset.edit);
-    });
+    el.addEventListener('click', (e)=>{ e.stopPropagation(); openTokenTypeEditor(el.dataset.edit); });
   });
   menu.querySelectorAll('[data-type]').forEach(el=>{
     el.addEventListener('click', (e)=>{
-      // Without this, the click bubbles up to the document-level outside-click
-      // listener below AFTER openNewTokenTypeForm() has already replaced this
-      // element's parent's innerHTML — at that point e.target is a detached
-      // node, e.target.closest('#tokenMenu') fails, and the listener immediately
-      // re-hides the menu it just opened. Stopping propagation here is what
-      // actually fixes "click New type… and nothing happens."
+      // stopPropagation: the editor replaces this element — without it, the
+      // document-level outside-click closer sees a detached target and hides the menu.
       e.stopPropagation();
-      if(el.dataset.type==='__new') openNewTokenTypeForm();
+      if(el.dataset.type==='__new') openTokenTypeEditor(null);
       else { placeNewToken(el.dataset.type); menu.classList.add('hidden'); }
     });
   });
   menu.classList.remove('hidden');
   positionMenuNear(menu, tokenMenuAnchorEl());
 }
-function openNewTokenTypeForm(){
-  const menu = document.getElementById('tokenMenu');
-  menu.innerHTML = `
-    <div class="popover-row"><label>Name</label><input type="text" id="newTokenTypeName" placeholder="e.g. Poison" style="flex:1;"></div>
-    <div class="popover-row"><label>Color</label><input type="color" id="newTokenTypeColor" value="#546178"></div>
-    <div class="popover-actions"><div class="btn btn-accent btn-sm" id="btnCreateTokenType" style="flex:1;justify-content:center;">Create &amp; Place</div></div>
-  `;
-  document.getElementById('btnCreateTokenType').addEventListener('click', ()=>{
-    const name = document.getElementById('newTokenTypeName').value.trim();
-    const color = document.getElementById('newTokenTypeColor').value;
-    if(!name) return;
-    doAction('DEFINE_TOKEN_TYPE', {name, color});
-    placeNewToken(name);
-    menu.classList.add('hidden');
+const TOKEN_EMOJIS = ['❤️','💀','⚔️','🛡️','⭐','🔥','💧','⚡','🌿','☠️','🪙','💰','💎','🎯','🏹','🗡️','🧪','🍀','👑','🔮','🩸','🌙','☀️','❄️','💥','🌀','👁️','🧠','🦴','🕯️','⏳','🔒','🎲','⚙️','🏰','🐉','👻','🕸️','🪨','🌊'];
+// Shrinks an uploaded image to a small square (center-cropped) so it syncs to
+// everyone instantly inside the token type itself.
+function tokenImageFromFile(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=> reject(new Error('Could not read that file.'));
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=> reject(new Error('That file does not look like an image.'));
+      img.onload = ()=>{
+        const size = 96, c = document.createElement('canvas');
+        c.width = size; c.height = size;
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        c.getContext('2d').drawImage(img, (img.naturalWidth-side)/2, (img.naturalHeight-side)/2, side, side, 0, 0, size, size);
+        let url = c.toDataURL('image/png');
+        if(url.length > 40000) url = c.toDataURL('image/jpeg', 0.85);
+        resolve(url);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
   });
-  // The form is taller than the plain type list it replaced — re-measure and
-  // re-clamp now that the (bigger) content is actually in the DOM.
-  positionMenuNear(menu, tokenMenuAnchorEl());
 }
-// Same markup/logic as openNewTokenTypeForm above, in "edit" mode: prefilled
-// with the type's current name/color, saving edits an existing type in place
-// (EDIT_TOKEN_TYPE) instead of defining and immediately placing a new one —
-// see EDIT_TOKEN_TYPE's own comment in applyRoomEvent for exactly how a
-// rename propagates to already-placed tokens of this type.
-function openEditTokenTypeForm(oldName){
-  const oldColor = state.tokenTypes.get(oldName) || '#546178';
+// Create (oldName null) or edit a token type: name, color, shape, symbol
+// (any letter, emoji or up to 2 characters), or an uploaded image.
+function openTokenTypeEditor(oldName){
   const menu = document.getElementById('tokenMenu');
+  const editing = oldName!=null;
+  const cur = editing ? (state.tokenTypeStyles.get(oldName) || {}) : {};
+  const draft = { name: editing ? oldName : '', color: editing ? (state.tokenTypes.get(oldName)||'#546178') : '#546178',
+    symbol: cur.symbol||'', image: cur.image||'', shape: cur.shape||'circle' };
+  const old = { ...draft };
   menu.innerHTML = `
-    <div class="popover-row"><label>Name</label><input type="text" id="editTokenTypeName" value="${escapeHtml(oldName)}" style="flex:1;"></div>
-    <div class="popover-row"><label>Color</label><input type="color" id="editTokenTypeColor" value="${oldColor}"></div>
-    <div class="popover-actions"><div class="btn btn-accent btn-sm" id="btnSaveTokenType" style="flex:1;justify-content:center;">Save</div></div>
-  `;
-  document.getElementById('btnSaveTokenType').addEventListener('click', ()=>{
-    const name = document.getElementById('editTokenTypeName').value.trim();
-    const color = document.getElementById('editTokenTypeColor').value;
-    if(!name) return;
-    doAction('EDIT_TOKEN_TYPE', {oldName, name, color});
-    setUndo(()=> doAction('EDIT_TOKEN_TYPE', {oldName:name, name:oldName, color:oldColor}));
+    <div class="tt-editor">
+      <div class="tt-top"><span id="ttPreviewHost"></span><input type="text" id="ttName" placeholder="Name, e.g. Poison" value="${escapeHtml(draft.name)}"></div>
+      <div class="popover-row"><label>Color</label><input type="color" id="ttColor" value="${draft.color}"></div>
+      <div class="popover-row"><label>Shape</label><div class="tt-choices" id="ttShapes">
+        ${['circle','square','hex'].map(sh=>`<div class="tt-choice" data-shape="${sh}" title="${sh}"><span class="tface shape-${sh}"></span></div>`).join('')}</div></div>
+      <div class="popover-row"><label>Symbol</label><input type="text" id="ttSymbol" maxlength="4" placeholder="First letter" value="${escapeHtml(draft.symbol)}" style="width:90px;"></div>
+      <div class="tt-emojis">${TOKEN_EMOJIS.map(e=>`<span class="tt-emoji" data-emoji="${e}">${e}</span>`).join('')}</div>
+      <div class="popover-row"><label>Image</label><div style="display:flex;gap:4px;">
+        <div class="btn btn-sm" id="ttUpload">Upload…</div><div class="btn btn-sm" id="ttClearImage">Remove</div></div></div>
+      <input type="file" id="ttFile" accept="image/*" style="display:none;">
+      <div class="tt-error" id="ttError"></div>
+      <div class="popover-actions"><div class="btn btn-accent btn-sm" id="ttSave" style="flex:1;justify-content:center;">${editing ? 'Save' : 'Create &amp; Place'}</div></div>
+    </div>`;
+  const $ = id=> document.getElementById(id);
+  function refresh(){
+    $('ttPreviewHost').innerHTML = tokenFaceMarkup(draft.name||'?', 'tt-preview', {symbol:draft.symbol, image:draft.image, shape:draft.shape})
+      .replace(/background-color:[^;]*;/, `background-color:${draft.color};`);
+    menu.querySelectorAll('.tt-choice').forEach(el=> el.classList.toggle('on', el.dataset.shape===draft.shape));
+    menu.querySelectorAll('.tt-choice .tface').forEach(el=> el.style.backgroundColor = draft.color);
+    $('ttClearImage').style.display = draft.image ? '' : 'none';
+  }
+  // Keeps a symbol to at most 2 characters as people see them (an emoji is one).
+  const clip = t=>{ try{ return [...new Intl.Segmenter().segment(t)].slice(0,2).map(x=>x.segment).join(''); }catch(e){ return [...t].slice(0,2).join(''); } };
+  $('ttName').addEventListener('input', e=>{ draft.name = e.target.value.trim(); refresh(); });
+  $('ttColor').addEventListener('input', e=>{ draft.color = e.target.value; refresh(); });
+  $('ttSymbol').addEventListener('input', e=>{ draft.symbol = clip(e.target.value.trim()); refresh(); });
+  menu.querySelectorAll('.tt-choice').forEach(el=> el.addEventListener('click', (e)=>{ e.stopPropagation(); draft.shape = el.dataset.shape; refresh(); }));
+  menu.querySelectorAll('.tt-emoji').forEach(el=> el.addEventListener('click', (e)=>{ e.stopPropagation(); draft.symbol = el.dataset.emoji; draft.image = ''; $('ttSymbol').value = draft.symbol; refresh(); }));
+  $('ttUpload').addEventListener('click', (e)=>{ e.stopPropagation(); $('ttFile').click(); });
+  $('ttFile').addEventListener('change', async (e)=>{
+    const file = e.target.files[0]; if(!file) return;
+    try{ draft.image = await tokenImageFromFile(file); $('ttError').textContent = ''; }
+    catch(err){ $('ttError').textContent = err.message; }
+    refresh();
+  });
+  $('ttClearImage').addEventListener('click', (e)=>{ e.stopPropagation(); draft.image = ''; refresh(); });
+  $('ttSave').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    if(!draft.name){ $('ttError').textContent = 'Give it a name.'; return; }
+    if(draft.name!==oldName && state.tokenTypes.has(draft.name)){ $('ttError').textContent = 'There is already a token type with that name.'; return; }
+    const look = {color:draft.color, symbol:draft.symbol, image:draft.image, shape:draft.shape};
+    if(editing){
+      doAction('EDIT_TOKEN_TYPE', {oldName, name:draft.name, ...look});
+      setUndo(()=> doAction('EDIT_TOKEN_TYPE', {oldName:draft.name, name:old.name, color:old.color, symbol:old.symbol, image:old.image, shape:old.shape}));
+    } else {
+      doAction('DEFINE_TOKEN_TYPE', {name:draft.name, ...look});
+      placeNewToken(draft.name);
+    }
     menu.classList.add('hidden');
   });
+  $('ttName').addEventListener('keydown', e=>{ if(e.key==='Enter') $('ttSave').click(); });
+  refresh();
   positionMenuNear(menu, tokenMenuAnchorEl());
+  if(!editing) $('ttName').focus();
 }
 document.addEventListener('click', (e)=>{ if(!e.target.closest('#tokenMenu')) document.getElementById('tokenMenu').classList.add('hidden'); });
 
@@ -5807,22 +5898,22 @@ function tokenSize(t){ return t.attachedTo ? 28 : 44; }
 function renderTokens(){
   const world = document.getElementById('boardWorld');
   state.tokens.forEach(t=>{
+    if(t.attachedTo && state.pieces.has(t.attachedTo)) return; // shown as a chip in its card's label instead (attachedTokenChipsHtml)
     const el = document.createElement('div');
     el.dataset.id = t.id;
     const pos = tokenRenderPos(t);
     const size = tokenSize(t);
-    const bg = state.tokenTypes.get(t.type) || '#546178';
-    const letter = escapeHtml((t.type[0]||'?').toUpperCase());
+
     el.style.left = pos.x+'px'; el.style.top = pos.y+'px';
     el.className = 'token' + (t.attachedTo?' attached':'') + (state.selectedTokenIds.has(t.id)?' selected':'');
-    el.style.background = bg;
+
     // The type letter always stays put — the quantity shows as its own small
     // bubble in the top-right corner instead, rather than replacing the
     // letter (a token has no label text to fold a count into). The bubble
     // shows whenever the count ISN'T exactly 1 — a token can now sit at zero
     // or go negative (see SET_TOKEN_COUNT), so "count!==1" (not "count>1") is
     // what actually means "this needs its number called out."
-    el.innerHTML = `<span class="token-letter">${letter}</span>` +
+    el.innerHTML = tokenFaceMarkup(t.type, 'token-face') +
       (t.count!==1 ? `<div class="token-count">${t.count}</div>` : '');
     // Exactly 1 just moves as a whole (Seth: "it is not a stack to be
     // peeled"); anything else — 2+, or zero/negative — drags via the peel
@@ -5881,7 +5972,7 @@ function hotkeyAdjustToken(id, delta){
 // the summary) the moment the cursor is over anything that isn't this token.
 window.addEventListener('mousemove', (e)=>{
   if(!hoveredTokenId) return;
-  const tEl = e.target && e.target.closest && e.target.closest('.token');
+  const tEl = e.target && e.target.closest && e.target.closest('.token, .label-token');
   if(tEl && tEl.dataset.id===hoveredTokenId) return;
   hoveredTokenId = null; hideHotkeyHint(); endTokenHotkeyRun();
 });
@@ -5900,6 +5991,7 @@ function endTokenHotkeyRun(){
 function findTokenMergeTarget(draggedToken, worldX, worldY){
   for(const t of state.tokens.values()){
     if(t.id===draggedToken.id || t.type!==draggedToken.type) continue;
+    if(t.attachedTo) continue; // tokens on a card live in its label — dropping onto the card joins them (see landTokenAt)
     const pos = tokenRenderPos(t);
     const size = tokenSize(t);
     if(worldX>=pos.x && worldX<=pos.x+size && worldY>=pos.y && worldY<=pos.y+size) return t;
@@ -5965,9 +6057,58 @@ function clearTokenMergeHighlight(){
 // one place. Mirrors finishWholeMove for pieces.
 function finishWholeTokenMove(t, dx, dy){
   const start = tokenRenderPos(t);
-  const oldX = t.x, oldY = t.y, oldAttached = t.attachedTo, oldCardIndex = t.attachedCardIndex;
   const d = screenDeltaToWorldDelta(dx, dy);
-  let {x:newX, y:newY} = snapPos(start.x+d.x, start.y+d.y, 44, 44);
+  landTokenAt(t, start.x+d.x, start.y+d.y);
+}
+// Tokens attached to a card or stack are shown as chips in its label rather
+// than on the card itself. Each chip is a full token: hover for W/S/scroll,
+// right-click for its menu, drag it off to move/detach it (or into your hand).
+function attachedTokenChipsHtml(p){
+  const mine = [...state.tokens.values()].filter(t=> t.attachedTo===p.id).sort((a,b)=> a.type.localeCompare(b.type));
+  return mine.map(t=> `<span class="label-token" data-id="${t.id}" title="${escapeHtml(t.type)} ×${t.count}">${tokenFaceMarkup(t.type,'lt-face')}${t.count!==1 ? `<b>${t.count}</b>` : ''}</span>`).join('');
+}
+function wireLabelTokenChip(chip, t){
+  chip.addEventListener('mouseenter', ()=>{ hoveredTokenId = t.id; showTokenHotkeyHint(chip); });
+  chip.addEventListener('mouseleave', ()=>{ if(hoveredTokenId===t.id){ hoveredTokenId = null; hideHotkeyHint(); endTokenHotkeyRun(); } });
+  let ghost = null;
+  wirePressDragClick(chip, {
+    onDown: ()=>{},
+    onMove: (dx, dy, ev)=>{
+      if(!ghost){
+        ghost = chip.querySelector('.lt-face').cloneNode(true);
+        ghost.classList.add('hand-token-ghost', 'lt-ghost');
+        document.body.appendChild(ghost);
+      }
+      ghost.style.left = (ev.clientX-14)+'px'; ghost.style.top = (ev.clientY-14)+'px';
+      const w = clientToWorld(ev.clientX, ev.clientY);
+      const mt = findTokenMergeTarget(t, w.x, w.y);
+      if(mt) showTokenMergeHighlight(mt.id); else clearTokenMergeHighlight();
+      tokenHandHover(ev);
+    },
+    onContext: (e)=> openTokenRadialMenu(t.id, e.clientX, e.clientY),
+    onDrop: (dx, dy, ev)=>{
+      if(ghost){ ghost.remove(); ghost = null; }
+      clearTokenMergeHighlight(); clearTokenHandHover();
+      if(isOverHandPanel(ev.clientX, ev.clientY) && t.count>0){ sendTokenToHand(t.id, t.count); return; }
+      const w = clientToWorld(ev.clientX, ev.clientY);
+      landTokenAt(t, w.x-22, w.y-22);
+    },
+  });
+}
+// Where the tokens already sitting on a card (as label chips) of this type are, if any.
+function attachedTokenOfType(pieceId, type, exceptId){
+  for(const t of state.tokens.values()) if(t.attachedTo===pieceId && t.type===type && t.id!==exceptId) return t;
+  return null;
+}
+// Lands a whole token stack with its top-left at (x, y) in board space:
+// joins a same-type stack it's dropped on; dropped on a card, attaches there
+// (joining that card's same-type token if it has one); otherwise just moves.
+function landTokenAt(t, x, y){
+  const oldX = t.x, oldY = t.y, oldAttached = t.attachedTo, oldCardIndex = t.attachedCardIndex;
+  let {x:newX, y:newY} = snapPos(x, y, 44, 44);
+  const hostForJoin = findPieceAtPoint(newX+22, newY+22);
+  const joinTarget = hostForJoin && attachedTokenOfType(hostForJoin.id, t.type, t.id);
+  if(joinTarget && joinTarget.attachedTo!==t.attachedTo){ mergeTokenOntoTarget(t.id, joinTarget.id); return; }
   const mergeTarget = findTokenMergeTarget(t, newX+22, newY+22); // 22 = half the token's own size, so we test its CENTER
   if(mergeTarget){
     mergeTokenOntoTarget(t.id, mergeTarget.id); // re-renders the board itself, sets its own undo
@@ -6092,6 +6233,22 @@ function peelTokenToBoard(tokenId, clientX, clientY){
     return;
   }
   const world = clientToWorld(clientX, clientY);
+  // Dropped on a card: the peeled token goes onto that card (joining its same-type token, if any).
+  const host = findPieceAtPoint(world.x, world.y);
+  if(host){
+    const join = attachedTokenOfType(host.id, t.type, t.id);
+    doAction('SET_TOKEN_COUNT', {id:tokenId, count: oldCount-1});
+    if(join){
+      const jOld = join.count;
+      doAction('SET_TOKEN_COUNT', {id:join.id, count:jOld+1});
+      setUndo(()=>{ doAction('SET_TOKEN_COUNT', {id:join.id, count:jOld}); doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount}); });
+    } else {
+      const nid = newTokenId();
+      doAction('PLACE_TOKEN', { id:nid, x:world.x-22, y:world.y-22, type:t.type, count:1, attachedTo:host.id, attachedCardIndex:cardIndexAtPoint(host, world.x, world.y) });
+      setUndo(()=>{ doAction('REMOVE_TOKEN', {id:nid}); doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount}); });
+    }
+    return;
+  }
   let {x:dropX, y:dropY} = snapPos(world.x - 22, world.y - 22, 44, 44);
   ({x:dropX, y:dropY} = applyZoneSnap(dropX, dropY, 44, 44));
   doAction('SET_TOKEN_COUNT', {id:tokenId, count: oldCount-1});
@@ -6690,6 +6847,7 @@ function leaveGame(){
   state.pieces.clear();
   state.tokens.clear();
   state.tokenTypes.clear();
+  state.tokenTypeStyles.clear();
   state.zones.clear();
   state.theme = { boardColor:'#1a1c22', handColor:'#1c1f26' };
   applyBoardTheme(state.theme);
@@ -6913,9 +7071,8 @@ function renderHandTokens(){
   if(!el) return;
   const entries = [...state.handTokens.entries()].filter(([,n])=>n>0);
   el.innerHTML = entries.map(([type,n])=>{
-    const color = state.tokenTypes.get(type) || '#546178';
-    return `<div class="hand-token" data-type="${escapeHtml(type)}">
-      <span class="dot" style="background:${color}" title="${escapeHtml(type)} — drag onto the board to play one">${escapeHtml((type[0]||'?').toUpperCase())}</span><span class="qty" title="Drag to play all ${n}">×${n}</span></div>`;
+    return `<div class="hand-token" data-type="${escapeHtml(type)}" title="${escapeHtml(type)} — drag the token to play one">
+      ${tokenFaceMarkup(type, 'dot')}<span class="qty" title="Drag to play all ${n}">×${n}</span></div>`;
   }).join('');
   // Same as a board token stack: grab the token itself for one, its quantity for the whole stack.
   el.querySelectorAll('.hand-token').forEach(chip=>{
@@ -6989,9 +7146,14 @@ function playHandToken(type, clientX, clientY, amount){
   state.handTokens.set(type, have-amount);
   if(have-amount<=0) state.handTokens.delete(type);
   const world = clientToWorld(clientX, clientY);
-  const target = findTokenMergeTarget({id:null, type}, world.x, world.y);
+  const host = findPieceAtPoint(world.x, world.y);
+  const target = findTokenMergeTarget({id:null, type}, world.x, world.y) || (host && attachedTokenOfType(host.id, type, null));
   let undoBoard;
-  if(target){
+  if(!target && host){
+    const id = newTokenId();
+    doAction('PLACE_TOKEN', { id, x:world.x-22, y:world.y-22, type, count:amount, attachedTo:host.id, attachedCardIndex:cardIndexAtPoint(host, world.x, world.y) });
+    undoBoard = ()=> doAction('REMOVE_TOKEN', {id});
+  } else if(target){
     const old = target.count;
     doAction('SET_TOKEN_COUNT', {id:target.id, count:old+amount});
     undoBoard = ()=> doAction('SET_TOKEN_COUNT', {id:target.id, count:old});
@@ -7056,6 +7218,7 @@ function exportLayout(){
     sourceSheets: sourceSheetsInUse(),
     theme: { ...state.theme },
     tokenTypes: [...state.tokenTypes.entries()],
+    tokenTypeStyles: [...state.tokenTypeStyles.entries()],
     zones: [...state.zones.values()],
     pieces: [...state.pieces.values()],
     tokens: [...state.tokens.values()],
@@ -7090,6 +7253,7 @@ document.getElementById('layoutFileInput').addEventListener('change', (e)=>{
         sourceSheets: json.sourceSheets||[],
         theme: json.theme||null,
         tokenTypes: json.tokenTypes||[],
+        tokenTypeStyles: json.tokenTypeStyles||[],
         zones: json.zones||[],
         pieces: json.pieces||[],
         tokens: json.tokens||[],
