@@ -413,7 +413,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 #themePopover.hidden, #zonePopover.hidden{display:none;}
 .popover-drag{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;cursor:move;user-select:none;
   font-size:11.5px;font-weight:700;color:var(--text-soft);background:var(--surface-2);border-bottom:1px solid var(--border);}
-.popover-drag span{letter-spacing:-2px;opacity:.7;}
+.popover-drag .grip{letter-spacing:-2px;opacity:.7;}
 .popover-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;}
 .popover-row label{font-size:12px;color:var(--text-soft);flex:none;}
 .popover-row input[type="text"]{flex:1;min-width:0;}
@@ -449,7 +449,10 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 #hoverPreview{position:fixed;z-index:95;pointer-events:none;bottom:130px;right:20px;box-shadow:var(--shadow);border-radius:var(--radius);overflow:hidden;}
 #hoverPreview.hidden{display:none;}
 #hoverPreview.flip-left{right:auto;left:20px;}
-#hoverPreview img{width:320px;display:block;border-radius:var(--radius);}
+#hoverPreviewFrame{position:relative;overflow:hidden;border-radius:var(--radius);}
+/* Centered and turned by showHoverPreview (sideways art is rotated upright). */
+#hoverPreview img{position:absolute;left:50%;top:50%;display:block;object-fit:cover;}
+#hoverPreviewBack{position:absolute;left:0;top:0;}
 
 /* ---------- Hotkey hint — reminds you of the flip/rotate/draw keys while
    hovering a pile on the board (desktop only; keys are ignored otherwise). ---------- */
@@ -644,27 +647,29 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   white-space:nowrap;cursor:pointer;}
 #historyFlyoutBody{overflow-y:auto;}
 
-/* ---------- Peek popup ---------- */
-#peekPopup{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:96;display:flex;align-items:center;justify-content:center;cursor:pointer;}
-#peekPopup.hidden{display:none;}
-.peek-box{background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius-lg);padding:16px;text-align:center;animation:bouncePopIn .28s var(--bounce);}
-.peek-box img{width:280px;border-radius:var(--radius);display:block;}
-/* #peekPopupClassified carries the .classified-face class (below) at all times
-   in markup, which sets display:flex unconditionally — its own .hidden class
-   toggle (openPeekPopup) needs an explicit rule here to actually hide it, or
-   it stays visibly stacked under the real card image every single peek, even
-   when the card isn't classified at all (this was the "I see two images"
-   bug: the placeholder was never really hidden, just visually below the img). */
-#peekPopupClassified.hidden{display:none;}
-
-/* ---------- Search modal ---------- */
-#searchModalList{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;max-height:50vh;overflow-y:auto;}
-.search-card{display:block;cursor:pointer;position:relative;transition:transform .15s var(--bounce);}
-.search-card:hover{transform:scale(1.04);}
-.search-card input{position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;}
-.search-card .face{width:100%;aspect-ratio:5/7;border-radius:var(--radius-sm);overflow:hidden;border:2px solid var(--border);}
-.search-card input:checked ~ .face{border-color:var(--accent);}
-.search-card img{width:100%;height:100%;object-fit:cover;display:block;}
+/* ---------- Pile browser — Search (Q) and "look at the top N" (hold A + a
+   number). A floating, draggable panel rather than a modal, so the board stays
+   usable: drag cards straight out of it. See openPileBrowser. ---------- */
+#pileBrowser{position:fixed;z-index:92;left:50%;bottom:170px;transform:translateX(-50%);max-width:min(900px,92vw);
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
+  animation:bouncePopIn .2s var(--bounce);}
+#pileBrowser.moved{transform:none;}
+#pileBrowser.hidden{display:none;}
+#pileBrowser .popover-drag .btn{padding:2px 7px;font-size:11px;}
+.pb-help{font-size:11px;color:var(--text-soft);padding:6px 12px 0;}
+#pileBrowserList{display:flex;gap:10px;padding:10px 12px 12px;overflow-x:auto;align-items:flex-start;}
+.pb-card{flex:none;width:104px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:grab;user-select:none;}
+.pb-card .face{width:104px;height:146px;border-radius:var(--radius-sm);overflow:hidden;border:2px solid var(--border);
+  transition:border-color .12s,transform .15s var(--bounce);background:var(--surface-2);}
+.pb-card:hover .face{border-color:var(--accent);transform:translateY(-3px);}
+.pb-card.drop-before .face{box-shadow:-6px 0 0 -2px var(--accent);}
+.pb-card img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;}
+.pb-pos{font-size:10.5px;font-weight:700;color:var(--text-soft);}
+.pb-actions{display:flex;gap:3px;}
+.pb-actions .btn{padding:2px 6px;font-size:11px;}
+.pb-ghost{position:fixed;pointer-events:none;z-index:200;width:78px;height:110px;border-radius:var(--radius-sm);overflow:hidden;
+  box-shadow:var(--shadow);opacity:.9;border:2px solid var(--accent);}
+.pb-ghost img{width:100%;height:100%;object-fit:cover;}
 
 /* ---------- Splayed stacks ---------- */
 /* Height/width for a splayed pile are set inline per-instance (renderBoard()), since
@@ -853,34 +858,20 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 <div id="zonePopover" class="hidden"></div>
 
 <div id="hoverPreview" class="hidden">
-  <img id="hoverPreviewImg">
-  <div id="hoverPreviewBack" class="cardback" style="display:none;width:320px;height:448px;">🂠</div>
+  <div id="hoverPreviewFrame">
+    <img id="hoverPreviewImg">
+    <div id="hoverPreviewBack" class="cardback" style="display:none;">🂠</div>
+  </div>
 </div>
 
 <div id="hotkeyHint" class="hidden"></div>
 
 <div id="diceResult" class="hidden"></div>
 
-<div id="peekPopup" class="hidden">
-  <div class="peek-box">
-    <div style="font-size:12px;color:var(--text-soft);margin-bottom:8px;">Private peek — only you can see this</div>
-    <img id="peekPopupImg">
-    <div id="peekPopupClassified" class="classified-face hidden" style="width:280px;height:392px;border-radius:var(--radius-sm);">🔒 Classified</div>
-    <div style="font-size:12px;color:var(--text-soft);margin-top:8px;">Click anywhere to close</div>
-  </div>
-</div>
-
-<div class="modal-overlay hidden" id="searchModal">
-  <div class="modal-box">
-    <div class="modal-header"><h2>Search</h2><div class="btn btn-icon" id="btnSearchCancel">✕</div></div>
-    <div class="modal-body">
-      <div id="searchModalList"></div>
-      <div style="display:flex;gap:8px;margin-top:14px;">
-        <div class="btn btn-accent" id="btnSearchToHand">Take Selected → Hand</div>
-        <div class="btn" id="btnSearchToBoard">Take Selected → Board</div>
-      </div>
-    </div>
-  </div>
+<div id="pileBrowser" class="hidden">
+  <div class="popover-drag"><span id="pileBrowserTitle">Search</span><div class="btn btn-sm" id="btnPileBrowserClose">Done</div></div>
+  <div class="pb-help">Top of the pile is on the left. Drag a card onto the board, a pile, or your hand — or between cards here to reorder.</div>
+  <div id="pileBrowserList"></div>
 </div>
 
 <div class="modal-overlay hidden" id="connectModal">
@@ -1297,6 +1288,7 @@ async function fetchSheetCards(sheetId){
         r._front = (r['front-image-url']||'').trim();
         r._back = (r['back-image-url']||'').trim();
         r._doubleSided = String(r.is_double_sided).trim().toUpperCase()==='TRUE';
+        r._rotate = cardArtRotation(r); // sideways art in a portrait image — the preview turns it upright
         r._sheetId = sheetId; // so a piece's cards can be traced back to their sheet when exporting a layout
         if(r.id) cardsById.set(r.id, r);
         // Preload both faces right away — see preloadCardFace's own comment —
@@ -1734,6 +1726,7 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'SHUFFLE_PIECE':
+    case 'REORDER_PIECE': // a pile browser moved one card (see moveCardWithinPile)
     case 'FLIP_STACK': {
       setPieceCards(payload.id, payload.cardIds, payload.faceStates, payload.cardRotations);
       break;
@@ -1929,7 +1922,7 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'NOTE': break; // no board mutation — handled entirely via the toast/history text
-    // Anti-cheat visibility (see peekTopCard's comment): a brief, unmissable
+    // Anti-cheat visibility (a peek — holding A over a card — is never quiet): a brief, unmissable
     // flag on the exact pile that was just peeked at, for every player —
     // self-clears after PEEK_ALERT_MS via its own timeout, not another event,
     // so it works even if the peeking player leaves right after.
@@ -1948,7 +1941,8 @@ function applyRoomEvent(type, payload){
     // open, since a search can take a while and should stay obviously
     // flagged the whole time, not just at the start.
     case 'SEARCH_START': {
-      state.searchingBy.set(payload.id, payload.playerName);
+      // What the pile's badge says (see renderBoard) — a full search, or just the top few.
+      state.searchingBy.set(payload.id, payload.count ? `👁 ${payload.playerName} is looking at the top ${payload.count}` : `🔍 ${payload.playerName} is searching`);
       break;
     }
     case 'SEARCH_END': {
@@ -1992,7 +1986,7 @@ function applyRoomEvent(type, payload){
       break;
     }
   }
-  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','EDIT_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE','STATE_SNAPSHOT','PEEK_ALERT','SEARCH_START','SEARCH_END'].includes(type)) renderBoard();
+  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','REORDER_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','EDIT_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE','STATE_SNAPSHOT','PEEK_ALERT','SEARCH_START','SEARCH_END'].includes(type)) renderBoard();
   // A playful "pop" the moment something new lands on the board — for every client,
   // local placer and remote viewers alike, since this runs from inside applyRoomEvent
   // itself rather than the call site. Only ever added to a piece/token/zone element
@@ -2126,7 +2120,7 @@ function describeEvent(type, payload, playerName){
     case 'HAND_COUNT': return payload.tokenNote ? `${playerName} ${payload.tokenNote}` : `${playerName} now has ${payload.count} card(s) in hand`;
     case 'SEARCH_REMOVE': return `${playerName} searched a pile and took ${payload.removedCount} card(s)`;
     case 'RESTORE_PIECE_CARDS': return `${playerName} undid a change to a pile`;
-    case 'DRAW_TOP': return `${playerName} took the top card of a pile`;
+    case 'DRAW_TOP': return payload.count>1 ? `${playerName} drew ${payload.count} cards from a pile` : `${playerName} took the top card of a pile`;
     case 'REMOVE_CARD': return `${playerName} removed a card from a pile`;
     case 'DEFINE_TOKEN_TYPE': return `${playerName} defined a "${payload.name}" token type`;
     case 'EDIT_TOKEN_TYPE': return payload.oldName!==payload.name
@@ -2143,7 +2137,8 @@ function describeEvent(type, payload, playerName){
     case 'SET_ZONE_LOCK': return `${playerName} ${payload.locked?'locked':'unlocked'} a zone`;
     case 'PLAYER_JOINED': return `${playerName} joined the table`;
     case 'PEEK_ALERT': return `👁 ${playerName} peeked at a card — watch that pile`;
-    case 'SEARCH_START': return `🔍 ${playerName} started searching a pile`;
+    case 'SEARCH_START': return payload.count ? `👁 ${playerName} is looking at the top ${payload.count} card${payload.count===1?'':'s'} of a pile` : `🔍 ${playerName} started searching a pile`;
+    case 'REORDER_PIECE': return `${playerName} rearranged cards in a pile`;
     case 'SEARCH_END': return `${playerName} stopped searching`;
     case 'SET_TURN': {
       const activeId = payload.turnOrder[payload.turnIndex];
@@ -3123,7 +3118,7 @@ function renderBoard(){
       topCardOffset = {left:0, top:0}; // the top card is always the anchor now
       [...el.querySelectorAll('.splay-card:not(.splay-gap)')].forEach(cardEl=>{
         const i = Number(cardEl.dataset.i);
-        wireHoverPreview(cardEl, ()=>({card:cardsById.get(p.cardIds[i]), faceUp:p.faceStates[i]}));
+        wireHoverPreview(cardEl, ()=>({card:cardsById.get(p.cardIds[i]), faceUp:p.faceStates[i]}), {pieceId:p.id, cardIndex:i});
         // Tracks which card of THIS splay is under the mouse (see
         // hoveredCardIndex/rotatePiece) so R rotates just that one card
         // instead of the whole pile.
@@ -3149,7 +3144,7 @@ function renderBoard(){
           : (p.label ? `<div class="piece-label">${escapeHtml(p.label)}</div>` : '')}
         ${p.locked ? `<div class="lock-badge">🔒</div>` : ''}
       `;
-      wireHoverPreview(el, ()=>pieceTopFace(p));
+      wireHoverPreview(el, ()=>pieceTopFace(p), {pieceId:p.id, cardIndex:p.cardIds.length-1});
       if(isStack){
         topCardOffset = {left:0, top:0};
         wireStackInteraction(el, p); // edge = begin a splay; anywhere else = peel the top card off, same as always
@@ -3176,7 +3171,7 @@ function renderBoard(){
     if(state.searchingBy.has(p.id)){
       const badge = document.createElement('div');
       badge.className = 'search-alert-badge';
-      badge.textContent = `🔍 ${state.searchingBy.get(p.id)} is searching`;
+      badge.textContent = state.searchingBy.get(p.id);
       el.appendChild(badge);
     }
     placePieceBadges(el, p, badgeAnchor, badgeFan || badgeAnchor, badgeSplayDir);
@@ -3190,6 +3185,7 @@ function renderBoard(){
   renderTokens();
   renderPlayerCounters();
   document.getElementById('boardEmptyHint').classList.toggle('hidden', state.pieces.size>0 || state.tokens.size>0);
+  if(pileBrowser) renderPileBrowser(); // keep an open search/peek panel in step with its pile
   // Other players' cursors live in #boardWorld too — put them back after the wipe above.
   if(presenceCursors) presenceCursors.forEach(c=>{ if(!c.isConnected) world.appendChild(c); });
 }
@@ -3237,10 +3233,27 @@ document.getElementById('btnZoomFit').addEventListener('click', fitAll);
 // Deltas are accumulated so a trackpad's stream of tiny scroll events steps
 // at a sane rate; one mouse-wheel notch is one step.
 let tokenWheelAcc = 0, tokenWheelId = null;
+// Scroll over any card (board or hand) grows/shrinks the hover preview, 10%
+// per notch, remembered in this browser. Shows the preview right away.
+let previewWheelAcc = 0;
+function wheelPreviewScale(e){
+  previewWheelAcc += e.deltaMode===1 ? e.deltaY*33 : e.deltaY;
+  if(Math.abs(previewWheelAcc) < 50) return;
+  const step = previewWheelAcc < 0 ? 0.1 : -0.1;
+  previewWheelAcc = 0;
+  previewScale = Math.round(Math.max(0.5, Math.min(2.5, previewScale + step))*10)/10;
+  try{ localStorage.setItem(LS_PREVIEW_SCALE_KEY, String(previewScale)); }catch(err){}
+  clearTimeout(hoverTimer);
+  renderHoverPreview();
+}
 const TOKEN_WHEEL_STEP = 50;
 document.getElementById('boardViewport').addEventListener('wheel', (e)=>{
   const tokenEl = e.target.closest && e.target.closest('.token');
-  if(!tokenEl) return;
+  if(!tokenEl){
+    // Over a card: resize its preview instead of zooming the board.
+    if(e.target.closest && e.target.closest('.piece')){ e.preventDefault(); e.stopImmediatePropagation(); wheelPreviewScale(e); }
+    return;
+  }
   e.preventDefault();
   e.stopImmediatePropagation(); // don't also zoom
   const id = tokenEl.dataset.id;
@@ -4366,7 +4379,7 @@ function showHotkeyHint(el){
   const isStack = !!(p && p.kind!=='image' && p.cardIds.length>1);
   const keys = (p && p.kind==='image')
     ? { E:'Turn ↺', R:'Turn ↻', W:'Ping' } // an image piece has no card faces to flip, draw, or peek at
-    : { F:'Flip', E:'Turn ↺', R:'Turn ↻', D:'Draw', A:'Peek', W:'Ping', ...(isStack ? {S:'Shuffle', Q:'Search'} : {}) };
+    : { F:'Flip', E:'Turn ↺', R:'Turn ↻', D:'Draw', A:'Hold: peek', W:'Ping', ...(isStack ? {S:'Shuffle', Q:'Search'} : {}) };
   hint.innerHTML = keyboardHintHtml(keys, perCard ? 'card' : '');
   // Keep clear of the whole pile INCLUDING its label: a 'down' splay docks
   // its label (which carries the card count) above the anchor card, outside
@@ -4449,10 +4462,64 @@ document.addEventListener('keydown', (e)=>{
   if(rotateDir){ e.preventDefault(); rotatePiece(hoveredPieceId, rotateDir); }
   else if(p.kind!=='image' && key==='f'){ e.preventDefault(); flipTopCard(hoveredPieceId, cardIdx); }
   else if(p.kind!=='image' && key==='d'){ e.preventDefault(); drawTopCard(hoveredPieceId, 'hand', cardIdx); }
-  // A peeks at whichever card is under the cursor (the pile's own top card
-  // by default, or the specific splay card being hovered).
-  else if(p.kind!=='image' && key==='a'){ e.preventDefault(); peekTopCard(hoveredPieceId, cardIdx); }
+  // Number keys (top row or keypad): draw that many from the top into your
+  // hand (0 = 10) — or, while holding Peek (A), look through that many from
+  // the top privately (see openPileBrowser).
+  else if(p.kind!=='image' && /^[0-9]$/.test(e.key)){
+    e.preventDefault();
+    const n = e.key==='0' ? 10 : Number(e.key);
+    if(peekHeld) openPileBrowser(hoveredPieceId, n);
+    else drawTopCards(hoveredPieceId, n);
+  }
+  // (A — Peek — is held rather than pressed: see the peek key listeners.)
 });
+// Holding A shows the hidden face of whatever card you hover (see
+// renderHoverPreview); letting go goes back to normal.
+document.addEventListener('keydown', (e)=>{
+  if(e.key.toLowerCase()!=='a' || e.ctrlKey || e.metaKey || e.altKey || isTextEntryFocused()) return;
+  e.preventDefault();
+  if(e.repeat || peekHeld) return;
+  peekHeld = true; peekedThisHold.clear();
+  if(previewTarget){ clearTimeout(hoverTimer); renderHoverPreview(); }
+});
+function releasePeek(){
+  if(!peekHeld) return;
+  peekHeld = false;
+  if(previewTarget) renderHoverPreview(); else hideHoverPreview();
+}
+document.addEventListener('keyup', (e)=>{ if(e.key.toLowerCase()==='a') releasePeek(); });
+window.addEventListener('blur', releasePeek);
+// No previews while dragging anything: the card under a moving drag keeps
+// changing, which flickered previews of other cards at the side of the screen.
+let pointerDownAt = null;
+window.addEventListener('mousedown', (e)=>{ pointerDownAt = {x:e.clientX, y:e.clientY}; }, true);
+window.addEventListener('mousemove', (e)=>{
+  if(!pointerDownAt || !e.buttons || pointerDragging) return;
+  if(Math.hypot(e.clientX-pointerDownAt.x, e.clientY-pointerDownAt.y) >= DRAG_THRESHOLD){ pointerDragging = true; clearTimeout(hoverTimer); hideHoverPreview(); }
+}, true);
+window.addEventListener('mouseup', ()=>{ pointerDownAt = null; pointerDragging = false; }, true);
+// Draws the top `n` cards of a pile into your hand in one go (fewer if the
+// pile is smaller), as one undoable action.
+function drawTopCards(pieceId, n){
+  const p = state.pieces.get(pieceId); if(!p || p.kind==='image' || !p.cardIds.length) return;
+  n = Math.min(n, p.cardIds.length);
+  const keep = p.cardIds.length - n;
+  const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
+  const original = {cardIds:[...p.cardIds], faceStates:[...p.faceStates], cardRotations:[...cardRotations]};
+  const drawn = p.cardIds.slice(keep).reverse(); // top card first
+  doAction('DRAW_TOP', { id:pieceId, remainingCardIds:p.cardIds.slice(0,keep), remainingFaceStates:p.faceStates.slice(0,keep),
+    remainingCardRotations:cardRotations.slice(0,keep), destination:'hand', count:n });
+  state.hand.push(...drawn);
+  renderHand();
+  syncHandCount();
+  setUndo(()=>{
+    state.hand.splice(state.hand.length-drawn.length, drawn.length);
+    renderHand();
+    syncHandCount();
+    if(state.pieces.has(pieceId)) doAction('RESTORE_PIECE_CARDS', {id:pieceId, ...original});
+    else doAction('PLACE_PIECE', {id:pieceId, x:p.x, y:p.y, cardIds:original.cardIds, faceStates:original.faceStates, cardRotations:original.cardRotations, rotation:p.rotation, label:p.label, owner:p.owner});
+  });
+}
 // Escape clears the current multi-selection — a quick, always-available "never
 // mind" independent of hovering anything in particular (unlike the R/F/D/P
 // hotkeys above).
@@ -4463,6 +4530,7 @@ document.addEventListener('keydown', (e)=>{
   exitZoneEdit();
   closeRadialMenu();
   ['focusMenu','boardMenu','gridMenu','themePopover','tokenMenu','dicePopover'].forEach(id=> document.getElementById(id).classList.add('hidden'));
+  closePileBrowser();
 });
 
 // True when the cursor is over the BOTTOM THIRD of the target's own top-card
@@ -5150,23 +5218,6 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
   });
 }
 
-// Privately reveals the CURRENTLY-HIDDEN face of the top card to the peeking
-// player only — never changes the piece's actual state. What's actually
-// seen stays private, but everyone else is told exactly WHERE a peek just
-// happened (a ping + a pulsing highlight right on that pile, see PEEK_ALERT
-// below) — a peek is deliberately never a quiet, unnoticed action, so it
-// can't be used to scout without the table knowing about it.
-// Privately reveals ONE card's currently-hidden face — the pile's own top
-// card by default, or a specific `cardIndex` (any card of a splay).
-function peekTopCard(pieceId, cardIndex){
-  const p = state.pieces.get(pieceId); if(!p || !p.cardIds.length) return;
-  const idx = cardIndex!=null ? cardIndex : p.cardIds.length-1;
-  if(idx<0 || idx>=p.cardIds.length) return;
-  const card = cardsById.get(p.cardIds[idx]);
-  const otherFaceUp = !p.faceStates[idx];
-  openPeekPopup(card, otherFaceUp);
-  doAction('PEEK_ALERT', {id:pieceId, playerName:state.playerName});
-}
 const PEEK_ALERT_MS = 2600; // long enough to actually notice, short enough not to linger and clutter the board
 
 // Removes ONE card from a pile — the top card by default, or a specific
@@ -5211,72 +5262,146 @@ function drawTopCard(pieceId, destination, cardIndex){
    Selected cards can go to hand or onto the board (face up, since finding and
    placing it is the point). Other players see a count-only notification.
    ========================================================================= */
-function openSearchModal(pieceId){
-  const p = state.pieces.get(pieceId); if(!p) return;
-  // Opened from the radial menu's own "Search" option — a click that originates
-  // INSIDE the radial menu never reaches the document-level outside-click closer
-  // (see the click listener right after closeRadialMenu below), so without this
-  // the menu was left open, floating behind the search modal.
+// Search (Q / Stack menu) = the whole pile; peek mode (hold A + a number) =
+// just the top N. Either way it's private to you, and the table sees who is
+// looking at which pile for as long as the panel stays open (SEARCH_START/END).
+var pileBrowser = null; // {pieceId, count} — count null = the whole pile. `var` (hoisted): renderBoard, defined earlier, reads it
+function openSearchModal(pieceId){ openPileBrowser(pieceId, null); }
+function openPileBrowser(pieceId, count){
+  const p = state.pieces.get(pieceId); if(!p || p.kind==='image' || !p.cardIds.length) return;
   closeRadialMenu();
-  const listEl = document.getElementById('searchModalList');
-  listEl.innerHTML = p.cardIds.map((cid,i)=>{
-    const card = cardsById.get(cid);
-    return `<label class="search-card">
-      <input type="checkbox" data-idx="${i}">
-      <div class="face">${cardFrontInnerHtml(card,240)}</div>
-    </label>`;
-  }).join('');
-  document.getElementById('searchModal').dataset.pieceId = pieceId;
-  document.getElementById('searchModal').classList.remove('hidden');
-  // Anti-cheat visibility: rifling through a pile is visible to everyone else
-  // at the table for as long as the search modal stays open — see SEARCH_END
-  // at every path that closes it (confirm to hand, confirm to board, cancel).
-  doAction('SEARCH_START', {id:pieceId, playerName:state.playerName});
+  if(pileBrowser) closePileBrowser();
+  pileBrowser = {pieceId, count: count==null ? null : Math.min(count, p.cardIds.length)};
+  document.getElementById('pileBrowser').classList.remove('hidden');
+  renderPileBrowser();
+  doAction('SEARCH_START', {id:pieceId, playerName:state.playerName, count:pileBrowser.count});
 }
-function confirmSearchRemove(destination){
-  const modal = document.getElementById('searchModal');
-  const pieceId = modal.dataset.pieceId;
+function closePileBrowser(){
+  if(!pileBrowser) return;
+  const id = pileBrowser.pieceId;
+  pileBrowser = null;
+  document.getElementById('pileBrowser').classList.add('hidden');
+  doAction('SEARCH_END', {id, playerName:state.playerName});
+}
+document.getElementById('btnPileBrowserClose').addEventListener('click', closePileBrowser);
+wirePopoverDrag(document.getElementById('pileBrowser'), document.querySelector('#pileBrowser .popover-drag'));
+// The pile indexes being shown, top card first.
+function pileBrowserIndexes(p){
+  const n = p.cardIds.length;
+  const count = pileBrowser.count==null ? n : Math.min(pileBrowser.count, n);
+  return Array.from({length:count}, (_,k)=> n-1-k);
+}
+function renderPileBrowser(){
+  if(!pileBrowser) return;
+  const p = state.pieces.get(pileBrowser.pieceId);
+  if(!p || !p.cardIds.length || (pileBrowser.count!=null && pileBrowser.count<=0)){ closePileBrowser(); return; }
+  const idxs = pileBrowserIndexes(p);
+  const name = p.label ? `"${p.label}"` : 'this pile';
+  document.getElementById('pileBrowserTitle').textContent = pileBrowser.count==null
+    ? `Searching ${name} — ${p.cardIds.length} card${p.cardIds.length===1?'':'s'}`
+    : `Top ${idxs.length} of ${name}`;
+  const list = document.getElementById('pileBrowserList');
+  list.innerHTML = idxs.map((i,k)=>`<div class="pb-card" data-idx="${i}">
+      <div class="face">${cardFrontInnerHtml(cardsById.get(p.cardIds[i]), 240)}</div>
+      <div class="pb-pos">${k===0 ? 'Top' : '#'+(k+1)}${i===0 && idxs.length===p.cardIds.length ? ' · Bottom' : ''}</div>
+      <div class="pb-actions">
+        <div class="btn" data-act="top" title="Put on top of the pile">⤒</div>
+        <div class="btn" data-act="bottom" title="Put on the bottom of the pile">⤓</div>
+        <div class="btn" data-act="hand" title="Take into your hand">✋</div>
+      </div></div>`).join('');
+  list.querySelectorAll('.pb-card').forEach(el=>{
+    const i = Number(el.dataset.idx);
+    wireHoverPreview(el.querySelector('.face'), ()=>({card:cardsById.get(p.cardIds[i]), faceUp:true})); // private — you're already looking
+    el.querySelectorAll('[data-act]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); pileBrowserAction(i, b.dataset.act); }));
+    wirePileBrowserDrag(el, i);
+  });
+}
+// In "top N" mode a card that leaves the top of the pile leaves the view too.
+function pileBrowserShrink(){ if(pileBrowser && pileBrowser.count!=null) pileBrowser.count--; }
+function pileBrowserAction(i, act){
+  const pieceId = pileBrowser.pieceId;
   const p = state.pieces.get(pieceId); if(!p) return;
-  const checked = [...modal.querySelectorAll('input[type=checkbox]:checked')].map(cb=>Number(cb.dataset.idx));
-  modal.classList.add('hidden');
-  doAction('SEARCH_END', {id:pieceId, playerName:state.playerName});
-  if(!checked.length) return;
-  const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
-  const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates], originalCardRotations = [...cardRotations];
-  const checkedSet = new Set(checked);
-  const removedCardIds = checked.map(i=>p.cardIds[i]);
-  const removedAngles = checked.map(i=>absCardRotation(p, i)); // captured before SEARCH_REMOVE rewrites p — see ROTATION MODEL
-  const remainingCardIds = p.cardIds.filter((_,i)=>!checkedSet.has(i));
-  const remainingFaceStates = p.faceStates.filter((_,i)=>!checkedSet.has(i));
-  const remainingCardRotations = cardRotations.filter((_,i)=>!checkedSet.has(i));
-  doAction('SEARCH_REMOVE', { id:pieceId, remainingCardIds, remainingFaceStates, remainingCardRotations, removedCount:removedCardIds.length });
-  if(destination==='hand'){
-    state.hand.push(...removedCardIds);
-    renderHand();
-    syncHandCount();
-    setUndo(()=>{
-      state.hand.splice(state.hand.length-removedCardIds.length, removedCardIds.length);
-      renderHand();
-      syncHandCount();
-      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations});
-    });
-  } else {
-    const newId = newPieceId();
-    doAction('PLACE_PIECE', { id:newId, x:p.x+40, y:p.y+40, cardIds:removedCardIds, faceStates:removedCardIds.map(()=>true), cardRotations:removedAngles, owner:state.playerId });
-    setUndo(()=>{
-      doAction('REMOVE_PIECE', {id:newId});
-      doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations});
-    });
-  }
+  if(act==='hand'){ pileBrowserShrink(); drawTopCard(pieceId, 'hand', i); }
+  else if(act==='top') moveCardWithinPile(pieceId, i, p.cardIds.length-1);
+  else if(act==='bottom'){ if(pileBrowser.count!=null && pileBrowser.count<p.cardIds.length) pileBrowserShrink(); moveCardWithinPile(pieceId, i, 0); }
+  renderPileBrowser();
 }
-document.getElementById('btnSearchToHand').addEventListener('click', ()=>confirmSearchRemove('hand'));
-document.getElementById('btnSearchToBoard').addEventListener('click', ()=>confirmSearchRemove('board'));
-document.getElementById('btnSearchCancel').addEventListener('click', ()=>{
-  const modal = document.getElementById('searchModal');
-  const pieceId = modal.dataset.pieceId;
-  modal.classList.add('hidden');
-  if(pieceId) doAction('SEARCH_END', {id:pieceId, playerName:state.playerName});
-});
+// Moves one card to a new position in the same pile (0 = bottom). One synced,
+// undoable REORDER_PIECE.
+function moveCardWithinPile(pieceId, from, to){
+  const p = state.pieces.get(pieceId); if(!p || from===to) return;
+  const rot = p.cardRotations || p.cardIds.map(()=>0);
+  const original = {cardIds:[...p.cardIds], faceStates:[...p.faceStates], cardRotations:[...rot]};
+  const order = p.cardIds.map((_,k)=>k);
+  order.splice(from, 1);
+  order.splice(Math.max(0, Math.min(to, order.length)), 0, from);
+  doAction('REORDER_PIECE', {id:pieceId, cardIds:order.map(k=>p.cardIds[k]), faceStates:order.map(k=>p.faceStates[k]), cardRotations:order.map(k=>rot[k])});
+  setUndo(()=> doAction('RESTORE_PIECE_CARDS', {id:pieceId, ...original}));
+}
+// Drag a card out of the browser: onto another card here = reorder (it goes
+// just above that card); onto your hand = take it; onto the board = place it
+// face up there (joining a pile if dropped on one, like any other card drag).
+function wirePileBrowserDrag(el, i){
+  el.addEventListener('mousedown', (e)=>{
+    if(e.button!==0 || e.target.closest('[data-act]')) return;
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    let ghost = null;
+    const clearMarks = ()=> document.querySelectorAll('.pb-card.drop-before').forEach(c=>c.classList.remove('drop-before'));
+    function move(ev){
+      if(!ghost){
+        if(Math.hypot(ev.clientX-startX, ev.clientY-startY) < DRAG_THRESHOLD) return;
+        ghost = document.createElement('div'); ghost.className = 'pb-ghost';
+        ghost.innerHTML = el.querySelector('.face').innerHTML;
+        document.body.appendChild(ghost);
+        hideHoverPreview();
+      }
+      ghost.style.left = (ev.clientX-39)+'px'; ghost.style.top = (ev.clientY-55)+'px';
+      clearMarks();
+      const over = document.elementFromPoint(ev.clientX, ev.clientY);
+      const overCard = over && over.closest('#pileBrowser .pb-card');
+      if(overCard && overCard!==el) overCard.classList.add('drop-before');
+      document.getElementById('hand-panel').classList.toggle('hand-drop-target', isOverHandPanel(ev.clientX, ev.clientY));
+      const onBoard = !over || (over.closest('#boardViewport') && !over.closest('.board-overlay'));
+      const target = onBoard && !overCard ? findOverlapTarget({id:null}, ev.clientX, ev.clientY) : null;
+      if(target) showMergeHighlight(target.id); else clearMergeHighlight();
+    }
+    function up(ev){
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      clearMarks(); clearMergeHighlight();
+      document.getElementById('hand-panel').classList.remove('hand-drop-target');
+      if(!ghost) return;
+      ghost.remove();
+      const pieceId = pileBrowser && pileBrowser.pieceId;
+      const p = pieceId && state.pieces.get(pieceId); if(!p) return;
+      const over = document.elementFromPoint(ev.clientX, ev.clientY);
+      const overCard = over && over.closest('#pileBrowser .pb-card');
+      if(overCard){
+        const t = Number(overCard.dataset.idx);
+        if(t!==i) moveCardWithinPile(pieceId, i, i < t ? t : t+1); // lands just above (on top of) the card it was dropped on
+      } else if(over && over.closest('#pileBrowser')){
+        return; // dropped on the panel itself, not on a card — nothing to do
+      } else if(isOverHandPanel(ev.clientX, ev.clientY)){
+        pileBrowserShrink(); drawTopCard(pieceId, 'hand', i);
+      } else if(over && over.closest('#boardViewport')){
+        pileBrowserShrink(); placePileCardOnBoard(p, i, ev.clientX, ev.clientY);
+      }
+      renderPileBrowser();
+    }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+}
+// Pulls card i out of pile p as its own face-up piece at the drop point, then
+// lands it exactly like any other dragged card would (merge/tuck/snap), as
+// one undoable action.
+function placePileCardOnBoard(p, i, clientX, clientY){
+  const ctx = beginPeelAsPiece(p, i, clientX, clientY);
+  if(!ctx) return;
+  if(!ctx.p.faceStates[0]) doAction('FLIP_TOP', {id:ctx.p.id, faceUp:true, cardIndex:0});
+  finalizeWholePieceDrop(ctx, {clientX, clientY});
+}
 
 /* =========================================================================
    HAND (basic — draw from a stack; reordering comes later)
@@ -5386,7 +5511,6 @@ document.addEventListener('click', (e)=>{
 function singleCardMenuItems(p, cardIndex){
   return [
     {icon:'⟲', label:'Flip', action:()=>flipTopCard(p.id, cardIndex)},
-    {icon:'👁', label:'Peek', action:()=>peekTopCard(p.id, cardIndex)},
     {icon:'✋', label:'Draw', action:()=>drawTopCard(p.id, 'hand', cardIndex)},
     {icon:'↻', label:'Rotate', action:()=>rotateCardAt(p.id, cardIndex, 1)},
     {icon:'🗑', label:'Remove', action:()=>removeCard(p.id, cardIndex)},
@@ -6269,7 +6393,7 @@ function openZoneEditPopover(zoneId, clientX, clientY){
   const old = { label:z.label, color:z.color, strokeColor:z.strokeColor, strokeWidth:z.strokeWidth, snapMode:z.snapMode, opacity:opacityPct/100 };
   const el = document.getElementById('zonePopover');
   el.innerHTML = `
-    <div class="popover-drag" title="Drag to move this panel">Edit zone <span>⋮⋮</span></div>
+    <div class="popover-drag" title="Drag to move this panel">Edit zone <span class="grip">⋮⋮</span></div>
     <div class="popover-row"><label>Label</label><input type="text" id="zoneLabelInput" value="${escapeHtml(z.label||'')}" placeholder="(none)"></div>
     <div class="popover-row"><label>Fill color</label><input type="color" id="zoneColorInput" value="${z.color}"></div>
     <div class="popover-row"><label>Fill opacity</label><input type="range" id="zoneOpacityInput" min="0" max="100" step="5" value="${opacityPct}"></div>
@@ -6364,10 +6488,14 @@ function placeZonePopover(el, zoneId){
 function wirePopoverDrag(panel, handle){
   if(!handle) return;
   handle.addEventListener('mousedown', (e)=>{
-    if(e.button!==0) return;
+    if(e.button!==0 || e.target.closest('.btn')) return; // buttons in the header still just click
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
     const r = panel.getBoundingClientRect();
+    // Pin it where it is now, in plain left/top terms (a panel may start out
+    // centered with a transform, or anchored by bottom).
+    panel.classList.add('moved');
+    panel.style.left = r.left+'px'; panel.style.top = r.top+'px'; panel.style.bottom = 'auto';
     function move(ev){
       const x = Math.max(0, Math.min(r.left + ev.clientX - startX, window.innerWidth - r.width));
       const y = Math.max(0, Math.min(r.top + ev.clientY - startY, window.innerHeight - 30));
@@ -6396,31 +6524,82 @@ document.addEventListener('mousedown', (e)=>{
 
 /* =========================================================================
    HOVER PREVIEW — works identically for board pieces and hand cards; shows
-   whatever face is CURRENTLY exposed, never a hidden one.
+   whatever face is CURRENTLY exposed. Holding the Peek key (A) shows a board
+   card's hidden face instead — the only way to peek — and tells the table
+   (PEEK_ALERT), same as peeking always has. Scrolling over a card resizes the
+   preview. Never shows mid-drag. Sideways art (landscape cards stored in a
+   portrait image, see cardArtRotation) is turned upright.
    ========================================================================= */
+// Which way a card's FRONT art is printed: explicit "rotate" column (0/90/
+// 180/270, the deckbuilder's generic-game rule), else Echo of Omens' own
+// landscape card types — the same rules the deckbuilder uses.
+const ROOM_HORIZONTAL_TYPES = new Set(['O - Scheme','O - Domination','C - Quest','O - Stronghold','C - Resistance']);
+function cardArtRotation(r){
+  const rot = parseInt(r.rotate, 10);
+  if([90,180,270].includes(rot)) return rot;
+  if(ROOM_HORIZONTAL_TYPES.has(r.type) || (r.type==='Z - Custom' && (r.name==='Stronghold' || r.name==='Resistance'))) return 90;
+  return 0;
+}
 let hoverTimer = null;
-const HOVER_PREVIEW_WIDTH = 320; // keep in sync with #hoverPreview img { width }
-function wireHoverPreview(el, getCardAndFace){
+const HOVER_PREVIEW_WIDTH = 320; // at preview size 100%
+const LS_PREVIEW_SCALE_KEY = 'room_preview_scale';
+let previewScale = (()=>{ try{ const v = Number(localStorage.getItem(LS_PREVIEW_SCALE_KEY)); return v>=0.5 && v<=2.5 ? v : 1; }catch(e){ return 1; } })();
+let previewTarget = null;   // {get, meta, clientX, clientY} for whatever card the cursor is on
+let peekHeld = false;       // the Peek key (A) is down
+const peekedThisHold = new Set();
+let pointerDragging = false; // a button is down and the mouse has moved — no previews mid-drag
+// `meta` = {pieceId, cardIndex} for a card on the board (so a peek can alert
+// the table); omitted for your own hand and private search windows.
+function wireHoverPreview(el, getCardAndFace, meta){
   el.addEventListener('mouseenter', (ev)=>{
     clearTimeout(hoverTimer);
-    const clientX = ev.clientX, clientY = ev.clientY;
-    hoverTimer = setTimeout(()=>{
-      const {card, faceUp} = getCardAndFace();
-      showHoverPreview(card, faceUp, clientX, clientY);
-    }, 400);
+    previewTarget = {get:getCardAndFace, meta, clientX:ev.clientX, clientY:ev.clientY};
+    hoverTimer = setTimeout(renderHoverPreview, peekHeld ? 0 : 400);
   });
-  el.addEventListener('mouseleave', ()=>{ clearTimeout(hoverTimer); hideHoverPreview(); });
+  el.addEventListener('mouseleave', ()=>{ clearTimeout(hoverTimer); previewTarget = null; hideHoverPreview(); });
+}
+function renderHoverPreview(){
+  if(!previewTarget || pointerDragging){ hideHoverPreview(); return; }
+  const {card, faceUp} = previewTarget.get() || {};
+  if(!card){ hideHoverPreview(); return; }
+  let showFront = faceUp;
+  if(peekHeld){
+    // Peek reveals what's hidden: the front of a face-down card, or the back
+    // of a face-up double-sided one.
+    const hiddenSide = !faceUp || card._doubleSided;
+    if(hiddenSide){
+      showFront = !faceUp;
+      const m = previewTarget.meta;
+      if(m){
+        const key = m.pieceId+':'+m.cardIndex;
+        if(!peekedThisHold.has(key)){ peekedThisHold.add(key); doAction('PEEK_ALERT', {id:m.pieceId, playerName:state.playerName}); }
+      }
+    }
+  }
+  showHoverPreview(card, showFront, previewTarget.clientX, previewTarget.clientY);
 }
 function showHoverPreview(card, faceUp, clientX, clientY){
   if(!card) return;
   const previewEl = document.getElementById('hoverPreview');
+  // Size (see previewScale), capped so it always fits on screen, and whether
+  // the art is sideways — only the FRONT carries sideways art.
+  const maxW = Math.max(120, (window.innerHeight - 170) / 1.4);
+  const w = Math.min(HOVER_PREVIEW_WIDTH * previewScale, maxW), h = w * 1.4;
+  const rot = (faceUp && !card._classified && !card._pending) ? (card._rotate||0) : 0;
+  const sideways = rot===90 || rot===270;
+  const frame = document.getElementById('hoverPreviewFrame');
+  frame.style.width = (sideways ? h : w)+'px';
+  frame.style.height = (sideways ? w : h)+'px';
   // Default position is bottom-right. If that would put the preview under/near
   // the cursor that triggered it, flip it to the left side instead so it never
   // covers what the player is pointing at.
-  const wouldOverlapCursor = typeof clientX === 'number' && clientX > (window.innerWidth - HOVER_PREVIEW_WIDTH - 60);
+  const wouldOverlapCursor = typeof clientX === 'number' && clientX > (window.innerWidth - (sideways ? h : w) - 60);
   previewEl.classList.toggle('flip-left', wouldOverlapCursor);
   const img = document.getElementById('hoverPreviewImg');
+  img.style.width = w+'px'; img.style.height = h+'px';
+  img.style.transform = `translate(-50%,-50%) rotate(${rot}deg)`;
   const back = document.getElementById('hoverPreviewBack');
+  back.style.width = w+'px'; back.style.height = h+'px';
   if(card._classified || card._pending){
     img.style.display='none';
     back.textContent = card._pending ? '⏳ Access Pending' : '🔒 Classified';
@@ -6438,32 +6617,6 @@ function showHoverPreview(card, faceUp, clientX, clientY){
   previewEl.classList.remove('hidden');
 }
 function hideHoverPreview(){ document.getElementById('hoverPreview').classList.add('hidden'); }
-
-/* =========================================================================
-   PEEK POPUP — private to the peeking player only.
-   ========================================================================= */
-function openPeekPopup(card, faceUp){
-  const img = document.getElementById('peekPopupImg');
-  // This element doubles as the "unavailable" placeholder for BOTH states —
-  // classified (verified and denied) and pending (not verified yet); only its
-  // text and color scheme change (see pending-face/classified-face CSS).
-  const classified = document.getElementById('peekPopupClassified');
-  if(card && (card._classified || card._pending)){
-    img.style.display='none';
-    classified.textContent = card._pending ? '⏳ Access Pending' : '🔒 Classified';
-    classified.classList.toggle('classified-face', !!card._classified);
-    classified.classList.toggle('pending-face', !!card._pending);
-    classified.classList.remove('hidden');
-    document.getElementById('peekPopup').classList.remove('hidden');
-    return;
-  }
-  classified.classList.add('hidden');
-  const url = card ? (faceUp ? card._front : (card._doubleSided && card._back ? card._back : cardBackImageUrl(card))) : '';
-  if(url){ img.src = sizedUrl(url, 600); img.style.display='block'; }
-  else { img.style.display='none'; }
-  document.getElementById('peekPopup').classList.remove('hidden');
-}
-document.getElementById('peekPopup').addEventListener('click', ()=> document.getElementById('peekPopup').classList.add('hidden'));
 
 /* =========================================================================
    HISTORY — fetched fresh from the sheet every time it's opened (the sheet IS
@@ -6572,6 +6725,10 @@ function syncHandFaceDown(){
 function handCardFaceHtml(cardId, faceDown){
   return faceDown ? cardFaceHtml(cardId, false) : cardFrontInnerHtml(cardsById.get(cardId), 300);
 }
+document.getElementById('handCards').addEventListener('wheel', (e)=>{
+  if(!e.target.closest('.hand-card')) return;
+  e.preventDefault(); wheelPreviewScale(e);
+}, {passive:false});
 function renderHand(){
   renderHandTokens();
   syncHandFaceDown();
