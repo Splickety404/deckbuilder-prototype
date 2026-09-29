@@ -984,6 +984,15 @@ function pieceH(p){
 // screen. (Rotation needs no equivalent correction here: a splayed pile's
 // CONTAINER never rotates — see effectivePieceRotation — only its individual
 // cards do, and that's compensated for per-card, inside the fan itself.)
+// Moves a piece's element to match p.x/p.y mid-drag. Goes through pieceBounds
+// rather than writing p.x/p.y straight to left/top: a pile splayed 'left' or
+// 'up' has its element's box start a whole fan-length before the anchor (see
+// renderBoard), so writing the anchor position there made such piles jump by
+// that much the moment they were grabbed, and jump back on drop.
+function placePieceEl(el, p){
+  const b = pieceBounds(p);
+  el.style.left = b.x+'px'; el.style.top = b.y+'px';
+}
 function pieceBounds(p){
   const w = pieceW(p), h = pieceH(p);
   let x = p.x, y = p.y;
@@ -3617,7 +3626,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   if(!ctx.el) return;
   if(!ctx.ghost || !ctx.ghost.isConnected) ctx.ghost = createDragGhost();
   ctx.el.classList.add('dragging-piece');
-  ctx.el.style.left=p.x+'px'; ctx.el.style.top=p.y+'px';
+  placePieceEl(ctx.el, p);
   // Only a real multi-card STACK gets the bottom-third "insert below" hint —
   // a lone single-card target is governed entirely by singleOverSingleSplayPreview
   // above (which already returned null here, meaning plain stack-on-top), so
@@ -3717,7 +3726,7 @@ function wireGroupHandleDrag(handleEl, p){
       const pieceEl = document.querySelector(`.piece[data-id="${p.id}"]`);
       if(pieceEl){
         pieceEl.classList.add('dragging-piece');
-        pieceEl.style.left=p.x+'px'; pieceEl.style.top=p.y+'px';
+        placePieceEl(pieceEl, p);
         pieceEl.classList.toggle('insert-below', !!target && !splayTarget && shouldInsertBelow(target, world.x, world.y));
       }
       { const b = pieceBounds(p); updateDragGhost(ghost, b.x, b.y, b.w, b.h, effectivePieceRotation(p)); }
@@ -3806,7 +3815,7 @@ function beginGroupDrag(anchor, downEvent){
         const mp = state.pieces.get(sp.id); if(!mp) return;
         mp.x = sp.x+d.x; mp.y = sp.y+d.y;
         const elm = document.querySelector(`.piece[data-id="${sp.id}"]`);
-        if(elm){ elm.style.left=mp.x+'px'; elm.style.top=mp.y+'px'; }
+        if(elm) placePieceEl(elm, mp);
         repositionAttachedTokens(sp.id);
       } else {
         const mt = state.tokens.get(sp.id); if(!mt) return;
