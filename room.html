@@ -108,7 +108,7 @@ input[type="range"]{accent-color:var(--accent);}
    script), so every player at the table sees the same felt. Defaults match the app's
    original fixed colors. */
 :root{ --board-bg:#1a1c22; --hand-bg:#1c1f26; }
-#boardViewport{flex:1;position:relative;overflow:hidden;cursor:grab;
+#boardViewport{flex:1;position:relative;overflow:hidden;cursor:default;
   background-image:radial-gradient(circle, rgba(255,255,255,.08) 1px, transparent 1px);background-size:32px 32px;background-color:var(--board-bg);}
 #boardViewport.panning{cursor:grabbing;}
 /* Locks the cursor to a resize arrow for the whole page while an edge-splay
@@ -322,6 +322,16 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 #hand-panel.hand-drop-target{background:var(--accent-soft);box-shadow:inset 0 0 0 3px var(--accent);}
 #hand-panel .hand-label{flex:none;font-size:12px;font-weight:700;color:var(--text-soft);}
 #handCards{display:flex;align-items:flex-start;gap:8px;overflow-x:auto;overflow-y:hidden;flex:1;}
+.hand-row{display:flex;gap:10px;flex:1;min-height:0;}
+#handTokens{flex:none;display:flex;flex-direction:column;flex-wrap:wrap;align-content:flex-start;gap:6px;
+  padding-right:10px;border-right:1px solid var(--border);}
+#handTokens:empty{display:none;}
+.hand-token{display:flex;align-items:center;gap:6px;cursor:grab;user-select:none;font-size:12px;font-weight:700;color:var(--text);}
+.hand-token .dot, .chip-token{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:700;
+  border:2px solid rgba(255,255,255,.3);}
+.hand-token .dot{width:28px;height:28px;font-size:11px;box-shadow:var(--shadow);}
+.hand-token-ghost{position:fixed;pointer-events:none;z-index:200;opacity:.9;}
+.chip-token{width:15px;height:15px;font-size:8.5px;border-width:1px;margin:0 2px 0 6px;vertical-align:-3px;}
 .hand-card{flex:none;width:var(--hand-card-width, 70px);cursor:grab;transition:transform .15s var(--bounce);}
 .hand-card:hover{transform:translateY(-6px) scale(1.04);}
 .hand-card .face{width:var(--hand-card-width, 70px);height:calc(var(--hand-card-width, 70px) * 1.4);border-radius:var(--radius-sm);border:1px solid var(--border);overflow:hidden;box-shadow:var(--shadow);}
@@ -394,6 +404,9 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 #zonePopover{position:fixed;z-index:91;background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius);box-shadow:var(--shadow);width:220px;overflow:hidden;animation:bouncePopIn .22s var(--bounce);}
 #themePopover.hidden, #zonePopover.hidden{display:none;}
+.popover-drag{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;cursor:move;user-select:none;
+  font-size:11.5px;font-weight:700;color:var(--text-soft);background:var(--surface-2);border-bottom:1px solid var(--border);}
+.popover-drag span{letter-spacing:-2px;opacity:.7;}
 .popover-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;}
 .popover-row label{font-size:12px;color:var(--text-soft);flex:none;}
 .popover-row input[type="text"]{flex:1;min-width:0;}
@@ -402,8 +415,8 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .popover-actions{display:flex;gap:8px;padding:2px 10px 10px;}
 
 /* ---------- Add Token / Focus dropdowns (still simple lists) ---------- */
-#tokenMenu, #focusMenu, #boardMenu{position:fixed;z-index:90;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);min-width:190px;max-width:260px;overflow:hidden;animation:bouncePopIn .2s var(--bounce);}
-#tokenMenu.hidden, #focusMenu.hidden, #boardMenu.hidden{display:none;}
+#tokenMenu, #focusMenu, #boardMenu, #gridMenu{position:fixed;z-index:90;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);min-width:190px;max-width:260px;overflow:hidden;animation:bouncePopIn .2s var(--bounce);}
+#tokenMenu.hidden, #focusMenu.hidden, #boardMenu.hidden, #gridMenu.hidden{display:none;}
 .token-type-item, .focus-item{padding:9px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .12s;}
 .token-type-item:hover, .focus-item:hover{background:var(--surface-2);}
 .token-dot{width:12px;height:12px;border-radius:50%;flex:none;}
@@ -497,6 +510,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 @keyframes marchingAnts{ from{background-position:0 0;} to{ background-position:28px 0; } }
 /* Live "N selected" pill that follows the box while dragging it — see
    beginBoxSelect. */
+#selectionCount .zone-tip{display:block;font-size:10px;font-weight:600;opacity:.75;margin-top:1px;}
 #selectionCount{position:fixed;z-index:95;pointer-events:none;background:var(--accent);color:var(--accent-contrast);
   font-weight:700;font-size:12px;padding:4px 11px;border-radius:var(--radius-pill);box-shadow:var(--shadow);
   animation:popIn .2s var(--bounce);white-space:nowrap;}
@@ -531,7 +545,10 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    kept in sync with the current pan/zoom by JS (see syncGridBackground(),
    called from applyView()) rather than by riding along on a CSS transform —
    more code, but it actually has a box to draw into. ---------- */
-#boardGrid{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;display:none;}
+/* Oversized by GRID_OVERSCAN on every side so it still covers the whole screen
+   when the board is rotated 90° on a non-square screen (syncGridBackground
+   offsets the pattern to match). */
+#boardGrid{position:absolute;top:-1000px;left:-1000px;width:calc(100% + 2000px);height:calc(100% + 2000px);pointer-events:none;display:none;}
 /* Only shown once Show Grid is actually checked (see applyGridDisplay) — a
    bare, unlabeled number input sitting in the toolbar at all times just
    reads as a stray "80" with no visible connection to anything. */
@@ -560,6 +577,9 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .player-chip b{color:var(--text);font-weight:700;}
 .player-chip.active-turn{border-color:var(--accent);color:var(--text);box-shadow:0 0 0 2px var(--accent-soft);}
 /* Round "rotate view" button docked at the board's bottom-right, just above the hand. */
+#boardEmptyHint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;
+  font-size:13px;color:var(--text-soft);opacity:.55;letter-spacing:.2px;white-space:nowrap;}
+#boardEmptyHint.hidden{display:none;}
 #btnRotateView{position:absolute;right:16px;bottom:16px;z-index:60;width:44px;height:44px;padding:0;
   border-radius:50%;justify-content:center;font-size:20px;box-shadow:var(--shadow);}
 #chatBar{display:flex;align-items:center;gap:6px;width:100%;}
@@ -738,15 +758,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
       <div class="btn btn-sm" id="btnFocus" title="Jump to a labeled pile">Focus ▾</div>
       <div class="btn btn-sm" id="btnZoomFit" title="Zoom out to fit everything">Fit All</div>
     </div>
-    <div class="topbar-group">
-      <label class="btn btn-sm" style="cursor:pointer;">
-        <input type="checkbox" id="snapToGridCheckbox" style="margin-right:5px;">Snap to Grid
-      </label>
-      <label class="btn btn-sm" style="cursor:pointer;">
-        <input type="checkbox" id="showGridCheckbox" style="margin-right:5px;">Show Grid
-      </label>
-      <input type="number" id="gridSizeInput" class="hidden" min="20" max="300" step="5" value="80" title="Grid cell size (px)" style="width:52px;">
-    </div>
+    <div class="btn btn-sm" id="btnGridMenu" title="Grid display, snapping, and cell size">Grid ▾</div>
     <div class="btn btn-sm" id="btnBoardMenu" title="Table theme and saved layouts">Board ▾</div>
     <div class="btn btn-sm" id="btnUndo" style="margin-left:auto;opacity:.4;pointer-events:none;" title="Undo your last action (⌘Z / Ctrl+Z)">Undo</div>
     <div class="btn btn-sm" id="btnLeaveGame" style="color:var(--danger);">Leave Game</div>
@@ -760,11 +772,15 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
     <div class="focus-item" id="btnExportLayout">⬇️ Export Layout</div>
     <div class="focus-item" id="btnImportLayout">⬆️ Import Layout</div>
   </div>
+  <div id="gridMenu" class="hidden">
+    <label class="focus-item"><input type="checkbox" id="showGridCheckbox"> Show grid</label>
+    <label class="focus-item"><input type="checkbox" id="snapToGridCheckbox"> Snap to grid</label>
+    <label class="focus-item">Cell size <input type="number" id="gridSizeInput" min="20" max="300" step="5" value="80" title="Grid cell size (px)" style="width:60px;margin-left:auto;"></label>
+  </div>
   <div id="themePopover" class="hidden"></div>
   <div id="tokenMenu" class="hidden"></div>
   <div id="dicePopover" class="hidden"></div>
   <input type="file" id="deckFileInput" accept=".json" style="display:none;">
-  <input type="file" id="customPieceFileInput" accept="image/*" style="display:none;">
   <input type="file" id="layoutFileInput" accept=".json" style="display:none;">
 
   <div id="boardViewport">
@@ -793,13 +809,19 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
       </div>
     </div>
     <div class="btn board-overlay" id="btnRotateView" title="Rotate the board 90°">⟳</div>
+    <!-- Shown only while there's nothing on the board yet (see renderBoard). -->
+    <div id="boardEmptyHint" class="hidden">Right-click the table to add a deck or tokens</div>
   </div>
 
   <div id="handResizeHandle" title="Drag to resize your hand"></div>
 
   <div id="hand-panel">
     <div class="hand-label">Your Hand</div>
-    <div id="handCards"></div>
+    <div class="hand-row">
+      <!-- Tokens in hand (see renderHandTokens) — empty and hidden until you drop one here. -->
+      <div id="handTokens"></div>
+      <div id="handCards"></div>
+    </div>
   </div>
 </div>
 
@@ -1409,6 +1431,7 @@ const state = {
   zones: new Map(),    // id -> { id, x, y, w, h, color, strokeColor, strokeWidth, label, snapMode }
   theme: { boardColor:'#1a1c22', handColor:'#1c1f26' }, // shared table theme, synced
   hand: [],            // array of cardIds — private, never synced except as a count
+  handTokens: new Map(), // token type -> how many of it are in this player's hand; the counts are public (see syncHandCount)
   handFaceDown: [],    // parallel to hand: true = that hand card is flipped face down (see syncHandFaceDown) — private, never synced
   playerHandCounts: new Map(), // playerId -> {playerName, count} — public, synced
   view: { x:0, y:0, scale:0.6 }, // board-world panning/zoom, local per-viewer, never synced
@@ -1490,6 +1513,7 @@ function handleIncomingRoomEvent(msg){
   if(payload._origin === state.clientId) return;
   applyRoomEvent(msg.name, payload);
   if(msg.name==='CHAT' || msg.name==='REQUEST_STATE' || msg.name==='STATE_SNAPSHOT') return;
+  if(payload.quiet) return; // synced live, announced later as one summary (see hotkeyAdjustToken)
   showHistoryBubble(describeEvent(msg.name, payload, payload._playerName));
   appendHistoryFlyoutRow(msg.name, payload, payload._playerName, Date.now());
 }
@@ -1764,7 +1788,7 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'HAND_COUNT': {
-      state.playerHandCounts.set(payload.playerId, {playerName:payload.playerName, count:payload.count});
+      state.playerHandCounts.set(payload.playerId, {playerName:payload.playerName, count:payload.count, tokens:payload.tokens||{}});
       renderPlayerCounters();
       break;
     }
@@ -1787,8 +1811,20 @@ function applyRoomEvent(type, payload){
       if(payload.oldName !== payload.name){
         state.tokenTypes.delete(payload.oldName);
         state.tokens.forEach(t=>{ if(t.type===payload.oldName) t.type = payload.name; });
+        // Renamed tokens in your own hand, and in everyone's public counts, too.
+        if(state.handTokens.has(payload.oldName)){
+          state.handTokens.set(payload.name, (state.handTokens.get(payload.name)||0) + state.handTokens.get(payload.oldName));
+          state.handTokens.delete(payload.oldName);
+        }
+        state.playerHandCounts.forEach(info=>{
+          if(info.tokens && info.tokens[payload.oldName]!=null){
+            info.tokens[payload.name] = (info.tokens[payload.name]||0) + info.tokens[payload.oldName];
+            delete info.tokens[payload.oldName];
+          }
+        });
       }
       state.tokenTypes.set(payload.name, payload.color);
+      renderHandTokens(); renderPlayerCounters(); // new name/color on the hand tray and player chips
       break;
     }
     case 'PLACE_ZONE': {
@@ -2066,7 +2102,7 @@ function describeEvent(type, payload, playerName){
     case 'MOVE_TOKEN': return `${playerName} moved a token`;
     case 'SET_TOKEN_COUNT': return `${playerName} set a token count to ${payload.count}`;
     case 'REMOVE_TOKEN': return `${playerName} removed a token`;
-    case 'HAND_COUNT': return `${playerName} now has ${payload.count} card(s) in hand`;
+    case 'HAND_COUNT': return payload.tokenNote ? `${playerName} ${payload.tokenNote}` : `${playerName} now has ${payload.count} card(s) in hand`;
     case 'SEARCH_REMOVE': return `${playerName} searched a pile and took ${payload.removedCount} card(s)`;
     case 'RESTORE_PIECE_CARDS': return `${playerName} undid a change to a pile`;
     case 'DRAW_TOP': return `${playerName} took the top card of a pile`;
@@ -2247,9 +2283,28 @@ document.getElementById('btnRotateView').addEventListener('click', ()=>{
   state.viewRotation = (state.viewRotation + 90) % 360;
   applyRotation();
 });
-const GRID_SIZE = 32; // matches the board's background dot spacing
-function snapCoord(v){ return state.snapToGrid ? Math.round(v/GRID_SIZE)*GRID_SIZE : v; }
+// Snap to Grid uses the SAME grid Show Grid draws (state.gridSize) — it used
+// to snap to a fixed 32px grid unrelated to the one on screen. Something
+// smaller than a grid cell (a token, or a card on a big grid) snaps to the
+// cell's center; anything bigger lines its edge up with the grid lines.
+function snapCoord(v){ return state.snapToGrid ? Math.round(v/state.gridSize)*state.gridSize : v; }
+function snapAxis(v, size){
+  const g = state.gridSize;
+  return size < g ? Math.floor((v + size/2)/g)*g + (g - size)/2 : Math.round(v/g)*g;
+}
+function snapPos(x, y, w, h){
+  return state.snapToGrid ? { x: snapAxis(x, w), y: snapAxis(y, h) } : { x, y };
+}
 document.getElementById('snapToGridCheckbox').addEventListener('change', (e)=>{ state.snapToGrid = e.target.checked; });
+// "Grid ▾" — show grid, snap to grid, and cell size (shared by both).
+document.getElementById('btnGridMenu').addEventListener('click', (e)=>{
+  e.stopPropagation();
+  const menu = document.getElementById('gridMenu');
+  const willShow = menu.classList.contains('hidden');
+  menu.classList.toggle('hidden');
+  if(willShow) positionMenuNear(menu, document.getElementById('btnGridMenu'));
+});
+document.addEventListener('click', (e)=>{ if(!e.target.closest('#gridMenu') && !e.target.closest('#btnGridMenu')) document.getElementById('gridMenu').classList.add('hidden'); });
 
 /* =========================================================================
    HAND SCALE — user-adjustable hand card size, persisted per-browser.
@@ -2657,7 +2712,6 @@ function applyGridDisplay(){
   document.getElementById('boardGrid').classList.toggle('show-grid', state.showGrid);
   document.getElementById('showGridCheckbox').checked = state.showGrid;
   document.getElementById('gridSizeInput').value = state.gridSize;
-  document.getElementById('gridSizeInput').classList.toggle('hidden', !state.showGrid);
   syncGridBackground();
 }
 // Keeps #boardGrid's own background-size/position lined up with the current
@@ -2667,12 +2721,13 @@ function applyGridDisplay(){
 // smoothly along with everything else in #boardWorld even though the grid
 // itself lives on a separate, plainly-sized element (see the CSS comment on
 // #boardGrid for why it has to).
+const GRID_OVERSCAN = 1000; // see #boardGrid's CSS
 function syncGridBackground(){
   const grid = document.getElementById('boardGrid');
   if(!grid) return;
   const size = Math.max(1, state.gridSize * state.view.scale);
   grid.style.backgroundSize = `${size}px ${size}px`;
-  grid.style.backgroundPosition = `${state.view.x}px ${state.view.y}px`;
+  grid.style.backgroundPosition = `${state.view.x + GRID_OVERSCAN}px ${state.view.y + GRID_OVERSCAN}px`;
 }
 function initGridDisplay(){
   const storedShow = localStorage.getItem(LS_SHOW_GRID_KEY);
@@ -3108,6 +3163,7 @@ function renderBoard(){
   refreshStackPerimeter();
   renderTokens();
   renderPlayerCounters();
+  document.getElementById('boardEmptyHint').classList.toggle('hidden', state.pieces.size>0 || state.tokens.size>0);
   // Other players' cursors live in #boardWorld too — put them back after the wipe above.
   if(presenceCursors) presenceCursors.forEach(c=>{ if(!c.isConnected) world.appendChild(c); });
 }
@@ -3212,15 +3268,29 @@ function beginBoxSelect(startClientX, startClientY, additive){
     const r = rectFrom(ev);
     box.style.left=r.x+'px'; box.style.top=r.y+'px'; box.style.width=r.w+'px'; box.style.height=r.h+'px';
     const n = countInRect(r);
-    countEl.textContent = n===1 ? '1 selected' : `${n} selected`;
+    countEl.innerHTML = `${n===1 ? '1 selected' : `${n} selected`}<span class="zone-tip">Right-click: make this a zone</span>`;
     countEl.style.left = (ev.clientX+18)+'px';
     countEl.style.top = (ev.clientY+18)+'px';
   }
-  function onUp(ev){
+  // Right-click while the box is still being dragged: turn the box into a new
+  // zone instead of selecting anything (capture phase on window, so the
+  // board's own right-click handling — pan/menu — never sees this press).
+  function onRightDown(ev){
+    if(ev.button!==2) return;
+    ev.preventDefault(); ev.stopImmediatePropagation();
+    teardown();
+    addZoneFromRect(rectFrom(ev), ev.clientX, ev.clientY);
+  }
+  function teardown(){
     window.removeEventListener('mousemove', onMove);
     window.removeEventListener('mouseup', onUp);
+    window.removeEventListener('mousedown', onRightDown, true);
     box.remove();
     countEl.remove();
+  }
+  function onUp(ev){
+    if(ev.button!==0) return;
+    teardown();
     const r = rectFrom(ev);
     const ids = additive ? new Set(state.selectedIds) : new Set();
     const tokenIds = additive ? new Set(state.selectedTokenIds) : new Set();
@@ -3248,6 +3318,7 @@ function beginBoxSelect(startClientX, startClientY, additive){
   }
   window.addEventListener('mousemove', onMove);
   window.addEventListener('mouseup', onUp);
+  window.addEventListener('mousedown', onRightDown, true);
 }
 
 // Multi-select — shift-click toggles a piece/token in/out of state.selectedIds/
@@ -3390,7 +3461,8 @@ function createDragGhost(){
 }
 function updateDragGhost(ghost, x, y, w, h, rotation){
   if(!ghost || !ghost.isConnected) return;
-  const snapped = applyZoneSnap(snapCoord(x), snapCoord(y), w, h);
+  const sp = snapPos(x, y, w, h);
+  const snapped = applyZoneSnap(sp.x, sp.y, w, h);
   ghost.style.left = snapped.x+'px';
   ghost.style.top = snapped.y+'px';
   ghost.style.width = w+'px';
@@ -3415,7 +3487,8 @@ function updatePieceDragGhost(ghost, p, pieceEl){
   if(!ghost || !ghost.isConnected) return;
   const b = pieceBounds(p);
   if(!pieceEl){ updateDragGhost(ghost, b.x, b.y, b.w, b.h, effectivePieceRotation(p)); return; }
-  const snapped = applyZoneSnap(snapCoord(b.x), snapCoord(b.y), b.w, b.h);
+  const anchor = snapPos(p.x, p.y, PIECE_W, PIECE_H); // same as the real drop (finishWholeMove)
+  const snapped = applyZoneSnap(b.x + (anchor.x - p.x), b.y + (anchor.y - p.y), b.w, b.h);
   ghost.classList.add('piece-ghost');
   ghost.style.left = snapped.x+'px'; ghost.style.top = snapped.y+'px';
   ghost.style.width = b.w+'px'; ghost.style.height = b.h+'px';
@@ -3517,7 +3590,7 @@ function beginPeelAsPiece(p, cardIndex, clientX, clientY){
   const sourceId = p.id;
   doAction('DRAW_TOP', { id:sourceId, remainingCardIds, remainingFaceStates, remainingCardRotations, destination:'board' });
   const world = clientToWorld(clientX, clientY);
-  const x = snapCoord(world.x - PIECE_W/2), y = snapCoord(world.y - PIECE_H/2);
+  const {x, y} = snapPos(world.x - PIECE_W/2, world.y - PIECE_H/2, PIECE_W, PIECE_H);
   const newId = newPieceId();
   doAction('PLACE_PIECE', { id:newId, x, y, cardIds:[cardId], faceStates:[faceUp], cardRotations:[0], rotation:cardRotation, owner:state.playerId });
   const newPiece = state.pieces.get(newId);
@@ -3565,7 +3638,7 @@ function finishWholeMove(p, startX, startY, clientX, clientY){
     mergePieceOntoTarget(p.id, target.id, insertIndex); // re-renders the board itself, sets its own undo
     return;
   }
-  p.x = snapCoord(p.x); p.y = snapCoord(p.y);
+  ({x:p.x, y:p.y} = snapPos(p.x, p.y, PIECE_W, PIECE_H));
   ({x:p.x, y:p.y} = applyZoneSnap(p.x, p.y, pieceW(p), pieceH(p)));
   postRoomEvent('MOVE_PIECE', {id:p.id, x:p.x, y:p.y});
   renderBoard(); // reflect the snap, if any
@@ -3893,11 +3966,11 @@ function beginGroupDrag(anchor, downEvent){
     startPositions.forEach(sp=>{
       if(sp.kind==='piece'){
         const mp = state.pieces.get(sp.id); if(!mp) return;
-        mp.x = snapCoord(sp.x+d.x); mp.y = snapCoord(sp.y+d.y);
+        ({x:mp.x, y:mp.y} = snapPos(sp.x+d.x, sp.y+d.y, PIECE_W, PIECE_H));
         postRoomEvent('MOVE_PIECE', {id:mp.id, x:mp.x, y:mp.y});
       } else {
         const mt = state.tokens.get(sp.id); if(!mt) return;
-        mt.x = snapCoord(sp.x+d.x); mt.y = snapCoord(sp.y+d.y);
+        ({x:mt.x, y:mt.y} = snapPos(sp.x+d.x, sp.y+d.y, tokenSize(mt), tokenSize(mt)));
         postRoomEvent('MOVE_TOKEN', {id:mt.id, x:mt.x, y:mt.y, attachedTo:null});
       }
     });
@@ -4332,7 +4405,7 @@ document.addEventListener('keydown', (e)=>{
   clearSelection();
   exitZoneEdit();
   closeRadialMenu();
-  ['focusMenu','boardMenu','themePopover','tokenMenu','dicePopover'].forEach(id=> document.getElementById(id).classList.add('hidden'));
+  ['focusMenu','boardMenu','gridMenu','themePopover','tokenMenu','dicePopover'].forEach(id=> document.getElementById(id).classList.add('hidden'));
 });
 
 // True when the cursor is over the BOTTOM THIRD of the target's own top-card
@@ -4981,7 +5054,7 @@ function wireSplayAdjustDrag(cardEl, p, cardIndex){
         const cursorCoord = (axis==='x' ? old.x+d.x : old.y+d.y);
         const rawGap = dirSign * (bottomCoord - cursorCoord);
         const stillSplayed = rawGap > SPLAY_UNSPLAY_PROXIMITY;
-        p2.x = snapCoord(p2.x); p2.y = snapCoord(p2.y);
+        ({x:p2.x, y:p2.y} = snapPos(p2.x, p2.y, PIECE_W, PIECE_H));
         ({x:p2.x, y:p2.y} = applyZoneSnap(p2.x, p2.y, pieceW(p2), pieceH(p2)));
         p2.splayed = stillSplayed;
         postRoomEvent('MOVE_PIECE', {id:p2.id, x:p2.x, y:p2.y});
@@ -5240,11 +5313,6 @@ function openBoardRadialMenu(clientX, clientY){
       document.getElementById('deckFileInput').click();
     })},
     {icon:'🔘', label:'Add Token', action:act(()=> openTokenTypeMenuAt(clientX, clientY))},
-    {icon:'🖼', label:'Custom Piece', action:act(()=>{
-      pendingCustomPieceWorld = clientToWorld(clientX, clientY);
-      document.getElementById('customPieceFileInput').click();
-    })},
-    {icon:'▭', label:'Add Zone', action:act(()=> addZoneAt(clientX, clientY))},
   ];
   openRadialMenu(()=> done ? null : items, clientX, clientY);
 }
@@ -5404,8 +5472,12 @@ document.addEventListener('click', (e)=>{ if(!e.target.closest('#focusMenu') && 
    design; "cards on the board" per player is shown too, computed live from
    state.pieces (already synced) rather than needing its own event.
    ========================================================================= */
-function syncHandCount(){
-  const payload = { playerId: state.playerId, playerName: state.playerName, count: state.hand.length };
+// `tokenNote` (optional) is what the table is told when tokens (not cards)
+// went into or out of the hand, e.g. "put 3 Gold tokens in hand".
+function syncHandCount(tokenNote){
+  const payload = { playerId: state.playerId, playerName: state.playerName, count: state.hand.length,
+    tokens: Object.fromEntries(state.handTokens) };
+  if(tokenNote) payload.tokenNote = tokenNote;
   doAction('HAND_COUNT', payload);
 }
 // One chip per player under the chat: "✋ 5 Seth", you first, with the
@@ -5414,14 +5486,17 @@ function renderPlayerCounters(){
   const el = document.getElementById('playerCounters');
   if(!el) return;
   const known = new Map(state.playerHandCounts);
-  known.set(state.playerId, {playerName: state.playerName, count: state.hand.length}); // your own count is always live, never waits on an echo
+  known.set(state.playerId, {playerName: state.playerName, count: state.hand.length, tokens: Object.fromEntries(state.handTokens)}); // your own count is always live, never waits on an echo
   state.players.forEach((name, pid)=>{ if(!known.has(pid)) known.set(pid, {playerName: name, count: null}); });
   const activeId = (state.turnIndex>=0 && state.turnOrder.length) ? state.turnOrder[state.turnIndex] : null;
   const order = [state.playerId, ...[...known.keys()].filter(pid=>pid!==state.playerId)];
   el.innerHTML = order.filter(pid=>known.get(pid) && known.get(pid).playerName).map(pid=>{
     const info = known.get(pid);
     const active = pid===activeId;
-    return `<span class="player-chip${active?' active-turn':''}" title="${active?'Their turn · ':''}${info.count==null?'Hand size not known yet':info.count+' card'+(info.count===1?'':'s')+' in hand'}">${active?'▶ ':''}✋ ${info.count==null?'?':info.count} <b>${escapeHtml(info.playerName)}</b></span>`;
+    const tokens = Object.entries(info.tokens||{}).filter(([,n])=>n>0);
+    const tokenHtml = tokens.map(([type,n])=>`<span class="chip-token" style="background:${state.tokenTypes.get(type)||'#546178'}" title="${escapeHtml(type)}">${escapeHtml((type[0]||'?').toUpperCase())}</span>${n}`).join('');
+    const tokenTitle = tokens.map(([type,n])=>` · ${n} ${type}`).join('');
+    return `<span class="player-chip${active?' active-turn':''}" title="${active?'Their turn · ':''}${info.count==null?'Hand size not known yet':info.count+' card'+(info.count===1?'':'s')+' in hand'}${escapeHtml(tokenTitle)}">${active?'▶ ':''}✋ ${info.count==null?'?':info.count}${tokenHtml} <b>${escapeHtml(info.playerName)}</b></span>`;
   }).join('');
 }
 
@@ -5578,7 +5653,7 @@ function renderTokens(){
     // W/↑ and S/↓ adjust whichever token is under the cursor (see the
     // keydown listener after renderTokens).
     el.addEventListener('mouseenter', ()=>{ hoveredTokenId = t.id; showTokenHotkeyHint(el); });
-    el.addEventListener('mouseleave', ()=>{ if(hoveredTokenId===t.id){ hoveredTokenId = null; hideHotkeyHint(); } });
+    el.addEventListener('mouseleave', ()=>{ if(hoveredTokenId===t.id){ hoveredTokenId = null; hideHotkeyHint(); endTokenHotkeyRun(); } });
     world.appendChild(el);
     if(hoveredTokenId===t.id) showTokenHotkeyHint(el); // re-anchor after a rebuild, e.g. the count just changed
     // Whichever branch rendered it, the quantity bubble (when present) is
@@ -5607,8 +5682,36 @@ document.addEventListener('keydown', (e)=>{
   const delta = (k==='w' || k==='arrowup') ? 1 : (k==='s' || k==='arrowdown') ? -1 : 0;
   if(!delta) return;
   e.preventDefault(); // arrows would otherwise scroll the page
-  incrementToken(hoveredTokenId, delta);
+  hotkeyAdjustToken(hoveredTokenId, delta);
 });
+// Hotkey changes sync live but quietly (no chat line per press); when the
+// cursor leaves the token, one summary goes to the table — "changed Damage
+// from 5 to 8" — and one Undo reverts the whole run.
+let tokenHotkeyRun = null; // {id, type, startCount}
+function hotkeyAdjustToken(id, delta){
+  const t = state.tokens.get(id); if(!t) return;
+  if(!tokenHotkeyRun || tokenHotkeyRun.id!==id){ endTokenHotkeyRun(); tokenHotkeyRun = {id, type:t.type, startCount:t.count}; }
+  const payload = {id, count:t.count+delta, quiet:true};
+  applyRoomEvent('SET_TOKEN_COUNT', payload);
+  postRoomEvent('SET_TOKEN_COUNT', payload);
+}
+// Backstop for hover tracking: a count change rebuilds the token's element, and
+// a removed element never fires mouseleave — so also end the hover (and send
+// the summary) the moment the cursor is over anything that isn't this token.
+window.addEventListener('mousemove', (e)=>{
+  if(!hoveredTokenId) return;
+  const tEl = e.target && e.target.closest && e.target.closest('.token');
+  if(tEl && tEl.dataset.id===hoveredTokenId) return;
+  hoveredTokenId = null; hideHotkeyHint(); endTokenHotkeyRun();
+});
+function endTokenHotkeyRun(){
+  const run = tokenHotkeyRun; tokenHotkeyRun = null;
+  if(!run) return;
+  const t = state.tokens.get(run.id);
+  if(!t || t.count===run.startCount) return;
+  doNote(`changed ${run.type} from ${run.startCount} to ${t.count}`);
+  setUndo(()=> doAction('SET_TOKEN_COUNT', {id:run.id, count:run.startCount}));
+}
 // Drop-target detection for combining two token stacks of the SAME type into
 // one (adds their counts) — the token equivalent of findOverlapTarget for
 // cards. Different-typed tokens never combine (a count is only meaningful
@@ -5683,7 +5786,7 @@ function finishWholeTokenMove(t, dx, dy){
   const start = tokenRenderPos(t);
   const oldX = t.x, oldY = t.y, oldAttached = t.attachedTo, oldCardIndex = t.attachedCardIndex;
   const d = screenDeltaToWorldDelta(dx, dy);
-  let newX = snapCoord(start.x+d.x), newY = snapCoord(start.y+d.y);
+  let {x:newX, y:newY} = snapPos(start.x+d.x, start.y+d.y, 44, 44);
   const mergeTarget = findTokenMergeTarget(t, newX+22, newY+22); // 22 = half the token's own size, so we test its CENTER
   if(mergeTarget){
     mergeTokenOntoTarget(t.id, mergeTarget.id); // re-renders the board itself, sets its own undo
@@ -5710,7 +5813,7 @@ function wireTokenDrag(el, t){
   let ghost=null;
   wirePressDragClick(el, {
     onDown: (e)=>{ if(handleTokenSelectionOnDown(t, e)) return false; },
-    onMove: (dx, dy)=>{
+    onMove: (dx, dy, ev)=>{
       const start = tokenRenderPos(t);
       const d = screenDeltaToWorldDelta(dx, dy);
       const nx = start.x+d.x, ny = start.y+d.y;
@@ -5720,11 +5823,13 @@ function wireTokenDrag(el, t){
       updateDragGhost(ghost, nx, ny, 44, 44);
       const mergeTarget = findTokenMergeTarget(t, nx+22, ny+22);
       if(mergeTarget) showTokenMergeHighlight(mergeTarget.id); else clearTokenMergeHighlight();
+      tokenHandHover(ev);
     },
     onContext: (e)=> openTokenRadialMenu(t.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
-      clearTokenMergeHighlight();
+      clearTokenMergeHighlight(); clearTokenHandHover();
+      if(isOverHandPanel(ev.clientX, ev.clientY) && t.count>0){ sendTokenToHand(t.id, t.count); return; }
       finishWholeTokenMove(t, dx, dy);
     },
   });
@@ -5736,7 +5841,7 @@ function wireTokenGroupHandleDrag(handleEl, t){
   let startPos, ghost=null;
   wirePressDragClick(handleEl, {
     onDown: (e)=>{ if(handleTokenSelectionOnDown(t, e)) return false; startPos = tokenRenderPos(t); },
-    onMove: (dx, dy)=>{
+    onMove: (dx, dy, ev)=>{
       const d = screenDeltaToWorldDelta(dx, dy);
       const nx = startPos.x+d.x, ny = startPos.y+d.y;
       const tokenEl = handleEl.isConnected ? handleEl.closest('.token') : document.querySelector(`.token[data-id="${t.id}"]`);
@@ -5746,10 +5851,12 @@ function wireTokenGroupHandleDrag(handleEl, t){
       updateDragGhost(ghost, nx, ny, size, size);
       const mergeTarget = findTokenMergeTarget(t, nx+22, ny+22);
       if(mergeTarget) showTokenMergeHighlight(mergeTarget.id); else clearTokenMergeHighlight();
+      tokenHandHover(ev);
     },
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
-      clearTokenMergeHighlight();
+      clearTokenMergeHighlight(); clearTokenHandHover();
+      if(isOverHandPanel(ev.clientX, ev.clientY) && t.count>0){ sendTokenToHand(t.id, t.count); return; } // the whole stack goes in
       finishWholeTokenMove(t, dx, dy);
     },
   });
@@ -5772,11 +5879,13 @@ function wireTokenPeelInteraction(faceEl, t){
       // token to it (same green "+" as a whole-stack merge).
       const target = peelTokenTarget(t, world);
       if(target) showTokenMergeHighlight(target.id); else clearTokenMergeHighlight();
+      tokenHandHover(ev);
     },
     onContext: (e)=> openTokenRadialMenu(t.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
-      clearTokenMergeHighlight();
+      clearTokenMergeHighlight(); clearTokenHandHover();
+      if(isOverHandPanel(ev.clientX, ev.clientY) && t.count>1){ sendTokenToHand(t.id, 1); return; } // peeling puts just one in
       const target = peelTokenTarget(t, clientToWorld(ev.clientX, ev.clientY));
       if(target) peelTokenOntoStack(t.id, target.id);
       else peelTokenToBoard(t.id, ev.clientX, ev.clientY);
@@ -5802,7 +5911,7 @@ function peelTokenToBoard(tokenId, clientX, clientY){
     return;
   }
   const world = clientToWorld(clientX, clientY);
-  let dropX = snapCoord(world.x - 22), dropY = snapCoord(world.y - 22);
+  let {x:dropX, y:dropY} = snapPos(world.x - 22, world.y - 22, 44, 44);
   ({x:dropX, y:dropY} = applyZoneSnap(dropX, dropY, 44, 44));
   doAction('SET_TOKEN_COUNT', {id:tokenId, count: oldCount-1});
   const newId = newTokenId();
@@ -5911,86 +6020,6 @@ function openTokenValuePopover(tokenId, clientX, clientY){
     else if(e.key==='Escape'){ e.preventDefault(); menu.classList.add('hidden'); }
   });
 }
-
-/* =========================================================================
-   CUSTOM IMAGE PIECES — any player can upload their own picture and drop it
-   on the board as a piece at whatever scale they like (resizable afterward
-   via its radial menu's Scale item). The image itself is uploaded to the
-   room's own Google Drive (via a small addition to the room Apps Script,
-   uploadRoomImage there) rather than embedded in the synced event, because a
-   full-resolution image as base64 text would blow past a Google Sheets
-   cell's ~50,000-character limit — only the resulting Drive URL (a short
-   string) ever goes into PLACE_PIECE, so it syncs like anything else and is
-   just as capturable in an exported layout.
-   ========================================================================= */
-const MAX_CUSTOM_IMAGE_BYTES = 6 * 1024 * 1024; // pre-base64 size cap — keeps the Drive upload and sync payload reasonable
-function readFileAsDataUrl(file){
-  return new Promise((resolve, reject)=>{
-    const reader = new FileReader();
-    reader.onload = ()=> resolve(reader.result);
-    reader.onerror = ()=> reject(reader.error || new Error('Could not read that file.'));
-    reader.readAsDataURL(file);
-  });
-}
-function loadImageNaturalSize(dataUrl){
-  return new Promise((resolve, reject)=>{
-    const img = new Image();
-    img.onload = ()=> resolve({w:img.naturalWidth||200, h:img.naturalHeight||200});
-    img.onerror = ()=> reject(new Error('That file does not look like a valid image.'));
-    img.src = dataUrl;
-  });
-}
-async function uploadCustomPieceImage(file){
-  if(!isConnected()){
-    toast('Open or join a room first — custom images upload to the room\'s own Drive storage.');
-    return;
-  }
-  if(file.size > MAX_CUSTOM_IMAGE_BYTES){
-    toast(`That image is too large (max ${Math.round(MAX_CUSTOM_IMAGE_BYTES/1024/1024)}MB).`);
-    return;
-  }
-  toast('Uploading image…');
-  try{
-    const dataUrl = await readFileAsDataUrl(file);
-    const natural = await loadImageNaturalSize(dataUrl);
-    const base64 = dataUrl.slice(dataUrl.indexOf(',')+1);
-    const res = await fetch(ROOM_WEBAPP_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({ sheetId: state.roomSheetId, uploadImage: { dataBase64: base64, mimeType: file.type||'image/png', filename: file.name||'piece.png' } }),
-    });
-    const result = await res.json();
-    if(!result.ok) throw new Error(result.error || 'Upload failed.');
-    placeCustomImagePiece(result.url, natural.w, natural.h);
-  }catch(e){
-    console.error('uploadCustomPieceImage failed', e);
-    toast('Could not upload that image — check your connection and try again.');
-  }
-}
-// Default placement scales the image down to fit comfortably on the board (long
-// edge capped at 240px) but never up — a small icon stays a small icon until the
-// player deliberately scales it larger via the Scale radial-menu item.
-// Set by the board menu's Custom Piece (see openBoardRadialMenu) so the image
-// lands centered where you right-clicked; otherwise the middle of the view.
-let pendingCustomPieceWorld = null;
-function placeCustomImagePiece(url, naturalW, naturalH){
-  const maxEdge = 240;
-  const scale = Math.min(1, maxEdge/Math.max(naturalW, naturalH));
-  const w = Math.max(20, Math.round(naturalW*scale)), h = Math.max(20, Math.round(naturalH*scale));
-  const vp = document.getElementById('boardViewport');
-  const at = pendingCustomPieceWorld;
-  pendingCustomPieceWorld = null;
-  const worldX = (at ? at.x : (vp.clientWidth/2 - state.view.x)/state.view.scale) - w/2;
-  const worldY = (at ? at.y : (vp.clientHeight/2 - state.view.y)/state.view.scale) - h/2;
-  const id = newPieceId();
-  doAction('PLACE_PIECE', { id, x:worldX, y:worldY, owner:state.playerId, kind:'image', imageUrl:url, w, h, naturalW, naturalH });
-  setUndo(()=> doAction('REMOVE_PIECE', {id}));
-}
-document.getElementById('customPieceFileInput').addEventListener('change', (e)=>{
-  const file = e.target.files[0];
-  e.target.value = ''; // allow re-selecting the same file next time
-  if(file) uploadCustomPieceImage(file);
-});
 
 /* =========================================================================
    ZONES — colored/labeled/stroked board regions, optionally snapping pieces
@@ -6124,12 +6153,13 @@ function exitZoneEdit(){
   closeZoneEditPopover();
   renderBoard();
 }
-// Board menu's "Add Zone": a default-sized zone centered where you
-// right-clicked, opened straight into its editor.
-function addZoneAt(clientX, clientY){
-  const c = clientToWorld(clientX, clientY);
-  const w = 320, h = 220;
-  const zone = { id:newZoneId(), x:snapCoord(c.x-w/2), y:snapCoord(c.y-h/2), w, h,
+// A new zone from a box drawn on the board (right-click while dragging a
+// selection box — see beginBoxSelect), opened straight into its editor. A
+// box too small to be deliberate still makes a usable, minimum-sized zone.
+function addZoneFromRect(r, clientX, clientY){
+  const x = snapCoord(r.x), y = snapCoord(r.y);
+  const w = Math.max(40, snapCoord(r.x + r.w) - x), h = Math.max(40, snapCoord(r.y + r.h) - y);
+  const zone = { id:newZoneId(), x, y, w, h,
     color:'#3d7dca', strokeColor:'#3d7dca', strokeWidth:2, label:'', snapMode:'none', locked:false, opacity:ZONE_DEFAULT_OPACITY };
   doAction('PLACE_ZONE', zone);
   setUndo(()=> doAction('REMOVE_ZONE', {id:zone.id}));
@@ -6182,6 +6212,7 @@ function openZoneEditPopover(zoneId, clientX, clientY){
   const old = { label:z.label, color:z.color, strokeColor:z.strokeColor, strokeWidth:z.strokeWidth, snapMode:z.snapMode, opacity:opacityPct/100 };
   const el = document.getElementById('zonePopover');
   el.innerHTML = `
+    <div class="popover-drag" title="Drag to move this panel">Edit zone <span>⋮⋮</span></div>
     <div class="popover-row"><label>Label</label><input type="text" id="zoneLabelInput" value="${escapeHtml(z.label||'')}" placeholder="(none)"></div>
     <div class="popover-row"><label>Fill color</label><input type="color" id="zoneColorInput" value="${z.color}"></div>
     <div class="popover-row"><label>Fill opacity</label><input type="range" id="zoneOpacityInput" min="0" max="100" step="5" value="${opacityPct}"></div>
@@ -6239,10 +6270,57 @@ function openZoneEditPopover(zoneId, clientX, clientY){
     exitZoneEdit();
   });
   document.getElementById('btnZoneDone').addEventListener('click', exitZoneEdit);
-  const vw=window.innerWidth, vh=window.innerHeight;
-  el.style.left = Math.min(clientX, vw-230)+'px';
-  el.style.top = Math.min(clientY, vh-280)+'px';
   el.classList.remove('hidden');
+  placeZonePopover(el, zoneId);
+  wirePopoverDrag(el, el.querySelector('.popover-drag'));
+}
+// Where the zone editor opens: wherever you last dragged it this session, or
+// else beside the zone (right, then left, then below, then above) so it
+// doesn't cover the zone you're editing; if the zone fills the screen, the
+// screen corner farthest from its middle.
+let zonePopoverUserPos = null;
+function placeZonePopover(el, zoneId){
+  const vw = window.innerWidth, vh = window.innerHeight, pad = 12;
+  const pw = el.offsetWidth, ph = el.offsetHeight;
+  const clampPos = (x, y)=>({ x: Math.max(8, Math.min(x, vw-pw-8)), y: Math.max(8, Math.min(y, vh-ph-8)) });
+  let pos = zonePopoverUserPos ? clampPos(zonePopoverUserPos.x, zonePopoverUserPos.y) : null;
+  const zEl = document.querySelector(`.zone[data-id="${zoneId}"]`);
+  if(!pos && zEl){
+    const z = zEl.getBoundingClientRect();
+    const midY = Math.max(8, Math.min(z.top + z.height/2 - ph/2, vh-ph-8));
+    const midX = Math.max(8, Math.min(z.left + z.width/2 - pw/2, vw-pw-8));
+    const tries = [
+      {x: z.right + pad, y: midY}, {x: z.left - pw - pad, y: midY},
+      {x: midX, y: z.bottom + pad}, {x: midX, y: z.top - ph - pad},
+    ];
+    pos = tries.find(t=> t.x>=8 && t.y>=8 && t.x+pw<=vw-8 && t.y+ph<=vh-8);
+    if(!pos){
+      const cx = z.left + z.width/2, cy = z.top + z.height/2;
+      pos = { x: cx < vw/2 ? vw-pw-8 : 8, y: cy < vh/2 ? vh-ph-8 : 8 };
+    }
+  }
+  if(!pos) pos = clampPos(vw/2 - pw/2, vh/2 - ph/2);
+  el.style.left = pos.x+'px'; el.style.top = pos.y+'px';
+}
+// Drag a fixed-position panel around by its header. The zone editor
+// remembers where you left it (zonePopoverUserPos) for the rest of the session.
+function wirePopoverDrag(panel, handle){
+  if(!handle) return;
+  handle.addEventListener('mousedown', (e)=>{
+    if(e.button!==0) return;
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const r = panel.getBoundingClientRect();
+    function move(ev){
+      const x = Math.max(0, Math.min(r.left + ev.clientX - startX, window.innerWidth - r.width));
+      const y = Math.max(0, Math.min(r.top + ev.clientY - startY, window.innerHeight - 30));
+      panel.style.left = x+'px'; panel.style.top = y+'px';
+      if(panel.id==='zonePopover') zonePopoverUserPos = {x, y};
+    }
+    function up(){ window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
 }
 function closeZoneEditPopover(){ document.getElementById('zonePopover').classList.add('hidden'); }
 // The zone editor closes the instant you left-press anything other than that
@@ -6347,8 +6425,9 @@ async function loadHistoryFlyout(){
     const url = `${ROOM_WEBAPP_URL}?pollRoom=${encodeURIComponent(state.sessionCode)}&sheetId=${encodeURIComponent(state.roomSheetId)}&since=0&_=${Date.now()}`;
     const res = await fetch(url);
     if(!res.ok) throw new Error('HTTP '+res.status);
-    const events = await res.json();
+    let events = await res.json();
     if(events && events.error) throw new Error(events.error);
+    events = (events||[]).filter(ev=> !(ev.payload && ev.payload.quiet)); // live-only updates, summarized by a NOTE — see hotkeyAdjustToken
     body.innerHTML = events.length ? events.map(ev=>
       `<div class="history-row"><span class="history-time">${new Date(ev.ts).toLocaleTimeString()}</span> ${escapeHtml(describeEvent(ev.type, ev.payload, ev.playerName))}</div>`
     ).join('') : '<p style="color:var(--text-soft);">No events yet.</p>';
@@ -6406,6 +6485,7 @@ function leaveGame(){
   applyBoardTheme(state.theme);
   state.hand = [];
   state.handFaceDown = [];
+  state.handTokens.clear();
   state.playerHandCounts.clear();
   state.undoFn = null;
   state.editingZoneId = null;
@@ -6436,6 +6516,7 @@ function handCardFaceHtml(cardId, faceDown){
   return faceDown ? cardFaceHtml(cardId, false) : cardFrontInnerHtml(cardsById.get(cardId), 300);
 }
 function renderHand(){
+  renderHandTokens();
   syncHandFaceDown();
   const el = document.getElementById('handCards');
   el.innerHTML = state.hand.map((cardId,i)=>{
@@ -6608,6 +6689,109 @@ function playHandCardToBoard(pick, clientX, clientY){
 }
 
 /* =========================================================================
+   TOKENS IN HAND — drop a board token (a whole stack, or one peeled token)
+   onto your hand and it goes into a small tray at the left of the hand area;
+   drag one back out onto the board to play it. How many of each type every
+   player holds is public, like hand size (see syncHandCount/renderPlayerCounters).
+   ========================================================================= */
+function renderHandTokens(){
+  const el = document.getElementById('handTokens');
+  if(!el) return;
+  const entries = [...state.handTokens.entries()].filter(([,n])=>n>0);
+  el.innerHTML = entries.map(([type,n])=>{
+    const color = state.tokenTypes.get(type) || '#546178';
+    return `<div class="hand-token" data-type="${escapeHtml(type)}" title="${escapeHtml(type)} — drag onto the board to play one">
+      <span class="dot" style="background:${color}">${escapeHtml((type[0]||'?').toUpperCase())}</span>×${n}</div>`;
+  }).join('');
+  el.querySelectorAll('.hand-token').forEach(chip=> wireHandTokenDrag(chip, chip.dataset.type));
+}
+// Puts `amount` tokens from a board token stack into the hand.
+function sendTokenToHand(tokenId, amount){
+  const t = state.tokens.get(tokenId);
+  if(!t || amount<=0 || t.count<amount) return;
+  const clone = JSON.parse(JSON.stringify(t));
+  if(amount===t.count) doAction('REMOVE_TOKEN', {id:tokenId});
+  else doAction('SET_TOKEN_COUNT', {id:tokenId, count:t.count-amount});
+  state.handTokens.set(t.type, (state.handTokens.get(t.type)||0) + amount);
+  renderHand();
+  syncHandCount(`put ${amount} ${t.type} token${amount===1?'':'s'} in hand`);
+  setUndo(()=>{
+    state.handTokens.set(clone.type, Math.max(0, (state.handTokens.get(clone.type)||0) - amount));
+    renderHand();
+    syncHandCount(`took ${amount} ${clone.type} token${amount===1?'':'s'} back out of hand`);
+    doAction('PLACE_TOKEN', clone);
+  });
+}
+// While a board token is dragged: light up the hand when it's over it.
+function tokenHandHover(ev){
+  document.getElementById('hand-panel').classList.toggle('hand-drop-target', isOverHandPanel(ev.clientX, ev.clientY));
+}
+function clearTokenHandHover(){ document.getElementById('hand-panel').classList.remove('hand-drop-target'); }
+// Drag a token chip out of the hand onto the board: plays ONE token there,
+// joining a same-type stack if dropped on one.
+function wireHandTokenDrag(chip, type){
+  chip.addEventListener('mousedown', (e)=>{
+    if(e.button!==0) return;
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    let ghost = null;
+    function move(ev){
+      if(!ghost){
+        if(Math.hypot(ev.clientX-startX, ev.clientY-startY) < DRAG_THRESHOLD) return;
+        ghost = chip.querySelector('.dot').cloneNode(true);
+        ghost.classList.add('hand-token-ghost');
+        document.body.appendChild(ghost);
+      }
+      ghost.style.left = (ev.clientX-14)+'px'; ghost.style.top = (ev.clientY-14)+'px';
+      const vp = document.getElementById('boardViewport').getBoundingClientRect();
+      const overBoard = ev.clientX>=vp.left && ev.clientX<=vp.right && ev.clientY>=vp.top && ev.clientY<=vp.bottom;
+      const target = overBoard ? findTokenMergeTarget({id:null, type}, clientToWorld(ev.clientX, ev.clientY).x, clientToWorld(ev.clientX, ev.clientY).y) : null;
+      if(target) showTokenMergeHighlight(target.id); else clearTokenMergeHighlight();
+    }
+    function up(ev){
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      clearTokenMergeHighlight();
+      if(!ghost) return;
+      ghost.remove();
+      const vp = document.getElementById('boardViewport').getBoundingClientRect();
+      if(ev.clientX<vp.left || ev.clientX>vp.right || ev.clientY<vp.top || ev.clientY>vp.bottom) return;
+      playHandToken(type, ev.clientX, ev.clientY);
+    }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+}
+function playHandToken(type, clientX, clientY){
+  const have = state.handTokens.get(type)||0;
+  if(have<=0) return;
+  state.handTokens.set(type, have-1);
+  if(have-1<=0) state.handTokens.delete(type);
+  const world = clientToWorld(clientX, clientY);
+  const target = findTokenMergeTarget({id:null, type}, world.x, world.y);
+  let undoBoard;
+  if(target){
+    const old = target.count;
+    doAction('SET_TOKEN_COUNT', {id:target.id, count:old+1});
+    undoBoard = ()=> doAction('SET_TOKEN_COUNT', {id:target.id, count:old});
+  } else {
+    const {x, y} = snapPos(world.x-22, world.y-22, 44, 44);
+    const snapped = applyZoneSnap(x, y, 44, 44);
+    const id = newTokenId();
+    doAction('PLACE_TOKEN', { id, x:snapped.x, y:snapped.y, type, count:1, attachedTo:null });
+    undoBoard = ()=> doAction('REMOVE_TOKEN', {id});
+  }
+  renderHand();
+  syncHandCount(`played a ${type} token from hand`);
+  setUndo(()=>{
+    undoBoard();
+    state.handTokens.set(type, (state.handTokens.get(type)||0) + 1);
+    renderHand();
+    syncHandCount(`took a ${type} token back into hand`);
+  });
+}
+
+/* =========================================================================
    DECK IMPORT WIRING
    ========================================================================= */
 // Set by the board menu's Import Deck (see openBoardRadialMenu) so the deck
@@ -6623,7 +6807,7 @@ document.getElementById('deckFileInput').addEventListener('change', (e)=>{
       const drop = pendingDeckDropWorld;
       pendingDeckDropWorld = null;
       if(drop){
-        await importDeckJson(json, snapCoord(drop.x - PIECE_W/2), snapCoord(drop.y - PIECE_H/2)); // centered on the click
+        const at = snapPos(drop.x - PIECE_W/2, drop.y - PIECE_H/2, PIECE_W, PIECE_H); await importDeckJson(json, at.x, at.y); // centered on the click
       } else {
         const b = boardBounds();
         await importDeckJson(json, (b.minX+b.maxX)/2, (b.minY+b.maxY)/2);
