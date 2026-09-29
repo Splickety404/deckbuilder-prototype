@@ -3654,7 +3654,12 @@ function beginPeelAsPiece(p, cardIndex, clientX, clientY){
 // single-card/image piece, and a drag from the "move whole stack" handle on a
 // multi-card pile) — snap, merge-check, sync, and undo, all in one place.
 function finishWholeMove(p, startX, startY, clientX, clientY){
-  const target = p.kind==='image' ? null : resolveDragTarget(p, clientX, clientY); // custom images never merge into/onto card piles
+  // A whole stack (2+ cards) only ever lands ON TOP of another pile — see stackDropTarget.
+  if(p.kind!=='image' && p.cardIds.length>1){
+    const stackTarget = stackDropTarget(p);
+    if(stackTarget){ mergePieceOntoTarget(p.id, stackTarget.id, stackTarget.cardIds.length); return; }
+  }
+  const target = (p.kind==='image' || p.cardIds.length>1) ? null : resolveDragTarget(p, clientX, clientY); // custom images never merge into/onto card piles
   if(target){
     const world = clientToWorld(clientX, clientY);
     // Letting go while previewing a brand-new splay (see
@@ -3874,30 +3879,17 @@ function wireGroupHandleDrag(handleEl, p){
     onMove: (dx, dy, ev)=>{
       const d = screenDeltaToWorldDelta(dx, dy);
       p.x = startX+d.x; p.y = startY+d.y;
-      const target = findOverlapTarget(p, ev.clientX, ev.clientY);
-      const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
-      const world = clientToWorld(ev.clientX, ev.clientY);
-      // Same splay "tuck" preview as wireWholeInteraction — see its matching
-      // comment. Looked up fresh by id (rather than handleEl.closest('.piece'))
-      // since both the handle and its piece get rebuilt whenever the preview
-      // changes, leaving handleEl itself stale.
-      let rebuilt = false;
-      if(splayTarget){
-        clearMergeHighlight();
-        // Keyed off the dragged pile's OWN board position (p.x/p.y), not the
-        // cursor — see splayInsertIndex.
-        rebuilt = setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, p.x, p.y));
-      } else {
-        rebuilt = clearSplayPreview();
-        if(target) showMergeHighlight(target.id); else clearMergeHighlight();
-      }
-      if(rebuilt && ghost){ removeDragGhost(ghost); ghost=null; }
+      // A whole stack only ever goes ON TOP of another pile — no tucking into
+      // a splay, no sliding underneath — so the only feedback is the target's
+      // highlight. The piece element is looked up fresh by id each tick since
+      // any re-render leaves handleEl itself stale.
+      const target = stackDropTarget(p);
+      if(target) showMergeHighlight(target.id); else clearMergeHighlight();
       if(!ghost || !ghost.isConnected) ghost = createDragGhost(); // renderBoard (a flip/rotate, or anyone else's action) wipes it mid-drag
       const pieceEl = document.querySelector(`.piece[data-id="${p.id}"]`);
       if(pieceEl){
         pieceEl.classList.add('dragging-piece');
         placePieceEl(pieceEl, p);
-        pieceEl.classList.toggle('insert-below', !!target && !splayTarget && shouldInsertBelow(target, world.x, world.y));
       }
       updatePieceDragGhost(ghost, p, pieceEl);
       repositionAttachedTokens(p.id);
@@ -4040,16 +4032,25 @@ function beginGroupDrag(anchor, downEvent){
 // Drop-target detection for merging — any other piece whose footprint contains
 // the drop point (in board-space, converted from the raw client coordinates).
 function findOverlapTarget(draggedPiece, clientX, clientY){
-  const vp = document.getElementById('boardViewport');
-  const rect = vp.getBoundingClientRect();
-  const worldX = (clientX-rect.left - state.view.x)/state.view.scale;
-  const worldY = (clientY-rect.top - state.view.y)/state.view.scale;
+  // clientToWorld, not plain pan/zoom math: this used to skip the board's
+  // rotation, so on a rotated board it looked for a pile in the wrong place.
+  const w = clientToWorld(clientX, clientY);
+  return findPileAtWorld(w.x, w.y, draggedPiece.id);
+}
+function findPileAtWorld(worldX, worldY, excludeId){
   for(const p of state.pieces.values()){
-    if(p.id===draggedPiece.id || p.kind==='image') continue; // custom images are never a merge target
+    if(p.id===excludeId || p.kind==='image') continue; // custom images are never a merge target
     const b = pieceBounds(p);
     if(worldX>=b.x && worldX<=b.x+b.w && worldY>=b.y && worldY<=b.y+b.h) return p;
   }
   return null;
+}
+// A whole STACK being dragged (2+ cards) has exactly one way to join another
+// pile: on top. Its target is whatever pile is under the middle of its own
+// top card — the part you're holding over the other pile — rather than the
+// cursor, which sits on the stack's label just past its edge.
+function stackDropTarget(p){
+  return findPileAtWorld(p.x + PIECE_W/2, p.y + PIECE_H/2, p.id);
 }
 // A single dragged card hovering another single, unsplayed card (the one
 // case singleOverSingleSplayPreview covers) is judged by whether the two
