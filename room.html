@@ -206,12 +206,13 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    the viewer and set left/top to that spot (see placePieceBadges); the element
    is centered on that point and counter-rotated so its text reads upright. */
 .pov{position:absolute;right:auto;bottom:auto;width:max-content;
-  transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg));}
+  transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1)) translateY(var(--pov-dy,0px));}
 .piece .piece-label.pov, .lock-badge.pov{right:auto;bottom:auto;width:max-content;
-  transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg));}
-.piece .piece-label.pov{max-width:260px;}
+  transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1)) translateY(var(--pov-dy,0px));}
+.piece .piece-label.pov{max-width:260px;
+  transition:filter .15s var(--bounce),background .1s,color .1s; /* no transform transition: it would make labels lag behind zooming */}
 .lock-badge.pov{width:20px;}
-.piece .piece-label.stack-handle.pov:hover{filter:brightness(1.35);transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg)) scale(1.16);}
+.piece .piece-label.stack-handle.pov:hover{filter:brightness(1.35);transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1)) translateY(var(--pov-dy,0px)) scale(1.16);}
 
 /* Ghost/silhouette preview shown while dragging a piece or token — a faint
    outline at the snapped position it will actually land at if released right
@@ -275,7 +276,8 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    fall back on as a whole-move handle — the count bubble IS that handle. */
 .token .token-count{position:absolute;top:-7px;right:-7px;background:var(--accent);color:var(--accent-contrast);
   font-weight:700;font-size:10px;line-height:1;padding:3px 5px;border-radius:var(--radius-pill);box-shadow:var(--shadow);
-  transition:background .1s,color .1s;cursor:grab;z-index:1;}
+  transition:background .1s,color .1s;cursor:grab;z-index:1;
+  transform:scale(var(--inv-zoom,1));transform-origin:70% 30%; /* same size on screen at any zoom */}
 .token .token-count:hover{filter:brightness(1.15);}
 .token.merge-target{outline:3px solid var(--ok);outline-offset:3px;box-shadow:0 0 0 7px rgba(74,222,128,.22),var(--shadow);}
 .token.merge-target .token-count{background:var(--ok);color:#0a2a12;}
@@ -284,7 +286,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    inside or outside their bounds. Rendered behind pieces/tokens. ---------- */
 .zone{position:absolute;border-radius:var(--radius);box-sizing:border-box;}
 .zone.zone-editable{cursor:move;}
-.zone-label{position:absolute;top:0;left:0;transform-origin:0 0;transform:rotate(var(--counter-rotate,0deg)) translate(6px,4px);font-size:11px;font-weight:700;color:var(--text);
+.zone-label{position:absolute;top:0;left:0;transform-origin:0 0;transform:rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1)) translate(6px,4px);font-size:11px;font-weight:700;color:var(--text);
   background:rgba(20,22,27,.55);border-radius:var(--radius-pill);padding:2px 10px;pointer-events:none;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 12px);}
 .zone-handle{position:absolute;width:16px;height:16px;background:var(--accent);border:2px solid var(--accent-contrast);
@@ -331,6 +333,11 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   border:2px solid rgba(255,255,255,.3);}
 .hand-token .dot{width:28px;height:28px;font-size:11px;box-shadow:var(--shadow);}
 .hand-token-ghost{position:fixed;pointer-events:none;z-index:200;opacity:.9;}
+.hand-token .dot, .hand-token .qty{cursor:grab;}
+.hand-token .qty{padding:2px 6px;border-radius:var(--radius-pill);background:var(--surface-2);border:1px solid var(--border);}
+.hand-token .qty:hover{border-color:var(--accent);}
+.hand-token-ghost .ghost-qty{position:absolute;top:-7px;right:-9px;background:var(--accent);color:var(--accent-contrast);
+  font-size:10px;padding:2px 5px;border-radius:var(--radius-pill);}
 .chip-token{width:15px;height:15px;font-size:8.5px;border-width:1px;margin:0 2px 0 6px;vertical-align:-3px;}
 .hand-card{flex:none;width:var(--hand-card-width, 70px);cursor:grab;transition:transform .15s var(--bounce);}
 .hand-card:hover{transform:translateY(-6px) scale(1.04);}
@@ -450,6 +457,22 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);
   padding:5px 9px;display:flex;gap:9px;white-space:nowrap;}
 #hotkeyHint.hidden{display:none;}
+/* Keyboard-drawing hints (see keyboardHintHtml / tokenKeyboardHintHtml). */
+#hotkeyHint .kb{display:flex;flex-direction:column;gap:3px;}
+#hotkeyHint .kb-row{display:flex;gap:3px;}
+#hotkeyHint .kb-row.r1{margin-left:13px;}
+#hotkeyHint .kb-arrows .kb-row:first-child{margin-left:33px;}
+#hotkeyHint .kb-arrows .kb-row.r1{margin-left:0;}
+#hotkeyHint .kb-key{width:30px;height:30px;border-radius:5px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:var(--surface);border:1px solid var(--border);border-bottom-width:2px;color:var(--text-soft);opacity:.45;}
+#hotkeyHint .kb-key b{font-size:10.5px;line-height:1;}
+#hotkeyHint .kb-key span{font-size:7px;font-weight:700;line-height:1.1;margin-top:2px;text-align:center;letter-spacing:-.1px;}
+#hotkeyHint .kb-key.on{opacity:1;background:var(--accent-soft);border-color:var(--accent);color:var(--text);}
+#hotkeyHint .kb-key.on b{color:#fff;}
+#hotkeyHint .kb-note{font-size:9.5px;color:var(--text-soft);margin-top:2px;}
+#hotkeyHint .kb-wrap{display:flex;align-items:flex-end;gap:12px;}
+#hotkeyHint .kb-mouse{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--text-soft);font-size:8.5px;font-weight:700;}
+#hotkeyHint .kb-wheel{fill:var(--accent);}
 #hotkeyHint .hk-item{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-soft);}
 #hotkeyHint kbd{display:inline-block;min-width:14px;text-align:center;font-family:var(--font);font-size:10.5px;font-weight:700;
   color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-bottom-width:2px;
@@ -691,7 +714,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .presence-cursor{position:absolute;top:0;left:0;pointer-events:none;z-index:500;
   /* Counter-rotated around its own tip so the pointer and name tag stay upright
      however the board is turned. */
-  transform-origin:2px 2px;transform:translate(-2px,-2px) rotate(var(--counter-rotate,0deg));transition:left .08s linear, top .08s linear;}
+  transform-origin:2px 2px;transform:translate(-2px,-2px) rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1));transition:left .08s linear, top .08s linear;}
 .presence-cursor .dot{width:14px;height:14px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);
   box-shadow:0 1px 4px rgba(0,0,0,.45);}
 .presence-cursor.holding .dot{animation:presencePulse .9s ease-in-out infinite;}
@@ -2193,6 +2216,10 @@ async function importDeckJson(deckJson, dropX, dropY){
 function applyView(){
   const world = document.getElementById('boardWorld');
   world.style.transform = `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.scale})`;
+  // Labels, counts and badges stay the same size on screen at any zoom: they
+  // multiply by --inv-zoom to cancel the board's own scale (see .pov etc.).
+  world.style.setProperty('--zoom', state.view.scale);
+  world.style.setProperty('--inv-zoom', 1/state.view.scale);
   syncGridBackground();
 }
 // Rotation is a SEPARATE outer layer (#boardRotate) around the already-panned/zoomed
@@ -2243,7 +2270,7 @@ function rotateCompass(dir, deg){
 function resizeCursorFor(screenDir){
   return {n:'ns-resize', s:'ns-resize', e:'ew-resize', w:'ew-resize', ne:'nesw-resize', sw:'nesw-resize', nw:'nwse-resize', se:'nwse-resize'}[screenDir];
 }
-const POV_LABEL_OFFSET = 16; // card edge → label center: a small gap plus half the label's height
+const POV_LABEL_OFFSET = 16; // card edge → label center, in SCREEN px (applied via --pov-dy, so it holds at any zoom)
 // Places a piece's label, lock badge and search badge relative to the VIEWER:
 // the label centered just past the anchor card's edge nearest the viewer
 // (or its far edge, if the splay fans out toward the viewer and would run
@@ -2260,12 +2287,13 @@ function placePieceBadges(el, p, anchorBox, fanBox, splayDir){
     const fan = {right:{x:1,y:0}, left:{x:-1,y:0}, down:{x:0,y:1}, up:{x:0,y:-1}}[splayDir];
     labelFar = !!fan && fan.x===near.x && fan.y===near.y;
     label.classList.add('pov');
-    placeAtPoint(label, boxPointToward(anchorBox, deg, 0, labelFar ? -1 : 1, POV_LABEL_OFFSET));
+    placeAtPoint(label, boxPointToward(anchorBox, deg, 0, labelFar ? -1 : 1, 0));
+    label.style.setProperty('--pov-dy', (labelFar ? -POV_LABEL_OFFSET : POV_LABEL_OFFSET)+'px');
   }
   const lock = el.querySelector(':scope > .lock-badge');
   if(lock){ lock.classList.add('pov'); placeAtPoint(lock, boxPointToward(anchorBox, deg, 1, -1, 0)); }
   const badge = el.querySelector(':scope > .search-alert-badge');
-  if(badge){ badge.classList.add('pov'); placeAtPoint(badge, boxPointToward(fanBox, deg, 0, -1, POV_LABEL_OFFSET + (labelFar ? 22 : 0))); }
+  if(badge){ badge.classList.add('pov'); placeAtPoint(badge, boxPointToward(fanBox, deg, 0, -1, 0)); badge.style.setProperty('--pov-dy', -(POV_LABEL_OFFSET + (labelFar ? 22 : 0))+'px'); }
 }
 // Converts a screen-space drag delta into true (unrotated) board-space delta —
 // needed for every drag interaction so dragging still feels natural regardless of
@@ -3206,6 +3234,26 @@ document.getElementById('btnZoomFit').addEventListener('click', fitAll);
 
 /* Zoom (wheel — panning is right-drag, see BOARD MOUSE CONTROLS), clamped between a "see everything"
    minimum and a "one card fills the screen" maximum. */
+// Scrolling over a token changes its count (up = +1) instead of zooming —
+// same quiet live sync + one summary as the W/S hotkeys (see hotkeyAdjustToken).
+// Deltas are accumulated so a trackpad's stream of tiny scroll events steps
+// at a sane rate; one mouse-wheel notch is one step.
+let tokenWheelAcc = 0, tokenWheelId = null;
+const TOKEN_WHEEL_STEP = 50;
+document.getElementById('boardViewport').addEventListener('wheel', (e)=>{
+  const tokenEl = e.target.closest && e.target.closest('.token');
+  if(!tokenEl) return;
+  e.preventDefault();
+  e.stopImmediatePropagation(); // don't also zoom
+  const id = tokenEl.dataset.id;
+  if(id!==tokenWheelId){ tokenWheelId = id; tokenWheelAcc = 0; }
+  tokenWheelAcc += e.deltaMode===1 ? e.deltaY*33 : e.deltaY; // line-based wheels report ~3 per notch
+  if(Math.abs(tokenWheelAcc) < TOKEN_WHEEL_STEP) return;
+  const delta = tokenWheelAcc < 0 ? 1 : -1;
+  tokenWheelAcc = 0;
+  hoveredTokenId = id;
+  hotkeyAdjustToken(id, delta);
+}, {passive:false});
 document.getElementById('boardViewport').addEventListener('wheel', (e)=>{
   e.preventDefault();
   const vp = document.getElementById('boardViewport');
@@ -4317,22 +4365,10 @@ function showHotkeyHint(el){
   // the hint actually matches what pressing the key will do.
   const perCard = !!(p && p.splayed && p.cardIds.length>1);
   const isStack = !!(p && p.kind!=='image' && p.cardIds.length>1);
-  const rotateLabel = perCard ? 'Rotate card' : 'Rotate';
-  const flipLabel = perCard ? 'Flip card' : 'Flip';
-  const drawLabel = perCard ? 'Draw card' : 'Draw';
-  const peekLabel = perCard ? 'Peek card' : 'Peek';
-  const rotateItem = `<div class="hk-item"><kbd>R</kbd>/<kbd>E</kbd> ${rotateLabel}</div>`;
-  const pingItem = `<div class="hk-item"><kbd>W</kbd> Ping</div>`;
-  hint.innerHTML = (p && p.kind==='image')
-    ? rotateItem + pingItem // an image piece has no card faces to flip, draw, or peek at
-    : `
-    <div class="hk-item"><kbd>F</kbd> ${flipLabel}</div>
-    ${rotateItem}
-    <div class="hk-item"><kbd>D</kbd> ${drawLabel}</div>
-    <div class="hk-item"><kbd>P</kbd> ${peekLabel}</div>
-    ${pingItem}
-    ${isStack ? `<div class="hk-item"><kbd>S</kbd> Shuffle</div><div class="hk-item"><kbd>Q</kbd> Search</div>` : ''}
-  `;
+  const keys = (p && p.kind==='image')
+    ? { E:'Turn ↺', R:'Turn ↻', W:'Ping' } // an image piece has no card faces to flip, draw, or peek at
+    : { F:'Flip', E:'Turn ↺', R:'Turn ↻', D:'Draw', P:'Peek', W:'Ping', ...(isStack ? {S:'Shuffle', Q:'Search'} : {}) };
+  hint.innerHTML = keyboardHintHtml(keys, perCard ? 'card' : '');
   // Keep clear of the whole pile INCLUDING its label: a 'down' splay docks
   // its label (which carries the card count) above the anchor card, outside
   // the piece's own box, so placing the hint just above the box used to sit
@@ -4363,6 +4399,29 @@ function showHotkeyHint(el){
   hint.style.top = top+'px';
 }
 function hideHotkeyHint(){ document.getElementById('hotkeyHint').classList.add('hidden'); }
+// A little drawing of the keyboard's top two letter rows: keys that do
+// something here light up with their action written on them; the rest stay
+// dim, so you can see where each one is. `keys` maps a letter to its action.
+function keyboardHintHtml(keys, note){
+  const rows = ['QWERTYUIOP', 'ASDFGHJKL'];
+  const keyHtml = (k, label)=> label
+    ? `<div class="kb-key on"><b>${k}</b><span>${escapeHtml(label)}</span></div>`
+    : `<div class="kb-key"><b>${k}</b></div>`;
+  return `<div class="kb">${rows.map((r,i)=>`<div class="kb-row r${i}">${[...r].map(k=>keyHtml(k, keys[k])).join('')}</div>`).join('')}
+    ${note ? `<div class="kb-note">Flip, Turn, Draw and Peek act on the ${escapeHtml(note)} under the cursor</div>` : ''}</div>`;
+}
+// Token version: W/S in their spots, the arrow keys, and the mouse wheel.
+function tokenKeyboardHintHtml(){
+  const k = (key, label)=> `<div class="kb-key${label?' on':''}"><b>${key}</b>${label?`<span>${label}</span>`:''}</div>`;
+  return `<div class="kb-wrap">
+    <div class="kb"><div class="kb-row">${k('Q')}${k('W','+1')}${k('E')}</div><div class="kb-row r1">${k('A')}${k('S','−1')}${k('D')}</div></div>
+    <div class="kb kb-arrows"><div class="kb-row">${k('↑','+1')}</div><div class="kb-row">${k('←')}${k('↓','−1')}${k('→')}</div></div>
+    <div class="kb-mouse"><svg width="26" height="38" viewBox="0 0 26 38" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="23" height="35" rx="11.5" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".55"/>
+      <line x1="13" y1="1.5" x2="13" y2="15" stroke="currentColor" stroke-width="1.2" opacity=".35"/>
+      <rect x="10.5" y="6" width="5" height="9" rx="2.5" class="kb-wheel"/></svg><span>Scroll ±1</span></div>
+  </div>`;
+}
 document.addEventListener('keydown', (e)=>{
   if(!hoveredPieceId) return;
   if(activeHandDrag) return;
@@ -5666,7 +5725,7 @@ function renderTokens(){
 let hoveredTokenId = null;
 function showTokenHotkeyHint(el){
   const hint = document.getElementById('hotkeyHint');
-  hint.innerHTML = `<div class="hk-item"><kbd>W</kbd>/<kbd>↑</kbd> +1</div><div class="hk-item"><kbd>S</kbd>/<kbd>↓</kbd> −1</div>`;
+  hint.innerHTML = tokenKeyboardHintHtml();
   hint.classList.remove('hidden');
   const r = el.getBoundingClientRect(), h = hint.getBoundingClientRect();
   let top = r.top - h.height - 8;
@@ -6087,7 +6146,7 @@ function renderZones(){
     const labelEl = el.querySelector('.zone-label');
     if(labelEl){
       placeAtPoint(labelEl, boxPointToward(box, view, -1, -1, 0));
-      labelEl.style.maxWidth = ((view % 180 ? z.h : z.w) - 12) + 'px'; // the zone's on-screen width
+      labelEl.style.maxWidth = `calc(${view % 180 ? z.h : z.w}px * var(--zoom,1) - 12px)`; // the zone's on-screen width (the label itself is zoom-independent)
     }
     const lockEl = el.querySelector('.lock-badge');
     if(lockEl){ lockEl.classList.add('pov'); placeAtPoint(lockEl, boxPointToward(box, view, 1, -1, 0)); }
@@ -6700,10 +6759,14 @@ function renderHandTokens(){
   const entries = [...state.handTokens.entries()].filter(([,n])=>n>0);
   el.innerHTML = entries.map(([type,n])=>{
     const color = state.tokenTypes.get(type) || '#546178';
-    return `<div class="hand-token" data-type="${escapeHtml(type)}" title="${escapeHtml(type)} — drag onto the board to play one">
-      <span class="dot" style="background:${color}">${escapeHtml((type[0]||'?').toUpperCase())}</span>×${n}</div>`;
+    return `<div class="hand-token" data-type="${escapeHtml(type)}">
+      <span class="dot" style="background:${color}" title="${escapeHtml(type)} — drag onto the board to play one">${escapeHtml((type[0]||'?').toUpperCase())}</span><span class="qty" title="Drag to play all ${n}">×${n}</span></div>`;
   }).join('');
-  el.querySelectorAll('.hand-token').forEach(chip=> wireHandTokenDrag(chip, chip.dataset.type));
+  // Same as a board token stack: grab the token itself for one, its quantity for the whole stack.
+  el.querySelectorAll('.hand-token').forEach(chip=>{
+    wireHandTokenDrag(chip.querySelector('.dot'), chip.dataset.type, false);
+    wireHandTokenDrag(chip.querySelector('.qty'), chip.dataset.type, true);
+  });
 }
 // Puts `amount` tokens from a board token stack into the hand.
 function sendTokenToHand(tokenId, amount){
@@ -6727,9 +6790,10 @@ function tokenHandHover(ev){
   document.getElementById('hand-panel').classList.toggle('hand-drop-target', isOverHandPanel(ev.clientX, ev.clientY));
 }
 function clearTokenHandHover(){ document.getElementById('hand-panel').classList.remove('hand-drop-target'); }
-// Drag a token chip out of the hand onto the board: plays ONE token there,
-// joining a same-type stack if dropped on one.
-function wireHandTokenDrag(chip, type){
+// Drag a token out of the hand onto the board — the token itself plays ONE,
+// its "×N" quantity plays the whole stack (`all`) — joining a same-type stack
+// if dropped on one.
+function wireHandTokenDrag(chip, type, all){
   chip.addEventListener('mousedown', (e)=>{
     if(e.button!==0) return;
     e.preventDefault(); e.stopPropagation();
@@ -6738,7 +6802,8 @@ function wireHandTokenDrag(chip, type){
     function move(ev){
       if(!ghost){
         if(Math.hypot(ev.clientX-startX, ev.clientY-startY) < DRAG_THRESHOLD) return;
-        ghost = chip.querySelector('.dot').cloneNode(true);
+        ghost = chip.closest('.hand-token').querySelector('.dot').cloneNode(true);
+        if(all) ghost.innerHTML += `<span class="ghost-qty">${state.handTokens.get(type)||0}</span>`;
         ghost.classList.add('hand-token-ghost');
         document.body.appendChild(ghost);
       }
@@ -6756,38 +6821,40 @@ function wireHandTokenDrag(chip, type){
       ghost.remove();
       const vp = document.getElementById('boardViewport').getBoundingClientRect();
       if(ev.clientX<vp.left || ev.clientX>vp.right || ev.clientY<vp.top || ev.clientY>vp.bottom) return;
-      playHandToken(type, ev.clientX, ev.clientY);
+      playHandToken(type, ev.clientX, ev.clientY, all ? (state.handTokens.get(type)||0) : 1);
     }
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
   });
 }
-function playHandToken(type, clientX, clientY){
+function playHandToken(type, clientX, clientY, amount){
   const have = state.handTokens.get(type)||0;
-  if(have<=0) return;
-  state.handTokens.set(type, have-1);
-  if(have-1<=0) state.handTokens.delete(type);
+  amount = Math.min(amount||1, have);
+  if(amount<=0) return;
+  state.handTokens.set(type, have-amount);
+  if(have-amount<=0) state.handTokens.delete(type);
   const world = clientToWorld(clientX, clientY);
   const target = findTokenMergeTarget({id:null, type}, world.x, world.y);
   let undoBoard;
   if(target){
     const old = target.count;
-    doAction('SET_TOKEN_COUNT', {id:target.id, count:old+1});
+    doAction('SET_TOKEN_COUNT', {id:target.id, count:old+amount});
     undoBoard = ()=> doAction('SET_TOKEN_COUNT', {id:target.id, count:old});
   } else {
     const {x, y} = snapPos(world.x-22, world.y-22, 44, 44);
     const snapped = applyZoneSnap(x, y, 44, 44);
     const id = newTokenId();
-    doAction('PLACE_TOKEN', { id, x:snapped.x, y:snapped.y, type, count:1, attachedTo:null });
+    doAction('PLACE_TOKEN', { id, x:snapped.x, y:snapped.y, type, count:amount, attachedTo:null });
     undoBoard = ()=> doAction('REMOVE_TOKEN', {id});
   }
+  const what = amount===1 ? `a ${type} token` : `${amount} ${type} tokens`;
   renderHand();
-  syncHandCount(`played a ${type} token from hand`);
+  syncHandCount(`played ${what} from hand`);
   setUndo(()=>{
     undoBoard();
-    state.handTokens.set(type, (state.handTokens.get(type)||0) + 1);
+    state.handTokens.set(type, (state.handTokens.get(type)||0) + amount);
     renderHand();
-    syncHandCount(`took a ${type} token back into hand`);
+    syncHandCount(`took ${what} back into hand`);
   });
 }
 
