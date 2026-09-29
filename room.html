@@ -630,6 +630,16 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .player-chip b{color:var(--text);font-weight:700;}
 .player-chip.active-turn{border-color:var(--accent);color:var(--text);box-shadow:0 0 0 2px var(--accent-soft);}
 /* Round "rotate view" button docked at the board's bottom-right, just above the hand. */
+/* Board tabs — a strip along the top of the board. Drag anything onto a tab to
+   move it there. */
+#boardTabs{position:absolute;left:12px;top:10px;z-index:60;display:flex;gap:4px;align-items:center;max-width:calc(100% - 24px);overflow-x:auto;}
+.board-tab{padding:4px 12px;font-size:12px;font-weight:700;border-radius:var(--radius-pill);cursor:pointer;user-select:none;white-space:nowrap;
+  background:var(--surface);border:1px solid var(--border);color:var(--text-soft);transition:background .12s,border-color .12s,transform .12s var(--bounce);}
+.board-tab:hover{color:var(--text);}
+.board-tab.active{background:var(--accent-soft);border-color:var(--accent);color:var(--text);}
+.board-tab.drop-hover{border-color:var(--ok);background:rgba(74,222,128,.18);color:var(--text);transform:scale(1.08);}
+.board-tab input{width:90px;font-size:12px;font-weight:700;padding:0;border:none;background:transparent;color:var(--text);outline:none;}
+.board-tab-add{padding:4px 9px;}
 #boardEmptyHint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;
   font-size:13px;color:var(--text-soft);opacity:.55;letter-spacing:.2px;white-space:nowrap;}
 #boardEmptyHint.hidden{display:none;}
@@ -864,6 +874,8 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
       </div>
     </div>
     <div class="btn board-overlay" id="btnRotateView" title="Rotate the board 90°">⟳</div>
+    <!-- Board tabs (see TABS / renderBoardTabs). -->
+    <div id="boardTabs" class="board-overlay"></div>
     <!-- Shown only while there's nothing on the board yet (see renderBoard). -->
     <div id="boardEmptyHint" class="hidden">Right-click the table to add a deck or tokens</div>
   </div>
@@ -1482,6 +1494,8 @@ const state = {
   handScale: 70,         // px, local per-viewer, persisted in localStorage
   undoFn: null,          // single-level undo for the local player's last action
   snapToGrid: false,    // local per-viewer, never synced
+  tabs: [{id:'main', name:'Table'}], // the board's tabs — shared; each piece/token/zone has a .tab (default 'main')
+  currentTab: 'main',   // which tab THIS viewer is looking at — local, never synced
   editingZoneId: null,  // local per-viewer, never synced — the one zone (if any) currently open for editing via right-click; only it can be moved/resized
   peekAlertIds: new Set(), // pieceIds with a brief "someone just peeked here" highlight — self-clears after PEEK_ALERT_MS
   searchingBy: new Map(), // pieceId -> playerName currently rifling through it — cleared on SEARCH_END
@@ -1586,6 +1600,9 @@ function announceLocalAction(type, payload){
   showHistoryBubble(describeEvent(type, payload, state.playerName));
 }
 function doAction(type, payload){
+  // New pieces/tokens/zones go on the tab you're looking at (an undo's
+  // re-placed clone already carries its own tab).
+  if((type==='PLACE_PIECE' || type==='PLACE_TOKEN' || type==='PLACE_ZONE') && payload && payload.tab==null) payload = {...payload, tab:state.currentTab};
   applyRoomEvent(type, payload);
   postRoomEvent(type, payload);
   announceLocalAction(type, payload);
@@ -1705,6 +1722,7 @@ function applyRoomEvent(type, payload){
         // single-card piece just rotates as a whole via `rotation` instead.
         cardRotations: payload.cardRotations || (payload.cardIds||[]).map(()=>0),
         owner:payload.owner, splayed:false, splayDir:'right', splaySpacing:36, label:payload.label||'', rotation:payload.rotation||0, locked:payload.locked||false,
+        tab:payload.tab||'main',
         kind:payload.kind||'cards', imageUrl:payload.imageUrl||null, w:payload.w||null, h:payload.h||null, naturalW:payload.naturalW||null, naturalH:payload.naturalH||null });
       // A lone card's angle lives entirely in `rotation` (see ROTATION MODEL).
       // Older versions sent the same angle in both fields; what showed was
@@ -1803,7 +1821,7 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'PLACE_TOKEN': {
-      state.tokens.set(payload.id, {id:payload.id, x:payload.x, y:payload.y, type:payload.type, count:payload.count, attachedTo:payload.attachedTo||null,
+      state.tokens.set(payload.id, {id:payload.id, x:payload.x, y:payload.y, type:payload.type, count:payload.count, attachedTo:payload.attachedTo||null, tab:payload.tab||'main',
         attachedCardIndex: (payload.attachedTo && payload.attachedCardIndex!=null) ? payload.attachedCardIndex : null});
       break;
     }
@@ -1878,7 +1896,7 @@ function applyRoomEvent(type, payload){
       state.zones.set(payload.id, { id:payload.id, x:payload.x, y:payload.y, w:payload.w, h:payload.h,
         color:payload.color, strokeColor:payload.strokeColor, strokeWidth:payload.strokeWidth,
         label:payload.label||'', snapMode:payload.snapMode||'none', locked:payload.locked||false,
-        opacity: payload.opacity!=null ? payload.opacity : ZONE_DEFAULT_OPACITY });
+        opacity: payload.opacity!=null ? payload.opacity : ZONE_DEFAULT_OPACITY, tab: payload.tab||'main' });
       break;
     }
     case 'SET_PIECE_LOCK': {
@@ -1894,6 +1912,30 @@ function applyRoomEvent(type, payload){
     case 'SET_ZONE_RECT': {
       const z = state.zones.get(payload.id);
       if(z){ z.x=payload.x; z.y=payload.y; z.w=payload.w; z.h=payload.h; }
+      break;
+    }
+    // ---- Board tabs (see TABS). Tabs themselves are shared; which one you're
+    // looking at is yours alone (state.currentTab).
+    case 'ADD_TAB': {
+      if(!state.tabs.some(t=>t.id===payload.id)) state.tabs.push({id:payload.id, name:payload.name});
+      break;
+    }
+    case 'RENAME_TAB': {
+      const t = state.tabs.find(t=>t.id===payload.id); if(t) t.name = payload.name;
+      break;
+    }
+    case 'REMOVE_TAB': {
+      if(payload.id==='main') break;
+      state.tabs = state.tabs.filter(t=>t.id!==payload.id);
+      if(state.currentTab===payload.id) state.currentTab = 'main';
+      break;
+    }
+    case 'SET_TAB': { // moves one piece/token/zone to another tab
+      const m = payload.kind==='piece' ? state.pieces : payload.kind==='token' ? state.tokens : state.zones;
+      const o = m.get(payload.id);
+      if(o) o.tab = payload.tab;
+      if(payload.kind==='piece') state.selectedIds.delete(payload.id);
+      if(payload.kind==='token') state.selectedTokenIds.delete(payload.id);
       break;
     }
     case 'SET_ZONE_STYLE': {
@@ -1921,6 +1963,8 @@ function applyRoomEvent(type, payload){
       state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear(); state.tokenTypeStyles.clear();
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
       (payload.tokenTypeStyles||[]).forEach(([name,st])=> setTokenTypeStyle(name, st));
+      state.tabs = (payload.tabs && payload.tabs.length) ? payload.tabs.map(t=>({...t})) : [{id:'main', name:'Table'}];
+      if(!state.tabs.some(t=>t.id===state.currentTab)) state.currentTab = 'main';
       (payload.zones||[]).forEach(z=> state.zones.set(z.id, {...z}));
       (payload.pieces||[]).forEach(p=>{ const np = {...p}; if(np.cardIds && np.cardIds.length===1) np.cardRotations = [0]; state.pieces.set(p.id, np); }); // see ROTATION MODEL
       (payload.tokens||[]).forEach(t=> state.tokens.set(t.id, {...t}));
@@ -1943,6 +1987,7 @@ function applyRoomEvent(type, payload){
       break;
     }
     case 'PING': {
+      if((payload.tab||'main')!==state.currentTab) break; // pinged somewhere on another tab
       showPing(payload.x, payload.y);
       if(payload.pieceId && state.pieces.has(payload.pieceId)) flashPingHighlight(payload.pieceId, payload.cardIndex);
       break;
@@ -2004,6 +2049,8 @@ function applyRoomEvent(type, payload){
       state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear(); state.tokenTypeStyles.clear();
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
       (payload.tokenTypeStyles||[]).forEach(([name,st])=> setTokenTypeStyle(name, st));
+      state.tabs = (payload.tabs && payload.tabs.length) ? payload.tabs.map(t=>({...t})) : [{id:'main', name:'Table'}];
+      if(!state.tabs.some(t=>t.id===state.currentTab)) state.currentTab = 'main';
       (payload.zones||[]).forEach(z=> state.zones.set(z.id, {...z}));
       (payload.pieces||[]).forEach(p=>{ const np = {...p}; if(np.cardIds && np.cardIds.length===1) np.cardRotations = [0]; state.pieces.set(p.id, np); }); // see ROTATION MODEL
       (payload.tokens||[]).forEach(t=> state.tokens.set(t.id, {...t}));
@@ -2021,7 +2068,7 @@ function applyRoomEvent(type, payload){
       break;
     }
   }
-  if(['PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','REORDER_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','EDIT_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE','STATE_SNAPSHOT','PEEK_ALERT','SEARCH_START','SEARCH_END'].includes(type)) renderBoard();
+  if(['ADD_TAB','RENAME_TAB','REMOVE_TAB','SET_TAB','PLACE_PIECE','MOVE_PIECE','FLIP_TOP','ROTATE_PIECE','ROTATE_CARD','REMOVE_PIECE','MERGE_PIECES','SHUFFLE_PIECE','REORDER_PIECE','FLIP_STACK','SET_SPLAY','SET_LABEL','SEARCH_REMOVE','DRAW_TOP','REMOVE_CARD','RESTORE_PIECE_CARDS','PLACE_TOKEN','MOVE_TOKEN','SET_TOKEN_COUNT','SET_TOKEN_SPLAY','REMOVE_TOKEN','DEFINE_TOKEN_TYPE','EDIT_TOKEN_TYPE','PLACE_ZONE','SET_ZONE_RECT','SET_ZONE_STYLE','REMOVE_ZONE','LOAD_LAYOUT','SET_PIECE_LOCK','SET_ZONE_LOCK','SET_PIECE_SCALE','STATE_SNAPSHOT','PEEK_ALERT','SEARCH_START','SEARCH_END'].includes(type)) renderBoard();
   // A playful "pop" the moment something new lands on the board — for every client,
   // local placer and remote viewers alike, since this runs from inside applyRoomEvent
   // itself rather than the call site. Only ever added to a piece/token/zone element
@@ -2164,6 +2211,10 @@ function describeEvent(type, payload, playerName){
     case 'PLACE_ZONE': return `${playerName} created a zone${payload.label?` "${payload.label}"`:''}`;
     case 'SET_ZONE_RECT': return `${playerName} resized/moved a zone`;
     case 'SET_ZONE_STYLE': return `${playerName} edited a zone`;
+    case 'ADD_TAB': return `${playerName} added a board tab "${payload.name}"`;
+    case 'RENAME_TAB': return `${playerName} renamed a board tab to "${payload.name}"`;
+    case 'REMOVE_TAB': return `${playerName} removed a board tab`;
+    case 'SET_TAB': return `${playerName} moved ${payload.kind==='piece'?'a pile':payload.kind==='token'?'a token':'a zone'} to the "${tabName(payload.tab)}" tab`;
     case 'REMOVE_ZONE': return `${playerName} deleted a zone`;
     case 'SET_THEME': return `${playerName} changed the table theme`;
     case 'LOAD_LAYOUT': return `${playerName} loaded a saved board layout`;
@@ -2180,7 +2231,8 @@ function describeEvent(type, payload, playerName){
       const activeName = state.players.get(activeId) || 'someone';
       return `${playerName} passed the turn — now ${activeName}'s turn`;
     }
-    case 'PING': return payload.desc ? `📍 ${playerName} pinged ${payload.desc}` : `${playerName} pinged the board`;
+    case 'PING': { const where = (payload.tab && payload.tab!==state.currentTab) ? ` on the "${tabName(payload.tab)}" tab` : '';
+      return payload.desc ? `📍 ${playerName} pinged ${payload.desc}${where}` : `${playerName} pinged the board${where}`; }
     case 'ROLL_DICE': return `${playerName} rolled a d${payload.sides} → ${payload.result}`;
     case 'CHAT': return `${payload.playerName}: "${payload.text}"`;
     case 'NOTE': return `${playerName} ${payload.text}`;
@@ -2588,7 +2640,7 @@ function describePingTarget(p, cardIndex){
 }
 function firePing(clientX, clientY){
   const world = clientToWorld(clientX, clientY);
-  doAction('PING', {x:world.x, y:world.y});
+  doAction('PING', {x:world.x, y:world.y, tab:state.currentTab});
 }
 // Pings whatever is under (clientX, clientY): a specific card picked out of a
 // splay, a whole stack (its label, or an unsplayed pile's face — only the top
@@ -2598,7 +2650,7 @@ function pingAtPoint(target, clientX, clientY){
   const world = clientToWorld(clientX, clientY);
   const pieceEl = target && target.closest && target.closest('.piece');
   const p = pieceEl ? state.pieces.get(pieceEl.dataset.id) : null;
-  if(!p){ doAction('PING', {x:world.x, y:world.y}); return; }
+  if(!p){ doAction('PING', {x:world.x, y:world.y, tab:state.currentTab}); return; }
   let cardIndex = null;
   if(p.kind!=='image' && !target.closest('.stack-handle')){
     const splayCard = target.closest('.splay-card:not(.splay-gap)');
@@ -2606,7 +2658,7 @@ function pingAtPoint(target, clientX, clientY){
     else if(p.cardIds.length===1) cardIndex = 0;
   }
   if(p.kind==='image') cardIndex = null;
-  doAction('PING', {x:world.x, y:world.y, pieceId:p.id, cardIndex, desc:describePingTarget(p, cardIndex)});
+  doAction('PING', {x:world.x, y:world.y, pieceId:p.id, cardIndex, desc:describePingTarget(p, cardIndex), tab:state.currentTab});
 }
 // Right-click (no drag) routing — walks up from whatever was clicked to the
 // nearest element that registered a context handler (see wirePressDragClick's
@@ -2929,7 +2981,9 @@ function renderBoard(){
   const world = document.getElementById('boardWorld');
   world.innerHTML='';
   renderZones(); // rendered first so they sit visually behind pieces/tokens
+  renderBoardTabs();
   state.pieces.forEach(p=>{
+    if(!onCurrentTab(p)) return; // another tab's piece
     // A single card currently tucked into a splayed pile's fan as a live
     // preview (see setSplayPreview/driveWholePieceDrag) isn't rendered as its
     // own floating piece at all while that's true — it's shown for real
@@ -3223,25 +3277,28 @@ function renderBoard(){
   refreshStackPerimeter();
   renderTokens();
   renderPlayerCounters();
-  document.getElementById('boardEmptyHint').classList.toggle('hidden', state.pieces.size>0 || state.tokens.size>0);
+  document.getElementById('boardEmptyHint').classList.toggle('hidden', [...state.pieces.values()].some(onCurrentTab) || [...state.tokens.values()].some(onCurrentTab));
   if(pileBrowser) renderPileBrowser(); // keep an open search/peek panel in step with its pile
   // Other players' cursors live in #boardWorld too — put them back after the wipe above.
   if(presenceCursors) presenceCursors.forEach(c=>{ if(!c.isConnected) world.appendChild(c); });
 }
 function boardBounds(){
-  if(!state.pieces.size && !state.tokens.size && !state.zones.size) return {minX:-400,minY:-400,maxX:400,maxY:400};
+  const here = o=> onCurrentTab(o);
+  if(![...state.pieces.values()].some(here) && ![...state.tokens.values()].some(here) && ![...state.zones.values()].some(here)) return {minX:-400,minY:-400,maxX:400,maxY:400};
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   state.pieces.forEach(p=>{
+    if(!here(p)) return;
     const b = pieceBounds(p);
     minX=Math.min(minX,b.x); minY=Math.min(minY,b.y);
     maxX=Math.max(maxX,b.x+b.w); maxY=Math.max(maxY,b.y+b.h);
   });
   state.tokens.forEach(t=>{
-    if(t.attachedTo) return; // covered by its host piece's own bounds
+    if(t.attachedTo || !here(t)) return; // attached: covered by its host piece's own bounds
     minX=Math.min(minX,t.x); minY=Math.min(minY,t.y);
     maxX=Math.max(maxX,t.x+44); maxY=Math.max(maxY,t.y+44);
   });
   state.zones.forEach(z=>{
+    if(!here(z)) return;
     minX=Math.min(minX,z.x); minY=Math.min(minY,z.y);
     maxX=Math.max(maxX,z.x+z.w); maxY=Math.max(maxY,z.y+z.h);
   });
@@ -3351,12 +3408,12 @@ function beginBoxSelect(startClientX, startClientY, additive){
   function countInRect(r){
     let n = additive ? totalSelectedCount() : 0;
     state.pieces.forEach(p=>{
-      if(p.locked) return;
+      if(p.locked || !onCurrentTab(p)) return;
       const b = pieceBounds(p); // a left/up-splayed pile's true footprint isn't anchored at p.x/p.y — see pieceBounds
       if(b.x < r.x+r.w && b.x+b.w > r.x && b.y < r.y+r.h && b.y+b.h > r.y && !(additive && state.selectedIds.has(p.id))) n++;
     });
     state.tokens.forEach(t=>{
-      if(t.attachedTo) return;
+      if(t.attachedTo || !onCurrentTab(t)) return;
       const size = tokenSize(t);
       if(t.x < r.x+r.w && t.x+size > r.x && t.y < r.y+r.h && t.y+size > r.y && !(additive && state.selectedTokenIds.has(t.id))) n++;
     });
@@ -3394,7 +3451,7 @@ function beginBoxSelect(startClientX, startClientY, additive){
     const tokenIds = additive ? new Set(state.selectedTokenIds) : new Set();
     const newPieceIds = [], newTokenIds = [];
     state.pieces.forEach(p=>{
-      if(p.locked) return; // never selectable — see the feature comment above
+      if(p.locked || !onCurrentTab(p)) return; // never selectable — see the feature comment above
       const b = pieceBounds(p); // a left/up-splayed pile's true footprint isn't anchored at p.x/p.y — see pieceBounds
       if(b.x < r.x+r.w && b.x+b.w > r.x && b.y < r.y+r.h && b.y+b.h > r.y){
         if(!ids.has(p.id)) newPieceIds.push(p.id);
@@ -3402,7 +3459,7 @@ function beginBoxSelect(startClientX, startClientY, additive){
       }
     });
     state.tokens.forEach(t=>{
-      if(t.attachedTo) return; // rides its host piece's corner — not independently selectable
+      if(t.attachedTo || !onCurrentTab(t)) return; // rides its host piece — not independently selectable
       const size = tokenSize(t);
       if(t.x < r.x+r.w && t.x+size > r.x && t.y < r.y+r.h && t.y+size > r.y){
         if(!tokenIds.has(t.id)) newTokenIds.push(t.id);
@@ -3706,6 +3763,9 @@ function beginPeelAsPiece(p, cardIndex, clientX, clientY){
 // single-card/image piece, and a drag from the "move whole stack" handle on a
 // multi-card pile) — snap, merge-check, sync, and undo, all in one place.
 function finishWholeMove(p, startX, startY, clientX, clientY){
+  // Dropped on another tab's name: it moves to that tab, keeping its spot.
+  const toTab = tabAtPoint(clientX, clientY);
+  if(toTab){ p.x = startX; p.y = startY; moveObjectsToTab([{kind:'piece', id:p.id}], toTab); renderBoard(); return; }
   // A whole stack (2+ cards) only ever lands ON TOP of another pile — see stackDropTarget.
   if(p.kind!=='image' && p.cardIds.length>1){
     const stackTarget = stackDropTarget(p);
@@ -4052,6 +4112,14 @@ function beginGroupDrag(anchor, downEvent){
       }
       return;
     }
+    const toTab = tabAtPoint(ev.clientX, ev.clientY);
+    if(toTab){
+      // The whole selection goes to that tab, each keeping its spot.
+      startPositions.forEach(sp=>{ const m = (sp.kind==='piece' ? state.pieces : state.tokens).get(sp.id); if(m){ m.x = sp.x; m.y = sp.y; } });
+      moveObjectsToTab(startPositions.map(sp=>({kind:sp.kind, id:sp.id})), toTab);
+      renderBoard();
+      return;
+    }
     const d = screenDeltaToWorldDelta(ev.clientX-startClientX, ev.clientY-startClientY);
     startPositions.forEach(sp=>{
       if(sp.kind==='piece'){
@@ -4091,7 +4159,7 @@ function findOverlapTarget(draggedPiece, clientX, clientY){
 }
 function findPileAtWorld(worldX, worldY, excludeId){
   for(const p of state.pieces.values()){
-    if(p.id===excludeId || p.kind==='image') continue; // custom images are never a merge target
+    if(p.id===excludeId || p.kind==='image' || !onCurrentTab(p)) continue; // custom images are never a merge target
     const b = pieceBounds(p);
     if(worldX>=b.x && worldX<=b.x+b.w && worldY>=b.y && worldY<=b.y+b.h) return p;
   }
@@ -4122,7 +4190,7 @@ function findSingleCardTuckTarget(draggedPiece){
   const db = pieceBounds(draggedPiece);
   let best = null, bestDist = Infinity;
   state.pieces.forEach(p=>{
-    if(p.id===draggedPiece.id || p.kind==='image') return;
+    if(p.id===draggedPiece.id || p.kind==='image' || !onCurrentTab(p)) return;
     if(p.splayed || p.cardIds.length!==1) return; // only a lone unsplayed single card is a tuck target
     const b = pieceBounds(p);
     const touching = db.x < b.x+b.w && db.x+db.w > b.x && db.y < b.y+b.h && db.y+db.h > b.y;
@@ -5665,6 +5733,7 @@ function setPieceLabel(pieceId){
    ========================================================================= */
 function focusOnPiece(pieceId){
   const p = state.pieces.get(pieceId); if(!p) return;
+  if(!onCurrentTab(p)) switchTab(p.tab||'main'); // it's on another tab — go there first
   const vp = document.getElementById('boardViewport');
   if(state.view.scale<0.3) state.view.scale = 0.6; // pull out of "see everything" scale into something legible
   const cx = p.x + pieceW(p)/2, cy = p.y + pieceH(p)/2;
@@ -5677,7 +5746,7 @@ document.getElementById('btnFocus').addEventListener('click', (e)=>{
   const menu = document.getElementById('focusMenu');
   const labeled = [...state.pieces.values()].filter(p=>p.label);
   menu.innerHTML = labeled.length
-    ? labeled.map(p=>`<div class="focus-item" data-id="${p.id}">${escapeHtml(p.label)}</div>`).join('')
+    ? labeled.map(p=>`<div class="focus-item" data-id="${p.id}">${escapeHtml(p.label)}${state.tabs.length>1 && !onCurrentTab(p) ? ` <span style="color:var(--text-soft);font-size:11px;">· ${escapeHtml(tabName(p.tab||'main'))}</span>` : ''}</div>`).join('')
     : `<div class="focus-item" style="color:var(--text-soft);cursor:default;">No labeled piles yet</div>`;
   menu.querySelectorAll('[data-id]').forEach(el=> el.addEventListener('click', ()=>{ focusOnPiece(el.dataset.id); menu.classList.add('hidden'); }));
   const willShow = menu.classList.contains('hidden');
@@ -5899,6 +5968,7 @@ function renderTokens(){
   const world = document.getElementById('boardWorld');
   state.tokens.forEach(t=>{
     if(t.attachedTo && state.pieces.has(t.attachedTo)) return; // shown as a chip in its card's label instead (attachedTokenChipsHtml)
+    if(!onCurrentTab(t)) return; // another tab's token
     const el = document.createElement('div');
     el.dataset.id = t.id;
     const pos = tokenRenderPos(t);
@@ -5991,7 +6061,7 @@ function endTokenHotkeyRun(){
 function findTokenMergeTarget(draggedToken, worldX, worldY){
   for(const t of state.tokens.values()){
     if(t.id===draggedToken.id || t.type!==draggedToken.type) continue;
-    if(t.attachedTo) continue; // tokens on a card live in its label — dropping onto the card joins them (see landTokenAt)
+    if(t.attachedTo || !onCurrentTab(t)) continue; // tokens on a card live in its label — dropping onto the card joins them (see landTokenAt)
     const pos = tokenRenderPos(t);
     const size = tokenSize(t);
     if(worldX>=pos.x && worldX<=pos.x+size && worldY>=pos.y && worldY<=pos.y+size) return t;
@@ -6090,6 +6160,8 @@ function wireLabelTokenChip(chip, t){
       if(ghost){ ghost.remove(); ghost = null; }
       clearTokenMergeHighlight(); clearTokenHandHover();
       if(isOverHandPanel(ev.clientX, ev.clientY) && t.count>0){ sendTokenToHand(t.id, t.count); return; }
+      const toTab = tabAtPoint(ev.clientX, ev.clientY);
+      if(toTab){ moveObjectsToTab([{kind:'token', id:t.id}], toTab); renderBoard(); return; }
       const w = clientToWorld(ev.clientX, ev.clientY);
       landTokenAt(t, w.x-22, w.y-22);
     },
@@ -6152,6 +6224,8 @@ function wireTokenDrag(el, t){
       removeDragGhost(ghost); ghost=null;
       clearTokenMergeHighlight(); clearTokenHandHover();
       if(isOverHandPanel(ev.clientX, ev.clientY) && t.count>0){ sendTokenToHand(t.id, t.count); return; }
+      const toTab = tabAtPoint(ev.clientX, ev.clientY);
+      if(toTab){ moveObjectsToTab([{kind:'token', id:t.id}], toTab); renderBoard(); return; }
       finishWholeTokenMove(t, dx, dy);
     },
   });
@@ -6179,6 +6253,8 @@ function wireTokenGroupHandleDrag(handleEl, t){
       removeDragGhost(ghost); ghost=null;
       clearTokenMergeHighlight(); clearTokenHandHover();
       if(isOverHandPanel(ev.clientX, ev.clientY) && t.count>0){ sendTokenToHand(t.id, t.count); return; } // the whole stack goes in
+      const toTab = tabAtPoint(ev.clientX, ev.clientY);
+      if(toTab){ moveObjectsToTab([{kind:'token', id:t.id}], toTab); renderBoard(); return; }
       finishWholeTokenMove(t, dx, dy);
     },
   });
@@ -6208,6 +6284,16 @@ function wireTokenPeelInteraction(faceEl, t){
       removeDragGhost(ghost); ghost=null;
       clearTokenMergeHighlight(); clearTokenHandHover();
       if(isOverHandPanel(ev.clientX, ev.clientY) && t.count>1){ sendTokenToHand(t.id, 1); return; } // peeling puts just one in
+      const toTab = tabAtPoint(ev.clientX, ev.clientY);
+      if(toTab && t.count>1){
+        // One token peeled off onto another tab: it appears there beside where this stack is.
+        const old = t.count, nid = newTokenId();
+        doAction('SET_TOKEN_COUNT', {id:t.id, count:old-1});
+        doAction('PLACE_TOKEN', {id:nid, x:t.x+50, y:t.y, type:t.type, count:1, attachedTo:null, tab:toTab});
+        setUndo(()=>{ doAction('REMOVE_TOKEN', {id:nid}); doAction('SET_TOKEN_COUNT', {id:t.id, count:old}); });
+        toast(`Moved to "${tabName(toTab)}"`);
+        return;
+      }
       const target = peelTokenTarget(t, clientToWorld(ev.clientX, ev.clientY));
       if(target) peelTokenOntoStack(t.id, target.id);
       else peelTokenToBoard(t.id, ev.clientX, ev.clientY);
@@ -6281,6 +6367,7 @@ function peelTokenOntoStack(sourceId, targetId){
 }
 function findPieceAtPoint(worldX, worldY){
   for(const p of state.pieces.values()){
+    if(!onCurrentTab(p)) continue;
     const b = pieceBounds(p);
     if(worldX>=b.x && worldX<=b.x+b.w && worldY>=b.y && worldY<=b.y+b.h) return p;
   }
@@ -6388,7 +6475,7 @@ function clientToWorld(clientX, clientY){
 // (w,h) whose CENTER is being tested for containment — into or out of that zone.
 function applyZoneSnap(x, y, w, h){
   state.zones.forEach(z=>{
-    if(!z.snapMode || z.snapMode==='none') return;
+    if(!z.snapMode || z.snapMode==='none' || !onCurrentTab(z)) return;
     const cx = x+w/2, cy = y+h/2;
     const inside = cx>=z.x && cx<=z.x+z.w && cy>=z.y && cy<=z.y+z.h;
     if(!inside) return;
@@ -6410,6 +6497,7 @@ const ZONE_DEFAULT_OPACITY = 0.28; // fill opacity for zones made before opacity
 function renderZones(){
   const world = document.getElementById('boardWorld');
   state.zones.forEach(z=>{
+    if(!onCurrentTab(z)) return; // another tab's zone
     const el = document.createElement('div');
     const editing = state.editingZoneId===z.id;
     el.className = 'zone' + (editing?' zone-editable':'');
@@ -6471,9 +6559,11 @@ function wireZoneDrag(el, z){
       updateDragGhost(ghost, z.x, z.y, z.w, z.h);
     },
     onContext: (e)=> enterZoneEdit(z.id, e.clientX, e.clientY),
-    onDrop: ()=>{
+    onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
       if(!canDrag) return;
+      const toTab = tabAtPoint(ev.clientX, ev.clientY);
+      if(toTab){ z.x = startX; z.y = startY; exitZoneEdit(); moveObjectsToTab([{kind:'zone', id:z.id}], toTab); renderBoard(); return; }
       doAction('SET_ZONE_RECT', {id:z.id, x:z.x, y:z.y, w:z.w, h:z.h});
       setUndo(()=> doAction('SET_ZONE_RECT', {id:z.id, x:startX, y:startY, w:z.w, h:z.h}));
     },
@@ -6849,6 +6939,7 @@ function leaveGame(){
   state.tokenTypes.clear();
   state.tokenTypeStyles.clear();
   state.zones.clear();
+  state.tabs = [{id:'main', name:'Table'}]; state.currentTab = 'main';
   state.theme = { boardColor:'#1a1c22', handColor:'#1c1f26' };
   applyBoardTheme(state.theme);
   state.hand = [];
@@ -7061,6 +7152,115 @@ function playHandCardToBoard(pick, clientX, clientY){
 }
 
 /* =========================================================================
+   TABS — a board can have several tabs. Everything on the board (piece,
+   token, zone) belongs to one tab (`.tab`, default 'main') and only shows
+   while you're viewing that tab. The list of tabs is shared; which tab you're
+   looking at is just yours. Drag anything onto a tab's name to move it there.
+   Click to switch, double-click to rename, right-click for rename/delete.
+   ========================================================================= */
+function onCurrentTab(o){ return ((o && o.tab) || 'main') === state.currentTab; }
+function tabName(id){ const t = state.tabs.find(t=>t.id===id); return t ? t.name : 'Table'; }
+function tabIsEmpty(id){
+  const on = o=> (o.tab||'main')===id;
+  return ![...state.pieces.values()].some(on) && ![...state.tokens.values()].some(on) && ![...state.zones.values()].some(on);
+}
+var renamingTabId = null; // var (hoisted): renderBoard, defined earlier, reads it via renderBoardTabs
+function renderBoardTabs(){
+  const bar = document.getElementById('boardTabs'); if(!bar) return;
+  if(renamingTabId) return; // don't wipe the rename box mid-typing
+  bar.innerHTML = state.tabs.map(t=>`<div class="board-tab${t.id===state.currentTab?' active':''}" data-tab="${escapeHtml(t.id)}" title="Click to view · double-click to rename · drag things here to move them">${escapeHtml(t.name)}</div>`).join('')
+    + `<div class="board-tab board-tab-add" id="btnAddTab" title="Add a tab">+</div>`;
+  bar.querySelectorAll('.board-tab[data-tab]').forEach(el=>{
+    const id = el.dataset.tab;
+    el.addEventListener('click', ()=> switchTab(id));
+    el.addEventListener('dblclick', ()=> startRenameTab(id));
+    el.addEventListener('contextmenu', (e)=>{
+      e.preventDefault(); e.stopPropagation();
+      openRadialMenu(()=> [
+        {icon:'✎', label:'Rename', action:()=>{ closeRadialMenu(); startRenameTab(id); }},
+        ...(id==='main' ? [] : [{icon:'🗑', label:'Delete', action:()=>{ closeRadialMenu(); deleteTab(id); }}]),
+      ], e.clientX, e.clientY);
+    });
+  });
+  document.getElementById('btnAddTab').addEventListener('click', addTab);
+}
+function switchTab(id){
+  if(id===state.currentTab) return;
+  state.currentTab = id;
+  clearSelection(); exitZoneEdit(); closePileBrowser();
+  renderBoard();
+}
+function addTab(){
+  const id = 'tab-' + randomId(8);
+  let n = state.tabs.length + 1, name = 'Tab ' + n;
+  while(state.tabs.some(t=>t.name===name)) name = 'Tab ' + (++n);
+  doAction('ADD_TAB', {id, name});
+  setUndo(()=>{ if(tabIsEmpty(id)) doAction('REMOVE_TAB', {id}); });
+  switchTab(id);
+  startRenameTab(id);
+}
+function startRenameTab(id){
+  const el = document.querySelector(`.board-tab[data-tab="${CSS.escape(id)}"]`); if(!el) return;
+  const t = state.tabs.find(t=>t.id===id); if(!t) return;
+  renamingTabId = id;
+  el.innerHTML = `<input type="text" maxlength="30" value="${escapeHtml(t.name)}">`;
+  const input = el.querySelector('input');
+  input.focus(); input.select();
+  const finish = (save)=>{
+    if(renamingTabId!==id) return;
+    renamingTabId = null;
+    const name = input.value.trim();
+    if(save && name && name!==t.name){ const oldName = t.name; doAction('RENAME_TAB', {id, name}); setUndo(()=> doAction('RENAME_TAB', {id, name:oldName})); }
+    renderBoardTabs();
+  };
+  input.addEventListener('keydown', (e)=>{ if(e.key==='Enter') finish(true); else if(e.key==='Escape') finish(false); e.stopPropagation(); });
+  input.addEventListener('blur', ()=> finish(true));
+  input.addEventListener('mousedown', e=> e.stopPropagation());
+}
+function deleteTab(id){
+  if(id==='main') return;
+  if(!tabIsEmpty(id)){ toast(`"${tabName(id)}" still has things on it — move or remove them first.`); return; }
+  const t = state.tabs.find(t=>t.id===id); if(!t) return;
+  doAction('REMOVE_TAB', {id});
+  setUndo(()=> doAction('ADD_TAB', {id:t.id, name:t.name}));
+}
+// The OTHER tab (if any) under a screen point — where a drag is being dropped.
+function tabAtPoint(x, y){
+  const el = document.elementFromPoint(x, y);
+  const tab = el && el.closest && el.closest('.board-tab[data-tab]');
+  return tab && tab.dataset.tab!==state.currentTab ? tab.dataset.tab : null;
+}
+// Light up whichever tab a drag is hovering.
+window.addEventListener('mousemove', (e)=>{
+  const target = pointerDragging ? tabAtPoint(e.clientX, e.clientY) : null;
+  document.querySelectorAll('.board-tab.drop-hover').forEach(el=>{ if(el.dataset.tab!==target) el.classList.remove('drop-hover'); });
+  if(target){ const el = document.querySelector(`.board-tab[data-tab="${CSS.escape(target)}"]`); if(el) el.classList.add('drop-hover'); }
+});
+window.addEventListener('mouseup', ()=> document.querySelectorAll('.board-tab.drop-hover').forEach(el=>el.classList.remove('drop-hover')));
+// Moves one or more objects ([{kind, id}]) to another tab, as one undo step.
+function moveObjectsToTab(objs, tab){
+  const olds = objs.map(o=>{
+    const m = o.kind==='piece' ? state.pieces : o.kind==='token' ? state.tokens : state.zones;
+    const obj = m.get(o.id);
+    return obj ? {...o, tab:obj.tab||'main', attachedTo:obj.attachedTo, x:obj.x, y:obj.y} : null;
+  }).filter(Boolean);
+  if(!olds.length) return;
+  olds.forEach(o=>{
+    // A token riding a card leaves that card when it's sent to another tab.
+    if(o.kind==='token' && o.attachedTo){
+      const host = state.pieces.get(o.attachedTo);
+      doAction('MOVE_TOKEN', {id:o.id, x:host ? host.x+PIECE_W-22 : o.x, y:host ? host.y-22 : o.y, attachedTo:null});
+    }
+    doAction('SET_TAB', {kind:o.kind, id:o.id, tab});
+  });
+  setUndo(()=> olds.forEach(o=>{
+    doAction('SET_TAB', {kind:o.kind, id:o.id, tab:o.tab});
+    if(o.kind==='token' && o.attachedTo) doAction('MOVE_TOKEN', {id:o.id, x:o.x, y:o.y, attachedTo:o.attachedTo});
+  }));
+  toast(`Moved to "${tabName(tab)}"`);
+}
+
+/* =========================================================================
    TOKENS IN HAND — drop a board token (a whole stack, or one peeled token)
    onto your hand and it goes into a small tray at the left of the hand area;
    drag one back out onto the board to play it. How many of each type every
@@ -7219,6 +7419,7 @@ function exportLayout(){
     theme: { ...state.theme },
     tokenTypes: [...state.tokenTypes.entries()],
     tokenTypeStyles: [...state.tokenTypeStyles.entries()],
+    tabs: state.tabs.map(t=>({...t})),
     zones: [...state.zones.values()],
     pieces: [...state.pieces.values()],
     tokens: [...state.tokens.values()],
@@ -7254,6 +7455,7 @@ document.getElementById('layoutFileInput').addEventListener('change', (e)=>{
         theme: json.theme||null,
         tokenTypes: json.tokenTypes||[],
         tokenTypeStyles: json.tokenTypeStyles||[],
+        tabs: json.tabs||null,
         zones: json.zones||[],
         pieces: json.pieces||[],
         tokens: json.tokens||[],
