@@ -1556,6 +1556,23 @@ function doNote(text){
   announceLocalAction('NOTE', {text});
 }
 
+/* ROTATION MODEL — a card's on-screen angle (before the board view's own
+   rotation) is ALWAYS its pile's `rotation` plus that card's entry in the
+   pile's `cardRotations`, in every render path (unsplayed, splayed, splay
+   previews). A lone card keeps all of its angle in `rotation` with
+   cardRotations [0] (see normalizeSingleCardRotation), and whenever a card
+   changes piles its absolute angle is preserved (absCardRotation/
+   relCardRotation). Previously the two were combined differently in
+   different places, so a card could carry a hidden leftover rotation that
+   suddenly showed up — e.g. while hovering one card over another. */
+function normAngle(deg){ return ((Math.round(deg) % 360) + 360) % 360; }
+function absCardRotation(p, i){ return normAngle((p.rotation||0) + ((p.cardRotations||[])[i]||0)); }
+function relCardRotation(targetPiece, absDeg){ return normAngle(absDeg - (targetPiece.rotation||0)); }
+function normalizeSingleCardRotation(p){
+  if(!p || p.kind==='image' || !p.cardIds || p.cardIds.length!==1) return;
+  p.rotation = absCardRotation(p, 0);
+  p.cardRotations = [0];
+}
 function setPieceCards(id, cardIds, faceStates, cardRotations){
   const p = state.pieces.get(id);
   if(!p) return;
@@ -1579,6 +1596,7 @@ function setPieceCards(id, cardIds, faceStates, cardRotations){
   // does, or every card would silently reset to upright. Falls back to all-
   // upright only when the caller genuinely has nothing to say about it.
   p.cardRotations = cardRotations || cardIds.map(()=>0);
+  normalizeSingleCardRotation(p); // a lone leftover card folds its own angle into the piece's
 }
 
 // The single place board state actually changes — used for both our own actions
@@ -1621,6 +1639,10 @@ function applyRoomEvent(type, payload){
         cardRotations: payload.cardRotations || (payload.cardIds||[]).map(()=>0),
         owner:payload.owner, splayed:false, splayDir:'right', splaySpacing:36, label:payload.label||'', rotation:payload.rotation||0, locked:payload.locked||false,
         kind:payload.kind||'cards', imageUrl:payload.imageUrl||null, w:payload.w||null, h:payload.h||null, naturalW:payload.naturalW||null, naturalH:payload.naturalH||null });
+      // A lone card's angle lives entirely in `rotation` (see ROTATION MODEL).
+      // Older versions sent the same angle in both fields; what showed was
+      // `rotation`, so that's what's kept.
+      { const np = state.pieces.get(payload.id); if(np.cardIds.length===1) np.cardRotations = [0]; }
       if(payload.sourceSheets && payload.sourceSheets.length){
         // fire-and-forget: this piece renders with "Access Pending" faces until
         // whichever sheets it needs finish loading, then a re-render picks up
@@ -1816,7 +1838,7 @@ function applyRoomEvent(type, payload){
       state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear();
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
       (payload.zones||[]).forEach(z=> state.zones.set(z.id, {...z}));
-      (payload.pieces||[]).forEach(p=> state.pieces.set(p.id, {...p}));
+      (payload.pieces||[]).forEach(p=>{ const np = {...p}; if(np.cardIds && np.cardIds.length===1) np.cardRotations = [0]; state.pieces.set(p.id, np); }); // see ROTATION MODEL
       (payload.tokens||[]).forEach(t=> state.tokens.set(t.id, {...t}));
       if(payload.theme){ state.theme = {...payload.theme}; applyBoardTheme(state.theme); }
       if(payload.sourceSheets && payload.sourceSheets.length){
@@ -1897,7 +1919,7 @@ function applyRoomEvent(type, payload){
       state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear();
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
       (payload.zones||[]).forEach(z=> state.zones.set(z.id, {...z}));
-      (payload.pieces||[]).forEach(p=> state.pieces.set(p.id, {...p}));
+      (payload.pieces||[]).forEach(p=>{ const np = {...p}; if(np.cardIds && np.cardIds.length===1) np.cardRotations = [0]; state.pieces.set(p.id, np); }); // see ROTATION MODEL
       (payload.tokens||[]).forEach(t=> state.tokens.set(t.id, {...t}));
       if(payload.theme){ state.theme = {...payload.theme}; applyBoardTheme(state.theme); }
       if(payload.players) payload.players.forEach(([pid,name])=> state.players.set(pid, name));
@@ -1964,6 +1986,7 @@ function flipPopEl(pieceId, cardIndex, oldFaceHtml){
     baseRotation = (p.cardRotations && p.cardRotations[cardIndex]) || 0;
   } else {
     el = document.querySelector(`.piece[data-id="${pieceId}"] .piece-face`);
+    baseRotation = (p.cardRotations && p.cardRotations[p.cardIds.length-1]) || 0; // an unsplayed pile's top card can carry its own angle — see ROTATION MODEL
   }
   if(!el || !el.animate) return;
   // renderBoard() already drew the NEW face into el by the time this runs
@@ -3033,8 +3056,12 @@ function renderBoard(){
       el.style.width = PIECE_W+'px';
       el.style.height = PIECE_H+'px';
       const isStack = p.cardIds.length>1;
+      // The top card's own angle within the pile (see ROTATION MODEL) — only
+      // ever nonzero for a multi-card pile, e.g. one rotated while splayed.
+      const topRot = (p.cardRotations||[])[p.cardIds.length-1]||0;
+      if(topRot % 180) badgeAnchor = {x:(PIECE_W-PIECE_H)/2, y:(PIECE_H-PIECE_W)/2, w:PIECE_H, h:PIECE_W};
       el.innerHTML = `
-        <div class="piece-face">${pieceFaceHtml(p)}</div>
+        <div class="piece-face"${topRot ? ` style="transform:rotate(${topRot}deg)"` : ''}>${pieceFaceHtml(p)}</div>
         ${isStack
           ? `<div class="piece-label stack-handle" title="Drag to move the whole stack">${pieceLabelText(p)}</div>`
           : (p.label ? `<div class="piece-label">${escapeHtml(p.label)}</div>` : '')}
@@ -3481,7 +3508,7 @@ function beginPeelAsPiece(p, cardIndex, clientX, clientY){
   // has to read p.rotation instead, or a card rotated as part of a rigid
   // unsplayed stack would visually snap back to upright the instant it's
   // peeled off.
-  const cardRotation = p.splayed ? (cardRotations[cardIndex] || 0) : (p.rotation || 0);
+  const cardRotation = absCardRotation(p, cardIndex); // the angle it's showing right now — see ROTATION MODEL
   const remainingCardIds = p.cardIds.filter((_,i)=>i!==cardIndex);
   const remainingFaceStates = p.faceStates.filter((_,i)=>i!==cardIndex);
   const remainingCardRotations = cardRotations.filter((_,i)=>i!==cardIndex);
@@ -3491,7 +3518,7 @@ function beginPeelAsPiece(p, cardIndex, clientX, clientY){
   const world = clientToWorld(clientX, clientY);
   const x = snapCoord(world.x - PIECE_W/2), y = snapCoord(world.y - PIECE_H/2);
   const newId = newPieceId();
-  doAction('PLACE_PIECE', { id:newId, x, y, cardIds:[cardId], faceStates:[faceUp], cardRotations:[cardRotation], rotation:cardRotation, owner:state.playerId });
+  doAction('PLACE_PIECE', { id:newId, x, y, cardIds:[cardId], faceStates:[faceUp], cardRotations:[0], rotation:cardRotation, owner:state.playerId });
   const newPiece = state.pieces.get(newId);
   if(!newPiece) return null;
   return {
@@ -3617,7 +3644,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
     // Keyed off the dragged piece's OWN board position (p.x/p.y, already
     // updated above this tick), not the cursor — see splayInsertIndex.
     const insertIndex = splayInsertIndex(splayTarget, p.x, p.y);
-    setSplayPreview(splayTarget.id, insertIndex, {sourceId:p.id, cardId:p.cardIds[0], faceUp:p.faceStates[0], rotation:p.rotation||0});
+    setSplayPreview(splayTarget.id, insertIndex, {sourceId:p.id, cardId:p.cardIds[0], faceUp:p.faceStates[0], rotation:relCardRotation(splayTarget, absCardRotation(p, 0))});
     if(ctx.ghost){ removeDragGhost(ctx.ghost); ctx.ghost=null; }
     ctx.el = null;
     ctx.tucked = true;
@@ -3630,7 +3657,7 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
     // index 0 (the target is always the anchor here, see
     // singleOverSingleSplayPreview's own comment).
     clearMergeHighlight();
-    setSplayPreview(target.id, 0, {sourceId:p.id, cardId:p.cardIds[0], faceUp:p.faceStates[0], rotation:p.rotation||0}, newSplay);
+    setSplayPreview(target.id, 0, {sourceId:p.id, cardId:p.cardIds[0], faceUp:p.faceStates[0], rotation:relCardRotation(target, absCardRotation(p, 0))}, newSplay);
     if(ctx.ghost){ removeDragGhost(ctx.ghost); ctx.ghost=null; }
     ctx.el = null;
     ctx.tucked = true;
@@ -4363,7 +4390,7 @@ function mergePieceOntoTarget(sourceId, targetId, insertIndex, splayInfo){
   // cardRotations of its own yet, so its piece-level `rotation` is used instead.
   const cardIds = [...target.cardIds.slice(0,idx), ...source.cardIds, ...target.cardIds.slice(idx)];
   const faceStates = [...target.faceStates.slice(0,idx), ...source.faceStates, ...target.faceStates.slice(idx)];
-  const sourceRotations = source.cardRotations || source.cardIds.map(()=> source.rotation||0);
+  const sourceRotations = source.cardIds.map((_,i)=> relCardRotation(target, absCardRotation(source, i))); // each card keeps the angle it's showing — see ROTATION MODEL
   const cardRotations = [...targetOldCardRotations.slice(0,idx), ...sourceRotations, ...targetOldCardRotations.slice(idx)];
   const splay = splayInfo ? { dir: splayInfo.dir, spacing: Math.max(SPLAY_MIN, splayInfo.spacing) } : null;
   doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: source.id, splay });
@@ -5019,6 +5046,7 @@ function drawTopCard(pieceId, destination, cardIndex){
   const idx = cardIndex!=null ? cardIndex : p.cardIds.length-1;
   if(idx<0 || idx>=p.cardIds.length) return;
   const cardId = p.cardIds[idx];
+  const drawnAngle = absCardRotation(p, idx); // captured before DRAW_TOP rewrites p — see ROTATION MODEL
   const cardRotations = p.cardRotations || p.cardIds.map(()=>0);
   const remainingCardIds = p.cardIds.filter((_,i)=>i!==idx);
   const remainingFaceStates = p.faceStates.filter((_,i)=>i!==idx);
@@ -5037,7 +5065,7 @@ function drawTopCard(pieceId, destination, cardIndex){
     });
   } else {
     const newId = newPieceId();
-    doAction('PLACE_PIECE', { id:newId, x:p.x+30, y:p.y+30, cardIds:[cardId], faceStates:[false], owner:state.playerId });
+    doAction('PLACE_PIECE', { id:newId, x:p.x+30, y:p.y+30, cardIds:[cardId], faceStates:[false], rotation:drawnAngle, owner:state.playerId });
     setUndo(()=>{
       doAction('REMOVE_PIECE', {id:newId});
       doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations});
@@ -5085,6 +5113,7 @@ function confirmSearchRemove(destination){
   const originalCardIds = [...p.cardIds], originalFaceStates = [...p.faceStates], originalCardRotations = [...cardRotations];
   const checkedSet = new Set(checked);
   const removedCardIds = checked.map(i=>p.cardIds[i]);
+  const removedAngles = checked.map(i=>absCardRotation(p, i)); // captured before SEARCH_REMOVE rewrites p — see ROTATION MODEL
   const remainingCardIds = p.cardIds.filter((_,i)=>!checkedSet.has(i));
   const remainingFaceStates = p.faceStates.filter((_,i)=>!checkedSet.has(i));
   const remainingCardRotations = cardRotations.filter((_,i)=>!checkedSet.has(i));
@@ -5101,7 +5130,7 @@ function confirmSearchRemove(destination){
     });
   } else {
     const newId = newPieceId();
-    doAction('PLACE_PIECE', { id:newId, x:p.x+40, y:p.y+40, cardIds:removedCardIds, faceStates:removedCardIds.map(()=>true), owner:state.playerId });
+    doAction('PLACE_PIECE', { id:newId, x:p.x+40, y:p.y+40, cardIds:removedCardIds, faceStates:removedCardIds.map(()=>true), cardRotations:removedAngles, owner:state.playerId });
     setUndo(()=>{
       doAction('REMOVE_PIECE', {id:newId});
       doAction('RESTORE_PIECE_CARDS', {id:pieceId, cardIds:originalCardIds, faceStates:originalFaceStates, cardRotations:originalCardRotations});
@@ -6417,11 +6446,11 @@ function wireHandCardDrag(el, idx){
         // land if placed standalone, so its would-be top-left corner is half
         // a card up and to the left of that; splayInsertIndex wants that
         // corner, same as every other caller, not the raw cursor point.
-        setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x-PIECE_W/2, world.y-PIECE_H/2), {sourceId:null, cardId:pick.cardId, faceUp:!pick.faceDown});
+        setSplayPreview(splayTarget.id, splayInsertIndex(splayTarget, world.x-PIECE_W/2, world.y-PIECE_H/2), {sourceId:null, cardId:pick.cardId, faceUp:!pick.faceDown, rotation:relCardRotation(splayTarget, 0)});
         ghost.style.visibility = 'hidden';
       } else if(newSplay){
         clearMergeHighlight();
-        setSplayPreview(target.id, 0, {sourceId:null, cardId:pick.cardId, faceUp:!pick.faceDown}, newSplay);
+        setSplayPreview(target.id, 0, {sourceId:null, cardId:pick.cardId, faceUp:!pick.faceDown, rotation:relCardRotation(target, 0)}, newSplay);
         ghost.style.visibility = 'hidden';
       } else {
         clearSplayPreview();
@@ -6482,7 +6511,7 @@ function playHandCardToBoard(pick, clientX, clientY){
     const cardIds = [...target.cardIds.slice(0,insertIndex), pick.cardId, ...target.cardIds.slice(insertIndex)];
     const faceStates = [...target.faceStates.slice(0,insertIndex), !pick.faceDown, ...target.faceStates.slice(insertIndex)];
     const targetCardRotations = target.cardRotations || target.cardIds.map(()=>0);
-    const cardRotations = [...targetCardRotations.slice(0,insertIndex), 0, ...targetCardRotations.slice(insertIndex)]; // a hand card always plays in upright
+    const cardRotations = [...targetCardRotations.slice(0,insertIndex), relCardRotation(target, 0), ...targetCardRotations.slice(insertIndex)]; // a hand card always plays in upright
     const splay = newSplayInfo ? { dir: newSplayInfo.dir, spacing: Math.max(SPLAY_MIN, newSplayInfo.spacing) } : null;
     doAction('MERGE_PIECES', { intoId: target.id, cardIds, faceStates, cardRotations, removedId: null, splay, fromHand: pick.faceDown ? 'faceDown' : 'faceUp' });
     return;
