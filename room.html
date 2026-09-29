@@ -2570,6 +2570,7 @@ document.getElementById('boardViewport').addEventListener('contextmenu', (e)=>{
 document.addEventListener('keydown', (e)=>{
   if(e.key.toLowerCase()!=='w' || e.ctrlKey || e.metaKey || e.altKey) return;
   if(isTextEntryFocused()) return;
+  if(hoveredTokenId) return; // over a token, W adds one to it instead — see the token hotkeys
   const target = document.elementFromPoint(lastPointer.x, lastPointer.y);
   if(!target || !target.closest('#boardViewport') || target.closest('.board-overlay')) return;
   e.preventDefault();
@@ -4291,7 +4292,8 @@ function showHotkeyHint(el){
 function hideHotkeyHint(){ document.getElementById('hotkeyHint').classList.add('hidden'); }
 document.addEventListener('keydown', (e)=>{
   if(!hoveredPieceId) return;
-  if(activeHandDrag) return; // F flips the card being dragged out of the hand instead — see wireHandCardDrag
+  if(activeHandDrag) return;
+  if(hoveredTokenId) return; // a token sitting on a card gets its own hotkeys (W/S/arrows) // F flips the card being dragged out of the hand instead — see wireHandCardDrag
   if(isTextEntryFocused()) return;
   if(e.ctrlKey || e.metaKey || e.altKey) return; // leave browser shortcuts (copy, reload, …) alone
   const p = state.pieces.get(hoveredPieceId);
@@ -5573,7 +5575,12 @@ function renderTokens(){
     if(t.count!==1) wireTokenPeelInteraction(el, t);
     else wireTokenDrag(el, t);
     el.title = `${t.type} (${t.count})`;
+    // W/↑ and S/↓ adjust whichever token is under the cursor (see the
+    // keydown listener after renderTokens).
+    el.addEventListener('mouseenter', ()=>{ hoveredTokenId = t.id; showTokenHotkeyHint(el); });
+    el.addEventListener('mouseleave', ()=>{ if(hoveredTokenId===t.id){ hoveredTokenId = null; hideHotkeyHint(); } });
     world.appendChild(el);
+    if(hoveredTokenId===t.id) showTokenHotkeyHint(el); // re-anchor after a rebuild, e.g. the count just changed
     // Whichever branch rendered it, the quantity bubble (when present) is
     // ALWAYS also a whole-stack move handle — mirrors a card pile's label
     // handle, since a token has no label of its own to serve that role.
@@ -5581,6 +5588,27 @@ function renderTokens(){
     if(countEl) wireTokenGroupHandleDrag(countEl, t);
   });
 }
+let hoveredTokenId = null;
+function showTokenHotkeyHint(el){
+  const hint = document.getElementById('hotkeyHint');
+  hint.innerHTML = `<div class="hk-item"><kbd>W</kbd>/<kbd>↑</kbd> +1</div><div class="hk-item"><kbd>S</kbd>/<kbd>↓</kbd> −1</div>`;
+  hint.classList.remove('hidden');
+  const r = el.getBoundingClientRect(), h = hint.getBoundingClientRect();
+  let top = r.top - h.height - 8;
+  if(top < 4) top = r.bottom + 8;
+  hint.style.left = Math.max(4, Math.min(r.left + r.width/2 - h.width/2, window.innerWidth - h.width - 4))+'px';
+  hint.style.top = top+'px';
+}
+document.addEventListener('keydown', (e)=>{
+  if(!hoveredTokenId || e.ctrlKey || e.metaKey || e.altKey) return;
+  if(isTextEntryFocused()) return;
+  if(!state.tokens.has(hoveredTokenId)){ hoveredTokenId = null; return; }
+  const k = e.key.toLowerCase();
+  const delta = (k==='w' || k==='arrowup') ? 1 : (k==='s' || k==='arrowdown') ? -1 : 0;
+  if(!delta) return;
+  e.preventDefault(); // arrows would otherwise scroll the page
+  incrementToken(hoveredTokenId, delta);
+});
 // Drop-target detection for combining two token stacks of the SAME type into
 // one (adds their counts) — the token equivalent of findOverlapTarget for
 // cards. Different-typed tokens never combine (a count is only meaningful
@@ -5740,11 +5768,18 @@ function wireTokenPeelInteraction(faceEl, t){
       const world = clientToWorld(ev.clientX, ev.clientY);
       const size = tokenSize(t);
       updateDragGhost(ghost, world.x-size/2, world.y-size/2, size, size);
+      // Hovering another stack of the same type: preview adding the peeled
+      // token to it (same green "+" as a whole-stack merge).
+      const target = peelTokenTarget(t, world);
+      if(target) showTokenMergeHighlight(target.id); else clearTokenMergeHighlight();
     },
     onContext: (e)=> openTokenRadialMenu(t.id, e.clientX, e.clientY),
     onDrop: (dx, dy, ev)=>{
       removeDragGhost(ghost); ghost=null;
-      peelTokenToBoard(t.id, ev.clientX, ev.clientY);
+      clearTokenMergeHighlight();
+      const target = peelTokenTarget(t, clientToWorld(ev.clientX, ev.clientY));
+      if(target) peelTokenOntoStack(t.id, target.id);
+      else peelTokenToBoard(t.id, ev.clientX, ev.clientY);
     },
   });
 }
@@ -5777,6 +5812,26 @@ function peelTokenToBoard(tokenId, clientX, clientY){
     doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount});
   });
 }
+// The same-type stack a peeled token would join if dropped at `world` — only
+// when there's a real token to pull off (count>1; peeling a zero/negative
+// stack just counts it down, see peelTokenToBoard).
+function peelTokenTarget(t, world){
+  const live = state.tokens.get(t.id);
+  if(!live || live.count<=1) return null;
+  return findTokenMergeTarget(live, world.x, world.y);
+}
+// Moves exactly one token from one stack onto another of the same type.
+function peelTokenOntoStack(sourceId, targetId){
+  const source = state.tokens.get(sourceId), target = state.tokens.get(targetId);
+  if(!source || !target || source.count<=1) return;
+  const oldSource = source.count, oldTarget = target.count;
+  doAction('SET_TOKEN_COUNT', {id:sourceId, count:oldSource-1});
+  doAction('SET_TOKEN_COUNT', {id:targetId, count:oldTarget+1});
+  setUndo(()=>{
+    doAction('SET_TOKEN_COUNT', {id:sourceId, count:oldSource});
+    doAction('SET_TOKEN_COUNT', {id:targetId, count:oldTarget});
+  });
+}
 function findPieceAtPoint(worldX, worldY){
   for(const p of state.pieces.values()){
     const b = pieceBounds(p);
@@ -5807,22 +5862,54 @@ function incrementToken(tokenId, delta){
 const TOKEN_INCREMENTS = [1, 3, 5, 10];
 function tokenRadialAngle(half, indexFromLeft){ // half: 'top' or 'bottom'; indexFromLeft: 0..TOKEN_INCREMENTS.length-1
   const n = TOKEN_INCREMENTS.length;
-  const span = Math.PI * (n-1)/(n+1); // leaves a margin at each end so items never land exactly on the 0/π equator
+  const span = Math.PI * (n-1)/(n+3); // leaves room at each end for the items pinned on the 0/π equator (Remove All, Set Value, Detach)
   const start = half==='top' ? (-Math.PI + (Math.PI-span)/2) : ((Math.PI-span)/2);
   return start + indexFromLeft*(span/(n-1));
 }
 function openTokenRadialMenu(tokenId, clientX, clientY){
+  let closed = false; // Set Value swaps the ring for its own little input (see openRadialMenu, which redraws after every action)
   openRadialMenu(()=>{
+    if(closed) return null;
     const t = state.tokens.get(tokenId); if(!t) return null;
     const clone = JSON.parse(JSON.stringify(t)); // PLACE_TOKEN overwrites regardless of whether it currently exists, so one clone covers both "decrement" and "fully removed" undo cases
     const items = [
       ...TOKEN_INCREMENTS.map((n,i)=>({icon:'+'+n, label:'+'+n, angle:tokenRadialAngle('top',i), action:()=>incrementToken(tokenId, n)})),
       ...TOKEN_INCREMENTS.map((n,i)=>({icon:'−'+n, label:'-'+n, angle:tokenRadialAngle('bottom',i), action:()=>incrementToken(tokenId, -n)})),
       {icon:'✕', label:'Remove All', angle:0, action:()=>{ doAction('REMOVE_TOKEN', {id:tokenId}); setUndo(()=> doAction('PLACE_TOKEN', clone)); }},
+      {icon:'#', label:'Set Value', angle: t.attachedTo ? Math.PI-0.45 : Math.PI, action:()=>{ closed = true; openTokenValuePopover(tokenId, clientX, clientY); }},
     ];
-    if(t.attachedTo) items.push({icon:'⤢', label:'Detach', angle:Math.PI, action:()=>{ doAction('MOVE_TOKEN', {id:tokenId, x:t.x, y:t.y, attachedTo:null}); setUndo(()=> doAction('PLACE_TOKEN', clone)); }});
+    if(t.attachedTo) items.push({icon:'⤢', label:'Detach', angle:Math.PI+0.45, action:()=>{ doAction('MOVE_TOKEN', {id:tokenId, x:t.x, y:t.y, attachedTo:null}); setUndo(()=> doAction('PLACE_TOKEN', clone)); }});
     return items;
   }, clientX, clientY);
+}
+// "Set Value": type an exact count for a token (any whole number, including
+// zero or negative — see SET_TOKEN_COUNT). Enter sets it, Escape cancels.
+function openTokenValuePopover(tokenId, clientX, clientY){
+  const t = state.tokens.get(tokenId); if(!t) return;
+  const menu = document.getElementById('tokenMenu');
+  menu.innerHTML = `
+    <div class="popover-row"><label>${escapeHtml(t.type)}</label><input type="number" id="tokenValueInput" value="${t.count}" step="1" style="width:90px;"></div>
+    <div class="popover-actions"><div class="btn btn-accent btn-sm" id="btnSetTokenValue" style="flex:1;justify-content:center;">Set</div></div>
+  `;
+  tokenMenuAnchor = {x:clientX, y:clientY}; tokenPlaceAtWorld = null;
+  menu.classList.remove('hidden');
+  positionMenuNear(menu, tokenMenuAnchorEl());
+  const input = document.getElementById('tokenValueInput');
+  input.focus(); input.select();
+  const apply = ()=>{
+    const value = Math.round(Number(input.value));
+    menu.classList.add('hidden');
+    const live = state.tokens.get(tokenId);
+    if(!live || !Number.isFinite(value) || input.value.trim()==='' || value===live.count) return;
+    const oldCount = live.count;
+    doAction('SET_TOKEN_COUNT', {id:tokenId, count:value});
+    setUndo(()=> doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount}));
+  };
+  document.getElementById('btnSetTokenValue').addEventListener('click', (e)=>{ e.stopPropagation(); apply(); });
+  input.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){ e.preventDefault(); apply(); }
+    else if(e.key==='Escape'){ e.preventDefault(); menu.classList.add('hidden'); }
+  });
 }
 
 /* =========================================================================
