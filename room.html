@@ -461,8 +461,6 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 #hotkeyHint .kb{display:flex;flex-direction:column;gap:3px;}
 #hotkeyHint .kb-row{display:flex;gap:3px;}
 #hotkeyHint .kb-row.r1{margin-left:13px;}
-#hotkeyHint .kb-arrows .kb-row:first-child{margin-left:33px;}
-#hotkeyHint .kb-arrows .kb-row.r1{margin-left:0;}
 #hotkeyHint .kb-key{width:30px;height:30px;border-radius:5px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   background:var(--surface);border:1px solid var(--border);border-bottom-width:2px;color:var(--text-soft);opacity:.45;}
 #hotkeyHint .kb-key b{font-size:10.5px;line-height:1;}
@@ -4367,7 +4365,7 @@ function showHotkeyHint(el){
   const isStack = !!(p && p.kind!=='image' && p.cardIds.length>1);
   const keys = (p && p.kind==='image')
     ? { E:'Turn ↺', R:'Turn ↻', W:'Ping' } // an image piece has no card faces to flip, draw, or peek at
-    : { F:'Flip', E:'Turn ↺', R:'Turn ↻', D:'Draw', P:'Peek', W:'Ping', ...(isStack ? {S:'Shuffle', Q:'Search'} : {}) };
+    : { F:'Flip', E:'Turn ↺', R:'Turn ↻', D:'Draw', A:'Peek', W:'Ping', ...(isStack ? {S:'Shuffle', Q:'Search'} : {}) };
   hint.innerHTML = keyboardHintHtml(keys, perCard ? 'card' : '');
   // Keep clear of the whole pile INCLUDING its label: a 'down' splay docks
   // its label (which carries the card count) above the anchor card, outside
@@ -4399,23 +4397,22 @@ function showHotkeyHint(el){
   hint.style.top = top+'px';
 }
 function hideHotkeyHint(){ document.getElementById('hotkeyHint').classList.add('hidden'); }
-// A little drawing of the keyboard's top two letter rows: keys that do
+// A little drawing of the left-hand keys (Q W E R / A S D F): keys that do
 // something here light up with their action written on them; the rest stay
 // dim, so you can see where each one is. `keys` maps a letter to its action.
 function keyboardHintHtml(keys, note){
-  const rows = ['QWERTYUIOP', 'ASDFGHJKL'];
+  const rows = ['QWER', 'ASDF'];
   const keyHtml = (k, label)=> label
     ? `<div class="kb-key on"><b>${k}</b><span>${escapeHtml(label)}</span></div>`
     : `<div class="kb-key"><b>${k}</b></div>`;
   return `<div class="kb">${rows.map((r,i)=>`<div class="kb-row r${i}">${[...r].map(k=>keyHtml(k, keys[k])).join('')}</div>`).join('')}
-    ${note ? `<div class="kb-note">Flip, Turn, Draw and Peek act on the ${escapeHtml(note)} under the cursor</div>` : ''}</div>`;
+    ${note ? `<div class="kb-note">Flip, Turn, Draw, Peek:<br>the ${escapeHtml(note)} under the cursor</div>` : ''}</div>`;
 }
-// Token version: W/S in their spots, the arrow keys, and the mouse wheel.
+// Token version: W/S in their spots, and the mouse wheel.
 function tokenKeyboardHintHtml(){
   const k = (key, label)=> `<div class="kb-key${label?' on':''}"><b>${key}</b>${label?`<span>${label}</span>`:''}</div>`;
   return `<div class="kb-wrap">
     <div class="kb"><div class="kb-row">${k('Q')}${k('W','+1')}${k('E')}</div><div class="kb-row r1">${k('A')}${k('S','−1')}${k('D')}</div></div>
-    <div class="kb kb-arrows"><div class="kb-row">${k('↑','+1')}</div><div class="kb-row">${k('←')}${k('↓','−1')}${k('→')}</div></div>
     <div class="kb-mouse"><svg width="26" height="38" viewBox="0 0 26 38" aria-hidden="true">
       <rect x="1.5" y="1.5" width="23" height="35" rx="11.5" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".55"/>
       <line x1="13" y1="1.5" x2="13" y2="15" stroke="currentColor" stroke-width="1.2" opacity=".35"/>
@@ -4451,9 +4448,9 @@ document.addEventListener('keydown', (e)=>{
   if(rotateDir){ e.preventDefault(); rotatePiece(hoveredPieceId, rotateDir); }
   else if(p.kind!=='image' && key==='f'){ e.preventDefault(); flipTopCard(hoveredPieceId, cardIdx); }
   else if(p.kind!=='image' && key==='d'){ e.preventDefault(); drawTopCard(hoveredPieceId, 'hand', cardIdx); }
-  // P peeks at whichever card is under the cursor (the pile's own top card
+  // A peeks at whichever card is under the cursor (the pile's own top card
   // by default, or the specific splay card being hovered).
-  else if(p.kind!=='image' && key==='p'){ e.preventDefault(); peekTopCard(hoveredPieceId, cardIdx); }
+  else if(p.kind!=='image' && key==='a'){ e.preventDefault(); peekTopCard(hoveredPieceId, cardIdx); }
 });
 // Escape clears the current multi-selection — a quick, always-available "never
 // mind" independent of hovering anything in particular (unlike the R/F/D/P
@@ -5738,9 +5735,9 @@ document.addEventListener('keydown', (e)=>{
   if(isTextEntryFocused()) return;
   if(!state.tokens.has(hoveredTokenId)){ hoveredTokenId = null; return; }
   const k = e.key.toLowerCase();
-  const delta = (k==='w' || k==='arrowup') ? 1 : (k==='s' || k==='arrowdown') ? -1 : 0;
+  const delta = k==='w' ? 1 : k==='s' ? -1 : 0;
   if(!delta) return;
-  e.preventDefault(); // arrows would otherwise scroll the page
+  e.preventDefault();
   hotkeyAdjustToken(hoveredTokenId, delta);
 });
 // Hotkey changes sync live but quietly (no chat line per press); when the
