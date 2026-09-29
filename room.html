@@ -4477,6 +4477,7 @@ function wireHotkeyHint(el, pieceId){
   });
 }
 function showHotkeyHint(el){
+  if(pointerDragging) return; // no reminders while moving things (see pointerDragging)
   const hint = document.getElementById('hotkeyHint');
   const p = state.pieces.get(el.dataset.id);
   // A splayed multi-card pile means F/R/D all target one specific card (see
@@ -4602,7 +4603,7 @@ let pointerDownAt = null;
 window.addEventListener('mousedown', (e)=>{ pointerDownAt = {x:e.clientX, y:e.clientY}; }, true);
 window.addEventListener('mousemove', (e)=>{
   if(!pointerDownAt || !e.buttons || pointerDragging) return;
-  if(Math.hypot(e.clientX-pointerDownAt.x, e.clientY-pointerDownAt.y) >= DRAG_THRESHOLD){ pointerDragging = true; clearTimeout(hoverTimer); hideHoverPreview(); }
+  if(Math.hypot(e.clientX-pointerDownAt.x, e.clientY-pointerDownAt.y) >= DRAG_THRESHOLD){ pointerDragging = true; clearTimeout(hoverTimer); hideHoverPreview(); hideHotkeyHint(); }
 }, true);
 window.addEventListener('mouseup', ()=>{ pointerDownAt = null; pointerDragging = false; }, true);
 // Draws the top `n` cards of a pile into your hand in one go (fewer if the
@@ -6007,6 +6008,7 @@ function renderTokens(){
 }
 let hoveredTokenId = null;
 function showTokenHotkeyHint(el){
+  if(pointerDragging) return; // no reminders while moving things (see pointerDragging)
   const hint = document.getElementById('hotkeyHint');
   hint.innerHTML = tokenKeyboardHintHtml();
   hint.classList.remove('hidden');
