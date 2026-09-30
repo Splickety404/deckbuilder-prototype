@@ -126,6 +126,7 @@ const OAUTH_CLIENT_ID = '1053912607552-pvrm9heedm4floaohv1olp5k5mdp95lq.apps.goo
 const KNOWN_GAMES = [
   { label: 'Echo of Omens', folderId: '1ohErfjHoaW7rW_MIkdGYMOYLewRilWpg' },
   { label: 'HellBreak', folderId: '1PrpSDlp7i-X0zMkStBD1dv8PWT9xlW28' },
+  { label: 'Test Game', folderId: '1ZuZ84yXYgngVfHAwdALcY0gD4BlRiocQ' }, // for trying out the Card Updater safely
   // { label: 'Some Future Game', folderId: 'paste its Drive folder id here' },
 ];
 
@@ -1023,8 +1024,11 @@ function normalizeHeader(h) {
 // row into CardHistory (tagged archive-reason: "deletion") before removing it from
 // Sheet1, so a deleted card's last-known identity is never actually lost — the
 // deckbuilder can still show players what it used to be.
-function getOrCreateHistorySheet(currentHeaders) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+// `ss` defaults to the spreadsheet this script is attached to (the Echo of
+// Omens card library); the Card Updater passes each set's own spreadsheet so
+// its history lives with that set.
+function getOrCreateHistorySheet(currentHeaders, ss) {
+  ss = ss || SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(HISTORY_SHEET_NAME);
   if (!sheet) sheet = ss.insertSheet(HISTORY_SHEET_NAME);
   const wanted = ['archived-at', 'archive-reason'].concat(currentHeaders);
@@ -1445,3 +1449,244 @@ function authorizeMail() {
 // No doPost here — this script no longer handles any game-session writes.
 // Game events (play.html) are served entirely by a separate spreadsheet +
 // Apps Script project now; this one is scoped to card data only.
+
+// =====================================================================
+// CARD UPDATER (card-updater.html) — publishes cards read from an exported
+// card PDF into a set: the card images into the set's Cards folder, and the
+// card records into the set's Sheet (created if the set doesn't have one
+// yet), with the previous version of any changed card archived to that
+// Sheet's own CardHistory tab so change logs keep working.
+//
+// Only for people with EDIT access to the set's folder (not just view).
+// Every call is a POST (text/plain, so the browser sends it without a CORS
+// preflight) of JSON: { action, idToken, cardsFolderId, ... }
+//   cuState  -> the set's current card records + image file names
+//   cuUpload -> { files:[{name, data(base64 JPEG/PNG)}] } — each replaces any
+//               file of the same card face (same name, any extension);
+//               a same-named file is replaced IN PLACE, keeping its Drive
+//               id so existing image links keep working
+//   cuWrite  -> { records:[{fields:{...}}] } — see cuWrite for the rules
+// =====================================================================
+function doPost(e) {
+  let result;
+  try {
+    const req = JSON.parse(e.postData.contents);
+    const v = verifyIdToken(req.idToken);
+    if (!v.email) throw new Error('Not signed in, or your sign-in has expired — please sign in again.');
+    const target = cuResolveTarget(req.cardsFolderId, v.email);
+    if (req.action === 'cuState') result = cuState(target);
+    else if (req.action === 'cuUpload') result = cuUpload(target, req.files || []);
+    else if (req.action === 'cuWrite') result = cuWrite(target, req.records || [], v.email);
+    else throw new Error('Unknown action.');
+    result.ok = true;
+  } catch (err) {
+    result = { ok: false, error: String((err && err.message) || err) };
+  }
+  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// The Cards folder must sit inside a set folder, inside one of KNOWN_GAMES'
+// game folders (Game › Set › Cards), and the caller must be able to edit
+// that set folder.
+function cuResolveTarget(cardsFolderId, email) {
+  if (!cardsFolderId) throw new Error('No Cards folder was given.');
+  let cardsFolder;
+  try { cardsFolder = DriveApp.getFolderById(cardsFolderId); cardsFolder.getName(); }
+  catch (err) { throw new Error('That folder could not be found, or this app has no access to it.'); }
+  const setFolderId = getParentFolderId(cardsFolder);
+  const setFolder = setFolderId ? DriveApp.getFolderById(setFolderId) : null;
+  const gameFolderId = setFolder ? getParentFolderId(setFolder) : null;
+  const game = KNOWN_GAMES.find(g => g.folderId === gameFolderId);
+  if (!game) throw new Error('That folder isn\'t the Cards folder of a set in a known game (expected Game › Set › Cards).');
+  if (!emailCanEditFolder(email, setFolderId)) throw new Error('You need edit access to this set\'s folder to publish cards to it.');
+  return { cardsFolder: cardsFolder, cardsFolderId: cardsFolderId, setFolder: setFolder, setFolderId: setFolderId, game: game };
+}
+
+// Like emailCanAccessFolder, but only an owner or editor counts.
+function emailCanEditFolder(email, folderId) {
+  const folder = DriveApp.getFolderById(folderId);
+  try {
+    const owner = folder.getOwner();
+    if (owner && owner.getEmail().toLowerCase() === email) return true;
+  } catch (ownerErr) { /* Shared Drive folders have no individual owner */ }
+  if (folder.getEditors().some(u => u.getEmail().toLowerCase() === email)) return true;
+  try {
+    const perms = Drive.Permissions.list(folderId, { supportsAllDrives: true, fields: 'permissions(emailAddress,role)' }).permissions || [];
+    const editRoles = ['owner', 'organizer', 'fileOrganizer', 'writer'];
+    if (perms.some(p => p.emailAddress && p.emailAddress.toLowerCase() === email && editRoles.indexOf(p.role) !== -1)) return true;
+  } catch (driveApiErr) { /* advanced service unavailable — the checks above still apply */ }
+  return false;
+}
+
+// The set's card spreadsheet (the first Google Sheet in the set folder).
+// With create=true, a missing one is created there — which is also what
+// makes a brand-new set show up in the deckbuilder (see getSetsForGame).
+function cuSpreadsheet(target, create) {
+  const files = target.setFolder.getFilesByType(MimeType.GOOGLE_SHEETS);
+  if (files.hasNext()) return SpreadsheetApp.openById(files.next().getId());
+  if (!create) return null;
+  const ss = SpreadsheetApp.create(target.setFolder.getName() + ' — Cards');
+  DriveApp.getFileById(ss.getId()).moveTo(target.setFolder);
+  ss.getSheets()[0].setName(MAIN_SHEET_NAME);
+  return ss;
+}
+
+// Every value compared or sent as text, exactly as it reads.
+function cuCell(v) {
+  if (v instanceof Date) return v.toISOString();
+  return String(v == null ? '' : v).trim();
+}
+
+function cuState(target) {
+  const ss = cuSpreadsheet(target, false);
+  let headers = [], rows = [];
+  if (ss) {
+    const sheet = ss.getSheetByName(MAIN_SHEET_NAME);
+    if (sheet && sheet.getLastRow() >= 1 && sheet.getLastColumn() >= 1) {
+      const data = sheet.getDataRange().getValues();
+      headers = data[0].map(h => String(h).trim());
+      const idCol = headers.indexOf('id');
+      if (idCol !== -1) {
+        rows = data.slice(1).filter(r => cuCell(r[idCol])).map(r => {
+          const o = {};
+          headers.forEach((h, i) => { if (h) o[h] = cuCell(r[i]); });
+          return o;
+        });
+      }
+    }
+  }
+  const images = [];
+  const it = target.cardsFolder.getFiles();
+  while (it.hasNext()) images.push(it.next().getName());
+  return { game: target.game.label, set: target.setFolder.getName(), sheetUrl: ss ? ss.getUrl() : null, headers: headers, rows: rows, images: images };
+}
+
+function cuUpload(target, files) {
+  const folder = target.cardsFolder;
+  const byBase = {}; // file name without extension -> the Drive files with that name
+  const it = folder.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    const base = f.getName().replace(/\.[^.]+$/, '');
+    (byBase[base] = byBase[base] || []).push(f);
+  }
+  const done = [];
+  files.forEach(file => {
+    const m = /^([\w.@-]+)\.(jpg|png)$/i.exec(file.name);
+    if (!m) throw new Error('Unexpected image name: ' + file.name);
+    const base = m[1];
+    const blob = Utilities.newBlob(Utilities.base64Decode(file.data), m[2].toLowerCase() === 'png' ? 'image/png' : 'image/jpeg', file.name);
+    const existing = byBase[base] || [];
+    const same = existing.find(f => f.getName() === file.name);
+    if (same) Drive.Files.update({}, same.getId(), blob, { supportsAllDrives: true }); // same id, so its links stay the same
+    else folder.createFile(blob);
+    existing.forEach(f => { if (f !== same) f.setTrashed(true); }); // e.g. an older id.pdf for this card face
+    done.push(file.name);
+  });
+  return { done: done };
+}
+
+// Writes card records into the set's Sheet. For each card (matched by id):
+//  - not there yet            -> added ("new")
+//  - a value it had changed   -> the old row is archived to CardHistory
+//                                (a new version), then updated ("updated")
+//  - only its art changed     -> archived as an art update, then updated
+//                                ("art"); detected via image-hash
+//  - only NEW fields appeared -> filled in quietly, NOT a new version
+//                                ("fields added") — e.g. the export started
+//                                including more details
+//  - identical                -> left alone ("unchanged")
+// "Fields it had" = the field names of the record it was last written with
+// (record-fields), or, for a card that predates the Card Updater, every
+// column the Sheet already had. Fields a record doesn't include keep their
+// old values. card-updater.html shows the same statuses before publishing.
+const CU_MANAGED = ['record-fields', 'last-updated', 'front-image-url', 'back-image-url'];
+function cuDiff(record, row, preHeaders) {
+  if (!row) return { status: 'new', changed: [], added: [] };
+  const known = row['record-fields'] ? row['record-fields'].split('|') : preHeaders;
+  const changed = [], added = [];
+  Object.keys(record).forEach(k => {
+    if (k === 'image-hash' || k === 'back-image-hash' || CU_MANAGED.indexOf(k) !== -1) return;
+    const oldV = row[k] == null ? '' : row[k];
+    if (known.indexOf(k) !== -1) { if (oldV !== record[k]) changed.push(k); }
+    else if (oldV !== record[k]) added.push(k);
+  });
+  const artChanged = ['image-hash', 'back-image-hash'].some(k => row[k] && record[k] !== undefined && row[k] !== record[k]);
+  const hashesMissing = ['image-hash', 'back-image-hash'].some(k => record[k] && !row[k]);
+  const status = changed.length ? 'updated' : artChanged ? 'art' : (added.length || hashesMissing) ? 'fields added' : 'unchanged';
+  return { status: status, changed: changed, added: added };
+}
+
+function cuWrite(target, records, email) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('Someone else is publishing right now — try again in a moment.');
+  try {
+    const ss = cuSpreadsheet(target, true);
+    const sheet = ss.getSheetByName(MAIN_SHEET_NAME) || ss.getSheets()[0];
+    let data = sheet.getLastRow() >= 1 && sheet.getLastColumn() >= 1 ? sheet.getDataRange().getValues() : [[]];
+    // Column keys: the header text, or a placeholder for an unnamed column so
+    // whatever is in it survives the rewrite below.
+    let headers = (data[0] || []).map((h, i) => String(h).trim() || ('__col' + i));
+    if (headers.length === 1 && headers[0] === '__col0' && data.length === 1) headers = []; // a completely empty sheet
+    const preHeaders = headers.slice(); // the columns the Sheet had before this publish
+    if (headers.indexOf('id') === -1) headers.unshift('id');
+    // Rows as text, keyed by column.
+    const rows = data.slice(1).map(r => {
+      const o = {};
+      preHeaders.forEach((h, i) => { o[h] = cuCell(r[i]); });
+      return o;
+    });
+    const rowById = {};
+    rows.forEach(o => { if (o.id && !rowById[o.id]) rowById[o.id] = o; });
+
+    const now = new Date().toISOString();
+    const counts = { new: 0, updated: 0, art: 0, 'fields added': 0, unchanged: 0 };
+    const archive = []; // [row-before, reason, changed fields]
+    records.forEach(rec => {
+      const fields = rec.fields || {};
+      const id = cuCell(fields.id);
+      if (!id) return;
+      const clean = {};
+      Object.keys(fields).forEach(k => { const key = String(k).trim(); if (key) clean[key] = cuCell(fields[k]); });
+      const row = rowById[id];
+      const diff = cuDiff(clean, row, preHeaders);
+      counts[diff.status]++;
+      if (diff.status === 'unchanged') return;
+      if (row && (diff.status === 'updated' || diff.status === 'art')) {
+        archive.push([Object.assign({}, row), diff.status === 'art' ? 'art update' : 'update', diff.changed.join(', ')]);
+      }
+      const dest = row || (rowById[id] = rows[rows.push({}) - 1]);
+      Object.keys(clean).forEach(k => {
+        dest[k] = clean[k];
+        if (headers.indexOf(k) === -1) headers.push(k);
+      });
+      dest['record-fields'] = Object.keys(clean).filter(k => k !== 'image-hash' && k !== 'back-image-hash').join('|');
+      if (diff.status === 'new' || diff.status === 'updated' || diff.status === 'art') dest['last-updated'] = now;
+    });
+    ['record-fields', 'last-updated'].forEach(h => { if (headers.indexOf(h) === -1) headers.push(h); });
+
+    // Archive first, then write the whole sheet as plain text in one go (plain
+    // text so values like "002" or "TRUE" read back exactly as written).
+    if (archive.length) {
+      const hist = getOrCreateHistorySheet(headers.concat(['changed-fields']), ss);
+      const histHeaders = hist.getRange(1, 1, 1, hist.getLastColumn()).getValues()[0].map(String);
+      const histRows = archive.map(a => histHeaders.map(h => {
+        if (h === 'archived-at') return now;
+        if (h === 'archive-reason') return a[1];
+        if (h === 'changed-fields') return a[2];
+        return a[0][h] == null ? '' : a[0][h];
+      }));
+      const start = hist.getLastRow() + 1;
+      hist.getRange(start, 1, histRows.length, histHeaders.length).setNumberFormat('@').setValues(histRows);
+    }
+    const out = [headers.map(h => (/^__col\d+$/.test(h) ? '' : h))].concat(rows.map(o => headers.map(h => (o[h] == null ? '' : o[h]))));
+    const range = sheet.getRange(1, 1, out.length, headers.length);
+    range.setNumberFormat('@');
+    range.setValues(out);
+    syncImageLinksForSheet(sheet, target.cardsFolderId);
+    try { CacheService.getScriptCache().remove('whoAmI:' + email); } catch (cacheErr) { /* not fatal */ }
+    return { counts: counts, archived: archive.length, sheetUrl: ss.getUrl() };
+  } finally {
+    lock.releaseLock();
+  }
+}

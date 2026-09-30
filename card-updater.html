@@ -15,9 +15,16 @@
   (landscape) cards from which way their own text runs, and renders each face
   cropped to the trim line — with the record itself left out of the image.
 
-  STEP 1 (this version): preview only. Nothing is uploaded or saved anywhere.
+  Then, signed in with Google and connected to a set's Cards folder, it
+  compares every card with what that set already has (New / Updated / Art
+  updated / Fields added / Unchanged) and publishes the differences: images
+  into the Cards folder, records into the set's Sheet, and the previous
+  version of any changed card into its change history. The server (Code.gs,
+  "CARD UPDATER") applies the same rules and only lets people with edit
+  access to the set's folder publish.
 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{
   --bg:#f4f5f7; --surface:#ffffff; --surface-2:#eceef2; --border:#dfe2e8;
@@ -103,17 +110,53 @@ td{border-bottom:1px solid var(--border);padding:6px 10px;vertical-align:top;}
 td:first-child{color:var(--text-soft);white-space:nowrap;width:1%;font-family:ui-monospace,Menlo,monospace;font-size:12px;}
 tr.empty td:last-child{color:var(--text-soft);}
 .close{float:right;}
+.setup{display:grid;grid-template-columns:1fr 1.4fr;gap:12px;margin-bottom:12px;}
+.step{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;display:flex;flex-direction:column;gap:8px;}
+.step h3{margin:0;font-size:13.5px;}
+.step-note{font-size:12px;color:var(--text-soft);line-height:1.4;}
+.step-note.ok{color:var(--ok);}
+.step-note.bad{color:var(--danger);}
+.dest-row{display:flex;gap:6px;}
+.dest-row input{flex:1;min-width:0;padding:7px 12px;border-radius:999px;border:1px solid var(--border);background:var(--bg);color:var(--text);font:13px var(--font);}
+.btn.primary{background:var(--accent);color:var(--accent-contrast);border-color:var(--accent);}
+.btn.primary:hover{filter:brightness(1.08);background:var(--accent);}
+.btn.disabled{opacity:.5;pointer-events:none;}
+.tag.st-new{background:var(--ok-bg);color:var(--ok);}
+.tag.st-updated{background:var(--warn-bg);color:var(--warn);}
+.tag.st-art{background:var(--warn-bg);color:var(--warn);}
+.tag.st-added{background:var(--accent-soft);color:var(--accent);}
+#publishBar{position:sticky;bottom:0;display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap;
+  padding:12px 20px;background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -4px 16px rgba(0,0,0,.12);z-index:5;}
+#publishText{font-size:13px;flex:1;min-width:200px;}
+.diff-old{color:var(--danger);text-decoration:line-through;}
+.diff-new{color:var(--ok);}
+@media (max-width:700px){ .setup{grid-template-columns:1fr;} }
 @media (max-width:600px){ main{padding:12px 16px 40px;} header{padding:12px 16px;} #grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));} }
 </style>
 </head>
 <body>
 <header>
   <h1>Card Updater</h1>
-  <span class="sub">Step 1 — preview only. Nothing is uploaded or saved.</span>
+  <span class="sub">Read an exported card PDF, compare it with a set, and publish the changes.</span>
 </header>
 <main>
+  <section class="setup">
+    <div class="step">
+      <h3>1 · Sign in</h3>
+      <div id="gsiButton"></div>
+      <div class="step-note" id="whoNote">Needs edit access to the set's folder.</div>
+    </div>
+    <div class="step">
+      <h3>2 · Choose the set</h3>
+      <div class="dest-row">
+        <input id="destInput" type="text" placeholder="Paste the set's Cards folder link">
+        <div class="btn" id="btnConnect">Connect</div>
+      </div>
+      <div class="step-note" id="destNote">The Cards folder inside the set's folder (Game › Set › Cards).</div>
+    </div>
+  </section>
   <section id="drop" class="drop">
-    <b>Drop a card PDF here</b>
+    <b>3 · Drop a card PDF here</b>
     <span>One page per card face. Pages without a record are read as the back of the card before them.</span>
     <label class="btn">Choose a file…<input type="file" id="file" accept="application/pdf" hidden></label>
   </section>
@@ -124,8 +167,14 @@ tr.empty td:last-child{color:var(--text-soft);}
     <span class="chip">With backs <b id="nBacks">0</b></span>
     <span class="chip">Landscape <b id="nLand">0</b></span>
     <span class="chip">Issues <b id="nIssues">0</b></span>
+    <span class="chip cmp hidden">New <b id="nNew">0</b></span>
+    <span class="chip cmp hidden">Updated <b id="nUpdated">0</b></span>
+    <span class="chip cmp hidden">Art updated <b id="nArt">0</b></span>
+    <span class="chip cmp hidden">Fields added <b id="nAdded">0</b></span>
+    <span class="chip cmp hidden">Unchanged <b id="nSame">0</b></span>
     <span class="spacer"></span>
     <div class="btn on" data-filter="all">All</div>
+    <div class="btn cmp hidden" data-filter="changes">Changes</div>
     <div class="btn" data-filter="issues">Issues</div>
     <div class="btn" data-filter="land">Landscape</div>
     <div class="btn" data-filter="backs">With backs</div>
@@ -133,6 +182,10 @@ tr.empty td:last-child{color:var(--text-soft);}
   </div>
   <div id="grid"></div>
 </main>
+<div id="publishBar" class="hidden">
+  <div id="publishText"></div>
+  <div class="btn primary" id="btnPublish">Publish</div>
+</div>
 <div id="detail" class="hidden"><div class="panel" id="detailPanel"></div></div>
 
 <script>
@@ -140,6 +193,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 
 const BLEED_PT = 0.125 * 72;                      // cropped off every side
 const SIZES = { print:{w:750, h:1050}, screen:{w:375, h:525} }; // 2.5×3.5in at 300 and 150 dpi
+// Saved as high-quality JPEG: about 1/6 the size of PNG for card art, with no visible difference.
+const IMAGE_TYPE = 'image/jpeg', IMAGE_QUALITY = 0.9, IMAGE_EXT = 'jpg';
 // The export currently writes the four ability field NAMES run together with a
 // single "=" (e.g. "abilityability-overlord…=Guard."), so their values can't be
 // told apart. Until the export template is fixed, that combined value is kept
@@ -382,7 +437,7 @@ async function renderFaceNow(pg, size){
   recordFilter = filter;
   try{ await page.render({ canvasContext: ctx, viewport }).promise; }
   finally{ recordFilter = null; page.cleanup(); }
-  const blob = await new Promise(res=> canvas.toBlob(res, 'image/png'));
+  const blob = await new Promise(res=> canvas.toBlob(res, IMAGE_TYPE, IMAGE_QUALITY));
   return { blob, url: URL.createObjectURL(blob), skipped: filter ? filter.skipped : 0, expected: pg.recordGlyphs||0 };
 }
 
@@ -394,6 +449,7 @@ async function renderThumbnails(){
     const pg = side==='front' ? c.front : c.back;
     try{
       const r = await renderFace(pg, SIZES.screen);
+      r.hash = await sha256Hex(r.blob); // fingerprint of the art — tells an art change apart from a data change
       c.img[side] = r;
       if(side==='front' && r.expected && r.skipped!==r.expected) c.issues.push(`Only ${r.skipped} of the record's ${r.expected} characters were left out of the image — check it`);
       updateTile(c);
@@ -405,7 +461,12 @@ async function renderThumbnails(){
     if(i%4===0 || i===jobs.length-1) setStatus(`Rendering images ${i+1} of ${jobs.length}…`, (i+1)/jobs.length);
   }
   renderToolbar();
-  setStatus(`Done — ${cards.length} cards from ${doc.numPages} pages. This is a preview: nothing has been uploaded or saved.`);
+  setStatus(`Done — ${cards.length} cards from ${doc.numPages} pages.`);
+  compareWithSet();
+}
+async function sha256Hex(blob){
+  const buf = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return [...new Uint8Array(buf)].map(b=> b.toString(16).padStart(2,'0')).join('').slice(0, 32);
 }
 
 // ---------- UI ----------
@@ -429,6 +490,7 @@ function visibleCards(){
   const q = $('search').value.trim().toLowerCase();
   return cards.filter(c=>{
     if(filter==='issues' && !c.issues.length) return false;
+    if(filter==='changes' && !(c.diff && c.diff.status!=='unchanged')) return false;
     if(filter==='land' && !(c.rotate===90 || c.rotate===270)) return false;
     if(filter==='backs' && !c.back) return false;
     if(q && ![c.id, c.fields.name, c.fields.type, c.fields.subtitle].some(v=> String(v||'').toLowerCase().includes(q))) return false;
@@ -437,7 +499,9 @@ function visibleCards(){
 }
 function tileHtml(c){
   const land = c.rotate===90 || c.rotate===270;
+  const st = c.diff ? STATUS_LABEL[c.diff.status] : null;
   const tags = [
+    st ? `<span class="tag st-${st.cls}">${st.text}</span>` : '',
     land ? `<span class="tag land">Landscape</span>` : '',
     c.back ? `<span class="tag">Has back</span>` : '',
     c.issues.length ? `<span class="tag issue">${c.issues.length} issue${c.issues.length>1?'s':''}</span>` : '',
@@ -475,9 +539,15 @@ async function openDetail(c){
     ${c.issues.map(i=> `<div class="notice bad">${esc(i)}</div>`).join('')}
     <div class="row" id="detailFaces"><div style="color:var(--text-soft);">Rendering at print size…</div></div>
     <table>
-      <tr><td>Image names</td><td><code>${esc(c.id)}.png</code>${c.back?` <code>${esc(c.id)}-back.png</code>`:''} · screen size <code>…@sm.png</code></td></tr>
+      <tr><td>Image names</td><td><code>${esc(c.id)}.${IMAGE_EXT}</code>${c.back?` <code>${esc(c.id)}-back.${IMAGE_EXT}</code>`:''} · screen size <code>…@sm.${IMAGE_EXT}</code></td></tr>
       <tr><td>Orientation</td><td>${land ? `Landscape — shown turned ${c.rotate===90?'clockwise':'counter-clockwise'} (detected from its text)` : c.rotate===180 ? 'Upside down?' : 'Portrait'}</td></tr>
-      ${Object.entries(c.fields).map(([k,v])=> `<tr class="${v===''?'empty':''}"><td>${esc(k)}</td><td>${v==='' ? '(empty)' : esc(v)}</td></tr>`).join('')}
+      ${c.diff ? `<tr><td>Compared with set</td><td>${esc(STATUS_LABEL[c.diff.status].long)}</td></tr>` : ''}
+      ${Object.entries(c.fields).map(([k,v])=>{
+        const old = c.diff && c.diff.row ? (c.diff.row[k]==null ? '' : c.diff.row[k]) : null;
+        const changed = c.diff && (c.diff.changed.includes(k) || c.diff.added.includes(k));
+        const val = v==='' ? '(empty)' : esc(v);
+        return `<tr class="${v===''?'empty':''}"><td>${esc(k)}</td><td>${changed && old!=null ? `<span class="diff-old">${old===''?'(empty)':esc(old)}</span> → <span class="diff-new">${val}</span>` : val}</td></tr>`;
+      }).join('')}
     </table>`;
   $('detail').classList.remove('hidden');
   $('btnCloseDetail').addEventListener('click', closeDetail);
@@ -497,6 +567,176 @@ async function openDetail(c){
 function closeDetail(){ $('detail').classList.add('hidden'); }
 $('detail').addEventListener('click', e=>{ if(e.target.id==='detail') closeDetail(); });
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeDetail(); });
+
+// ---------- Signing in, connecting to a set, comparing, publishing ----------
+// Same Apps Script web app and Google sign-in as the deckbuilder.
+const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxuoxW84Mn4Grrq2T9_RCoCJO1ftMdBPJ2gNqcwW5T7wXNonNjZaKOcxgc3ZQAHanVpZQ/exec';
+const GOOGLE_CLIENT_ID = '1053912607552-pvrm9heedm4floaohv1olp5k5mdp95lq.apps.googleusercontent.com';
+let idToken = '';
+let dest = null; // {cardsFolderId, game, set, headers, rows, rowById, images, sheetUrl}
+const STATUS_LABEL = {
+  'new':          {text:'New',          cls:'new',     long:'New — not in this set yet'},
+  'updated':      {text:'Updated',      cls:'updated', long:'Updated — some of its data changed (the old version goes into its change history)'},
+  'art':          {text:'Art updated',  cls:'art',     long:'Art updated — same data, new image (noted in its change history)'},
+  'fields added': {text:'Fields added', cls:'added',   long:'Fields added — only new fields filled in (not a new version)'},
+  'unchanged':    {text:'Unchanged',    cls:'same',    long:'Unchanged — nothing to publish'},
+};
+
+function initSignIn(){
+  if(!(window.google && google.accounts && google.accounts.id)){ setTimeout(initSignIn, 200); return; }
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onSignIn, auto_select: true });
+  google.accounts.id.renderButton($('gsiButton'), { theme:'outline', size:'medium', text:'signin_with' });
+}
+function onSignIn(resp){
+  idToken = resp.credential;
+  let email = '';
+  try{ email = JSON.parse(atob(idToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).email; }catch(e){}
+  $('whoNote').textContent = 'Signed in as ' + email;
+  $('whoNote').className = 'step-note ok';
+  if($('destInput').value.trim() && !dest) connectSet();
+}
+initSignIn();
+
+async function api(action, extra){
+  if(!idToken) throw new Error('Sign in first.');
+  const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ action, idToken, cardsFolderId: dest ? dest.cardsFolderId : folderIdFrom($('destInput').value), ...extra }) });
+  if(!res.ok) throw new Error('The server answered HTTP ' + res.status);
+  const j = await res.json();
+  if(!j.ok) throw new Error(j.error || 'Unknown error');
+  return j;
+}
+// Accepts a Drive folder link in any of its usual shapes, or a bare id.
+function folderIdFrom(text){
+  const t = text.trim();
+  const m = t.match(/folders\/([\w-]{10,})/) || t.match(/[?&]id=([\w-]{10,})/) || t.match(/^([\w-]{10,})$/);
+  return m ? m[1] : '';
+}
+$('btnConnect').addEventListener('click', connectSet);
+$('destInput').addEventListener('keydown', e=>{ if(e.key==='Enter') connectSet(); });
+async function connectSet(){
+  const id = folderIdFrom($('destInput').value);
+  const note = $('destNote');
+  if(!id){ note.textContent = 'That doesn\'t look like a Google Drive folder link.'; note.className = 'step-note bad'; return; }
+  if(!idToken){ note.textContent = 'Sign in first (step 1).'; note.className = 'step-note bad'; return; }
+  note.textContent = 'Connecting…'; note.className = 'step-note';
+  dest = null;
+  try{
+    const st = await api('cuState', { cardsFolderId: id });
+    dest = { cardsFolderId:id, ...st, rowById: new Map(st.rows.map(r=> [r.id, r])) };
+    note.innerHTML = `Connected: <b>${esc(st.game)} › ${esc(st.set)} › Cards</b> — ${st.rows.length} card${st.rows.length===1?'':'s'} on file, ${st.images.length} image${st.images.length===1?'':'s'} in the folder.${st.sheetUrl ? '' : ' (No card sheet yet — publishing creates one.)'}`;
+    note.className = 'step-note ok';
+  }catch(err){
+    note.textContent = err.message; note.className = 'step-note bad';
+  }
+  compareWithSet();
+}
+
+// What would be written for a card: its record, plus the detected
+// orientation and fingerprints of its art (see sha256Hex).
+function recordFor(c){
+  const r = { ...c.fields, rotate: String(c.rotate||0) };
+  if(c.img.front && c.img.front.hash) r['image-hash'] = c.img.front.hash;
+  if(c.back && c.img.back && c.img.back.hash) r['back-image-hash'] = c.img.back.hash;
+  return r;
+}
+// Same rules as cuDiff in Code.gs — see there.
+const CU_MANAGED = ['record-fields','last-updated','front-image-url','back-image-url'];
+function cuDiff(record, row, preHeaders){
+  if(!row) return { status:'new', changed:[], added:[] };
+  const known = row['record-fields'] ? row['record-fields'].split('|') : preHeaders;
+  const changed = [], added = [];
+  Object.keys(record).forEach(k=>{
+    if(k==='image-hash' || k==='back-image-hash' || CU_MANAGED.includes(k)) return;
+    const oldV = row[k]==null ? '' : row[k];
+    if(known.includes(k)){ if(oldV!==record[k]) changed.push(k); }
+    else if(oldV!==record[k]) added.push(k);
+  });
+  const artChanged = ['image-hash','back-image-hash'].some(k=> row[k] && record[k]!==undefined && row[k]!==record[k]);
+  const hashesMissing = ['image-hash','back-image-hash'].some(k=> record[k] && !row[k]);
+  const status = changed.length ? 'updated' : artChanged ? 'art' : (added.length || hashesMissing) ? 'fields added' : 'unchanged';
+  return { status, changed, added };
+}
+function compareWithSet(){
+  const ready = dest && cards.length && cards.every(c=> c.img.front && (!c.back || c.img.back));
+  document.querySelectorAll('.cmp').forEach(el=> el.classList.toggle('hidden', !ready));
+  if(!ready){ cards.forEach(c=> delete c.diff); $('publishBar').classList.add('hidden'); return; }
+  const count = {'new':0,'updated':0,'art':0,'fields added':0,'unchanged':0};
+  cards.forEach(c=>{
+    const row = dest.rowById.get(c.id) || null;
+    c.diff = { ...cuDiff(recordFor(c), row, dest.headers), row };
+    count[c.diff.status]++;
+  });
+  $('nNew').textContent = count['new']; $('nUpdated').textContent = count['updated']; $('nArt').textContent = count['art'];
+  $('nAdded').textContent = count['fields added']; $('nSame').textContent = count['unchanged'];
+  renderGrid();
+  const todo = cards.length - count['unchanged'];
+  $('publishBar').classList.remove('hidden');
+  $('publishText').innerHTML = todo
+    ? `Publish to <b>${esc(dest.game)} › ${esc(dest.set)}</b>: ${[['new','new'],['updated','updated'],['art','art updated'],['fields added','with fields added']].filter(([k])=>count[k]).map(([k,t])=>`${count[k]} ${t}`).join(', ')}. ${count['unchanged']} unchanged card${count['unchanged']===1?'':'s'} will be left alone.`
+    : `Everything in this PDF already matches <b>${esc(dest.game)} › ${esc(dest.set)}</b>. Nothing to publish.`;
+  $('btnPublish').classList.toggle('disabled', !todo);
+}
+
+const blobToBase64 = blob=> new Promise((res, rej)=>{
+  const fr = new FileReader();
+  fr.onload = ()=> res(String(fr.result).split(',')[1]);
+  fr.onerror = ()=> rej(fr.error);
+  fr.readAsDataURL(blob);
+});
+$('btnPublish').addEventListener('click', publish);
+let publishing = false;
+async function publish(){
+  if(publishing || !dest) return;
+  const todo = cards.filter(c=> c.diff && c.diff.status!=='unchanged');
+  if(!todo.length) return;
+  if(!confirm(`Publish ${todo.length} card${todo.length===1?'':'s'} to ${dest.game} › ${dest.set}?\n\nImages go into its Cards folder (older images of the same cards go to the Drive trash), and card data into its sheet.`)) return;
+  publishing = true;
+  $('btnPublish').classList.add('disabled');
+  try{
+    // 1) Images, for any card whose art is new or different: print size
+    //    (id.jpg) and screen size (id@sm.jpg), front and back. Sent a few at
+    //    a time to stay well inside what one server request can carry.
+    const needImages = todo.filter(c=> !c.diff.row
+      || c.diff.row['image-hash']!==c.img.front.hash
+      || (c.back && c.diff.row['back-image-hash']!==c.img.back.hash));
+    let batch = [], batchSize = 0, sent = 0;
+    const total = needImages.reduce((n,c)=> n + (c.back ? 4 : 2), 0);
+    const flush = async ()=>{
+      if(!batch.length) return;
+      await api('cuUpload', { files: batch });
+      sent += batch.length; batch = []; batchSize = 0;
+      setStatus(`Uploading images: ${sent} of ${total}…`, sent/total);
+    };
+    const add = async (name, blob)=>{
+      const data = await blobToBase64(blob);
+      batch.push({ name, data }); batchSize += data.length;
+      if(batchSize > 6e6) await flush();
+    };
+    setStatus(`Uploading images: 0 of ${total}…`, 0);
+    for(const c of needImages){
+      await add(`${c.id}.${IMAGE_EXT}`, (await renderFace(c.front, SIZES.print)).blob);
+      await add(`${c.id}@sm.${IMAGE_EXT}`, c.img.front.blob);
+      if(c.back){
+        await add(`${c.id}-back.${IMAGE_EXT}`, (await renderFace(c.back, SIZES.print)).blob);
+        await add(`${c.id}-back@sm.${IMAGE_EXT}`, c.img.back.blob);
+      }
+    }
+    await flush();
+    // 2) Records, in one go — the server re-checks every card itself.
+    setStatus('Saving card data…');
+    const res = await api('cuWrite', { records: todo.map(c=> ({ fields: recordFor(c) })) });
+    const k = res.counts;
+    setStatus(`Published to ${dest.game} › ${dest.set}: ${k['new']} new, ${k['updated']} updated, ${k['art']} art updated, ${k['fields added']} with fields added, ${k['unchanged']} unchanged. ${res.archived} older version${res.archived===1?'':'s'} saved to the change history.`);
+    await connectSet(); // re-read the set: everything should now show as Unchanged
+  }catch(err){
+    console.error(err);
+    setStatus('Publishing stopped: ' + err.message + ' — nothing after that point was saved; you can publish again to finish.');
+  }finally{
+    publishing = false;
+    $('btnPublish').classList.remove('disabled');
+  }
+}
 
 // For testing: load a PDF by URL (?pdf=/path.pdf) instead of dropping one.
 (async ()=>{
