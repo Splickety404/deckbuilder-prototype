@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card Updater</title>
+<!--
+  CARD UPDATER — turns an exported card PDF into card data + card images.
+
+  Each PDF page is one card face. A card's front page carries a small "record"
+  text frame (id=…|name=…|type=…) that holds all of its data; a page with no
+  record is the BACK of the card before it. (A second page with the same id is
+  also treated as that card's back; any further copies are ignored, and the
+  front's data always wins.) This page reads the records, detects sideways
+  (landscape) cards from which way their own text runs, and renders each face
+  cropped to the trim line — with the record itself left out of the image.
+
+  STEP 1 (this version): preview only. Nothing is uploaded or saved anywhere.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root{
+  --bg:#f4f5f7; --surface:#ffffff; --surface-2:#eceef2; --border:#dfe2e8;
+  --text:#171a21; --text-soft:#6b7280; --accent:#4f46e5; --accent-contrast:#ffffff; --accent-soft:#eceafd;
+  --danger:#dc2626; --danger-bg:#fde8e8; --warn:#b45309; --warn-bg:#fef3c7; --ok:#16a34a; --ok-bg:#dcfce7;
+  --radius:10px; --radius-sm:6px;
+  --shadow:0 1px 2px rgba(20,20,30,.06), 0 2px 8px rgba(20,20,30,.06);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#14161b; --surface:#1c1f26; --surface-2:#242830; --border:#333844;
+    --text:#e7e9ee; --text-soft:#9aa1ae; --accent:#8385f5; --accent-contrast:#12131a; --accent-soft:#292a4a;
+    --danger:#f87171; --danger-bg:#3a1a1a; --warn:#fbbf24; --warn-bg:#3a2e12; --ok:#4ade80; --ok-bg:#12321f;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 2px 10px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14161b; --surface:#1c1f26; --surface-2:#242830; --border:#333844;
+  --text:#e7e9ee; --text-soft:#9aa1ae; --accent:#8385f5; --accent-contrast:#12131a; --accent-soft:#292a4a;
+  --danger:#f87171; --danger-bg:#3a1a1a; --warn:#fbbf24; --warn-bg:#3a2e12; --ok:#4ade80; --ok-bg:#12321f;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 2px 10px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;}
+header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface);}
+header h1{font-size:17px;margin:0;}
+header .sub{font-size:12.5px;color:var(--text-soft);}
+main{padding:16px 20px 60px;max-width:1400px;margin:0 auto;}
+.hidden{display:none !important;}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;border:1px solid var(--border);
+  background:var(--surface);color:var(--text);font:600 13px var(--font);cursor:pointer;user-select:none;}
+.btn:hover{background:var(--surface-2);}
+.btn.on{background:var(--accent-soft);border-color:var(--accent);}
+.drop{border:2px dashed var(--border);border-radius:var(--radius);background:var(--surface);padding:34px 16px;text-align:center;
+  color:var(--text-soft);display:flex;flex-direction:column;align-items:center;gap:10px;transition:border-color .15s,background .15s;}
+.drop b{color:var(--text);font-size:15px;}
+.drop.over{border-color:var(--accent);background:var(--accent-soft);}
+#status{margin:14px 0 6px;font-size:13px;color:var(--text-soft);min-height:18px;}
+.bar{height:6px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin-top:6px;}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s;}
+.notice{border-radius:var(--radius-sm);padding:10px 12px;margin:8px 0;font-size:13px;line-height:1.45;}
+.notice.warn{background:var(--warn-bg);color:var(--text);border-left:4px solid var(--warn);}
+.notice.info{background:var(--surface);border:1px solid var(--border);}
+.notice.bad{background:var(--danger-bg);border-left:4px solid var(--danger);}
+code{font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:4px;word-break:break-all;}
+#toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0;}
+.chip{font-size:12.5px;padding:4px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--border);}
+.chip b{font-weight:700;}
+#toolbar .spacer{flex:1;}
+#search{padding:7px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text);font:13px var(--font);min-width:200px;}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px;}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px;cursor:pointer;
+  display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow);transition:border-color .12s,transform .12s;}
+.tile:hover{border-color:var(--accent);transform:translateY(-2px);}
+.tile .faces{display:flex;gap:4px;justify-content:center;height:150px;align-items:center;}
+.face{background:var(--surface-2);border-radius:5px;overflow:hidden;display:flex;align-items:center;justify-content:center;flex:none;}
+.face img{display:block;width:100%;height:100%;object-fit:contain;}
+.tile .front{width:107px;height:150px;}
+.tile .back{width:54px;height:75px;opacity:.9;}
+.tile .faces.land{flex-direction:column;gap:3px;}
+.tile .front.land{width:140px;height:100px;position:relative;}
+.tile .front.land img{position:absolute;left:50%;top:50%;width:100px;height:140px;}
+.tile .back.land{width:56px;height:40px;position:relative;}
+.tile .back.land img{position:absolute;left:50%;top:50%;width:40px;height:56px;}
+.tile .name{font-weight:700;font-size:13px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tile .meta{font-size:11.5px;color:var(--text-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tags{display:flex;flex-wrap:wrap;gap:4px;}
+.tag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--surface-2);color:var(--text-soft);}
+.tag.issue{background:var(--danger-bg);color:var(--danger);}
+.tag.land{background:var(--accent-soft);color:var(--accent);}
+/* Detail panel */
+#detail{position:fixed;inset:0;background:rgba(10,12,16,.55);display:flex;justify-content:flex-end;z-index:10;}
+#detail .panel{width:min(760px,100%);height:100%;overflow-y:auto;background:var(--bg);border-left:1px solid var(--border);padding:18px 20px 40px;}
+#detail h2{margin:0 0 4px;font-size:18px;}
+#detail .row{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0;}
+#detail .big{background:var(--surface-2);border-radius:var(--radius-sm);overflow:hidden;box-shadow:var(--shadow);}
+#detail .big img{display:block;}
+#detail .cap{font-size:11.5px;color:var(--text-soft);margin-top:4px;text-align:center;}
+table{border-collapse:collapse;width:100%;font-size:13px;background:var(--surface);border-radius:var(--radius-sm);overflow:hidden;}
+td{border-bottom:1px solid var(--border);padding:6px 10px;vertical-align:top;}
+td:first-child{color:var(--text-soft);white-space:nowrap;width:1%;font-family:ui-monospace,Menlo,monospace;font-size:12px;}
+tr.empty td:last-child{color:var(--text-soft);}
+.close{float:right;}
+@media (max-width:600px){ main{padding:12px 16px 40px;} header{padding:12px 16px;} #grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));} }
+</style>
+</head>
+<body>
+<header>
+  <h1>Card Updater</h1>
+  <span class="sub">Step 1 — preview only. Nothing is uploaded or saved.</span>
+</header>
+<main>
+  <section id="drop" class="drop">
+    <b>Drop a card PDF here</b>
+    <span>One page per card face. Pages without a record are read as the back of the card before them.</span>
+    <label class="btn">Choose a file…<input type="file" id="file" accept="application/pdf" hidden></label>
+  </section>
+  <div id="status"></div>
+  <div id="notices"></div>
+  <div id="toolbar" class="hidden">
+    <span class="chip">Cards <b id="nCards">0</b></span>
+    <span class="chip">With backs <b id="nBacks">0</b></span>
+    <span class="chip">Landscape <b id="nLand">0</b></span>
+    <span class="chip">Issues <b id="nIssues">0</b></span>
+    <span class="spacer"></span>
+    <div class="btn on" data-filter="all">All</div>
+    <div class="btn" data-filter="issues">Issues</div>
+    <div class="btn" data-filter="land">Landscape</div>
+    <div class="btn" data-filter="backs">With backs</div>
+    <input id="search" type="search" placeholder="Search name, type, id…">
+  </div>
+  <div id="grid"></div>
+</main>
+<div id="detail" class="hidden"><div class="panel" id="detailPanel"></div></div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const BLEED_PT = 0.125 * 72;                      // cropped off every side
+const SIZES = { print:{w:750, h:1050}, screen:{w:375, h:525} }; // 2.5×3.5in at 300 and 150 dpi
+// The export currently writes the four ability field NAMES run together with a
+// single "=" (e.g. "abilityability-overlord…=Guard."), so their values can't be
+// told apart. Until the export template is fixed, that combined value is kept
+// under "ability" so nothing is lost.
+const ABILITY_KEYS = ['ability','ability-overlord','ability-stage-2','ability-overlord-stage-2'];
+
+let doc = null;
+let pages = [];   // one per PDF page: {n, fields, rawRecord, recordFont, recordGlyphs, textAngle, issues}
+let cards = [];   // {id, fields, front, back, rotate, issues, img:{front, back}}
+let notices = [];
+let filter = 'all';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function setStatus(text, frac){
+  $('status').innerHTML = esc(text) + (frac!=null ? `<div class="bar"><i style="width:${Math.round(frac*100)}%"></i></div>` : '');
+}
+
+// ---------- Loading ----------
+const drop = $('drop');
+['dragenter','dragover'].forEach(t=> drop.addEventListener(t, e=>{ e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(t=> drop.addEventListener(t, e=>{ e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e=>{ const f = e.dataTransfer.files[0]; if(f) loadFile(f); });
+$('file').addEventListener('change', e=>{ const f = e.target.files[0]; if(f) loadFile(f); e.target.value=''; });
+
+async function loadFile(file){
+  if(!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)){ setStatus('That doesn\'t look like a PDF.'); return; }
+  pages = []; cards = []; notices = [];
+  $('grid').innerHTML = ''; $('notices').innerHTML = ''; $('toolbar').classList.add('hidden');
+  setStatus(`Opening ${file.name}…`, 0);
+  try{
+    doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    await loadDoc();
+  }catch(err){
+    console.error(err);
+    setStatus('Could not read that PDF: ' + err.message);
+  }
+}
+async function loadDoc(){
+  recordTextFromOperators.autoHyphens = 0;
+  for(let n=1; n<=doc.numPages; n++){
+    pages.push(await readPage(n));
+    if(n%5===0 || n===doc.numPages) setStatus(`Reading page ${n} of ${doc.numPages}…`, n/doc.numPages);
+  }
+  pairPages();
+  renderNotices();
+  renderToolbar();
+  renderGrid();
+  await renderThumbnails();
+}
+
+// ---------- Reading one page: its record, and which way its own text runs ----------
+async function readPage(n){
+  const page = await doc.getPage(n);
+  const tc = await page.getTextContent();
+  const items = tc.items.filter(it=> typeof it.str==='string');
+  const sizeOf = it=> Math.hypot(it.transform[0], it.transform[1]);
+  const out = { n, fields:null, rawRecord:'', recordFont:null, recordGlyphs:0, textAngle:0, issues:[], view: page.view };
+  const idItem = items.find(it=> /^\s*id=/.test(it.str));
+  let recItems = [];
+  if(idItem){
+    // The record is one text frame: the "id=" line plus the lines below it, in
+    // the same font and size, horizontal, starting in the same column. Lines
+    // wrap mid-word, so they're joined back together with nothing in between.
+    const size = sizeOf(idItem), x0 = idItem.transform[4];
+    const same = items.filter(it=> it.fontName===idItem.fontName && Math.abs(sizeOf(it)-size)<0.01 && Math.abs(it.transform[1])<1e-6 && it.transform[4] >= x0-0.5);
+    const lines = new Map();
+    same.forEach(it=>{ const y = Math.round(it.transform[5]*10)/10; if(!lines.has(y)) lines.set(y, []); lines.get(y).push(it); });
+    const ys = [...lines.keys()].sort((a,b)=> b-a);
+    let prevY = null;
+    for(const y of ys){
+      if(y > idItem.transform[5] + 0.5) continue;              // above the record
+      if(prevY!=null && prevY - y > size*2.2) break;            // a gap: the record frame has ended
+      const line = lines.get(y);
+      if(!line.some(it=> Math.abs(it.transform[4]-x0) < 0.5) && prevY!=null) break; // a line that doesn't start in the record's column
+      recItems.push(...line.sort((a,b)=> a.transform[4]-b.transform[4]));
+      prevY = y;
+    }
+    out.recordFont = idItem.fontName;
+    // The text above trims the space off the end of each line, which makes a
+    // line that wrapped at a space ("Overlord Reference" / "Card") look the
+    // same as one that broke mid-word ("is_double_si" / "ded"). The page's
+    // drawing instructions still have every character, spaces included, so
+    // the record's actual text is read from those, line by line.
+    const recordYs = new Set(recItems.map(it=> Math.round(it.transform[5]*10)/10));
+    const fromOps = await recordTextFromOperators(page, idItem.fontName, recordYs);
+    out.rawRecord = fromOps.text || recItems.map(it=> it.str).join('');
+    out.recordGlyphs = fromOps.glyphs; // how many characters drawing the record takes — see renderFace
+    out.fields = parseRecord(out.rawRecord, out.issues);
+  }
+  // Which way the card's OWN text runs (everything but the record) — sideways
+  // art in a portrait image means its rules text runs 90° or 270°. Each piece
+  // of text votes by its length divided by its font size squared, so small
+  // rules text outweighs big titles: portrait cards here have a sideways title
+  // bar, which would otherwise outvote a short upright rules text. (Checked
+  // against all 277 cards of the sample export: no misses.)
+  const votes = {};
+  const recSet = new Set(recItems);
+  items.forEach(it=>{
+    if(recSet.has(it)) return;
+    const len = it.str.trim().length; if(!len) return;
+    const size = sizeOf(it); if(!size) return;
+    const deg = ((Math.round(Math.atan2(it.transform[1], it.transform[0]) * 180/Math.PI / 90) * 90) % 360 + 360) % 360;
+    votes[deg] = (votes[deg]||0) + len/(size*size);
+  });
+  const best = Object.keys(votes).sort((a,b)=> votes[b]-votes[a])[0];
+  out.textAngle = best!=null ? Number(best) : 0;
+  out.hasOwnText = best!=null; // a back with no text of its own follows its front (see pairPages)
+  return out;
+}
+// Every character drawn in the record's font on the record's lines, in drawing
+// order (lines are drawn top to bottom), glued together with nothing added.
+async function recordTextFromOperators(page, fontName, lineYs){
+  const ops = await page.getOperatorList();
+  const O = pdfjsLib.OPS;
+  let font = null, tm = [1,0,0,1,0,0], text = '', lastY = null, autoHyphens = 0, glyphs = 0;
+  for(let i=0; i<ops.fnArray.length; i++){
+    const fn = ops.fnArray[i], a = ops.argsArray[i];
+    if(fn===O.setFont) font = a[0];
+    else if(fn===O.beginText) tm = [1,0,0,1,0,0];
+    else if(fn===O.setTextMatrix) tm = a.length===6 ? a : a[0];
+    else if((fn===O.showText || fn===O.showSpacedText) && font===fontName){
+      const y = Math.round(tm[5]*10)/10;
+      if(!lineYs.has(y)) continue;
+      const drawn = a[0].filter(g=> g && typeof g==='object');
+      glyphs += drawn.length; // every one of these is a separate drawing call, spaces and auto-hyphens included
+      const piece = drawn.map(g=> g.unicode).join('');
+      // A lone "-" drawn after the rest of its line is a hyphen the layout
+      // program added to split a word across lines ("le-" / "adership") — not
+      // part of the text. Real hyphens ("ability-" / "overlord") are drawn as
+      // part of their line.
+      if(piece==='-' && y===lastY){ autoHyphens++; continue; }
+      text += piece;
+      lastY = y;
+    }
+  }
+  page.cleanup(); // don't keep this page's decoded images around
+  recordTextFromOperators.autoHyphens = (recordTextFromOperators.autoHyphens||0) + autoHyphens;
+  return { text, glyphs };
+}
+// "name=Almighty Trax|subtitle=…|cost=5" → {name:'Almighty Trax', subtitle:'…', cost:'5'}
+function parseRecord(raw, issues){
+  const fields = {};
+  raw.split('|').forEach(part=>{
+    if(!part.trim()) return;
+    const eq = part.indexOf('=');
+    if(eq<0){ issues.push(`A piece of the record has no "=": ${part.slice(0,60)}`); return; }
+    let key = part.slice(0, eq).trim();
+    const value = part.slice(eq+1).trim();
+    if(key!=='ability' && key===ABILITY_KEYS.join('')) key = 'ability'; // see ABILITY_KEYS
+    if(key in fields) issues.push(`"${key}" appears twice in the record — keeping the first`);
+    else fields[key] = value;
+  });
+  if(!fields.id) issues.push('The record has no id');
+  return fields;
+}
+
+// ---------- Pairing pages into cards ----------
+// A page with a record starts a card (or, if its id was already seen, is that
+// card's back). A page without a record is the back of the card just before it.
+function pairPages(){
+  const byId = new Map();
+  let openForBack = null;
+  let mergedAbilities = false;
+  pages.forEach(pg=>{
+    if(pg.fields && pg.fields.id){
+      if(pg.rawRecord.includes(ABILITY_KEYS.join('')+'=')) mergedAbilities = true;
+      const id = pg.fields.id;
+      const existing = byId.get(id);
+      if(!existing){
+        const card = { id, fields:pg.fields, front:pg, back:null, rotate:pg.textAngle, issues:[...pg.issues], img:{} };
+        byId.set(id, card); cards.push(card); openForBack = card;
+      } else if(!existing.back){
+        existing.back = pg;
+        existing.backRotate = pg.hasOwnText ? pg.textAngle : existing.rotate;
+        const diffs = Object.keys({...existing.fields, ...pg.fields}).filter(k=> (existing.fields[k]||'') !== (pg.fields[k]||''));
+        if(diffs.length) existing.issues.push(`Page ${pg.n} (its back) has a different record for: ${diffs.join(', ')} — using the front's data`);
+        openForBack = null;
+      } else {
+        existing.issues.push(`Page ${pg.n} is a third copy of this card — ignored`);
+      }
+    } else if(openForBack){
+      openForBack.back = pg;
+      openForBack.backRotate = pg.hasOwnText ? pg.textAngle : openForBack.rotate;
+      openForBack = null;
+    } else {
+      notices.push({kind:'bad', html:`Page ${pg.n} has no record, and the page before it isn't a card front waiting for a back — ignored.`});
+    }
+  });
+  cards.forEach(c=>{
+    const ds = String(c.fields.is_double_sided||'').toLowerCase();
+    if(ds==='true' && !c.back) c.issues.push('Marked is_double_sided=true but has no back page in this PDF');
+    if(ds==='false' && c.back) c.issues.push('Marked is_double_sided=false but has a back page');
+    if(c.rotate===180) c.issues.push('Its text runs upside down — check this card');
+  });
+  if(recordTextFromOperators.autoHyphens) notices.push({kind:'info', html:`The record text has automatic hyphenation turned on in ${recordTextFromOperators.autoHyphens} place${recordTextFromOperators.autoHyphens===1?'':'s'} (a word split across lines with an added "-"). Those hyphens were removed. Turning hyphenation off for the record's text frame in the export template avoids this entirely.`});
+  if(mergedAbilities) notices.push({kind:'warn', html:`The ability fields are run together in this export (<code>${ABILITY_KEYS.join('')}=…</code>), so there's no telling which ability text belongs to which field. It's kept under <b>ability</b> for now. Fixing the export template to write <code>ability=…|ability-overlord=…|ability-stage-2=…|ability-overlord-stage-2=…</code> will split them properly.`});
+}
+
+// ---------- Rendering a face to an image ----------
+// Crops the bleed and leaves the record out. The record is always the first
+// text drawn on its page, and pdf.js draws text one character per drawing call
+// — so while a page renders, the first N characters drawn in the record's font
+// (N = recordGlyphs, counted when the page was read) are simply skipped. This is
+// done on the canvas prototype rather than one canvas, because some pages (foil
+// cards, anything with transparency) are drawn onto a scratch canvas first and
+// merged in afterwards. The same font appears elsewhere on some cards (e.g. a
+// copyright line); those come after the record, so they're drawn normally.
+let recordFilter = null; // {fontRe, remaining, skipped} while a page is rendering
+['fillText','strokeText'].forEach(name=>{
+  const orig = CanvasRenderingContext2D.prototype[name];
+  CanvasRenderingContext2D.prototype[name] = function(...args){
+    const f = recordFilter;
+    if(f && f.remaining>0 && f.fontRe.test(this.font)){ f.remaining--; f.skipped++; return; }
+    return orig.apply(this, args);
+  };
+});
+// One render at a time (the filter above is shared), in the order requested.
+let renderChain = Promise.resolve();
+function renderFace(pg, size){
+  const job = renderChain.then(()=> renderFaceNow(pg, size));
+  renderChain = job.catch(()=>{});
+  return job;
+}
+async function renderFaceNow(pg, size){
+  const page = await doc.getPage(pg.n);
+  const [vx0, vy0, vx1] = pg.view;
+  const scale = size.w / ((vx1 - vx0) - 2*BLEED_PT);
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = size.w; canvas.height = size.h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, size.w, size.h);
+  ctx.translate(-BLEED_PT*scale, -BLEED_PT*scale);
+  const filter = pg.recordGlyphs ? {
+    // pdf.js sets ctx.font like '16px g_d0_f1, sans-serif' (font name unquoted)
+    fontRe: new RegExp('(^|[\\s,"])' + pg.recordFont.replace(/[^\w-]/g,'') + '($|[\\s,"])'),
+    remaining: pg.recordGlyphs, skipped: 0,
+  } : null;
+  recordFilter = filter;
+  try{ await page.render({ canvasContext: ctx, viewport }).promise; }
+  finally{ recordFilter = null; page.cleanup(); }
+  const blob = await new Promise(res=> canvas.toBlob(res, 'image/png'));
+  return { blob, url: URL.createObjectURL(blob), skipped: filter ? filter.skipped : 0, expected: pg.recordGlyphs||0 };
+}
+
+async function renderThumbnails(){
+  const jobs = [];
+  cards.forEach(c=>{ jobs.push([c,'front']); if(c.back) jobs.push([c,'back']); });
+  for(let i=0; i<jobs.length; i++){
+    const [c, side] = jobs[i];
+    const pg = side==='front' ? c.front : c.back;
+    try{
+      const r = await renderFace(pg, SIZES.screen);
+      c.img[side] = r;
+      if(side==='front' && r.expected && r.skipped!==r.expected) c.issues.push(`Only ${r.skipped} of the record's ${r.expected} characters were left out of the image — check it`);
+      updateTile(c);
+    }catch(err){
+      console.error(err);
+      c.issues.push(`Couldn't render the ${side}: ${err.message}`);
+      updateTile(c);
+    }
+    if(i%4===0 || i===jobs.length-1) setStatus(`Rendering images ${i+1} of ${jobs.length}…`, (i+1)/jobs.length);
+  }
+  renderToolbar();
+  setStatus(`Done — ${cards.length} cards from ${doc.numPages} pages. This is a preview: nothing has been uploaded or saved.`);
+}
+
+// ---------- UI ----------
+function renderNotices(){
+  $('notices').innerHTML = notices.map(n=> `<div class="notice ${n.kind}">${n.html}</div>`).join('');
+}
+function renderToolbar(){
+  $('toolbar').classList.remove('hidden');
+  $('nCards').textContent = cards.length;
+  $('nBacks').textContent = cards.filter(c=>c.back).length;
+  $('nLand').textContent = cards.filter(c=> c.rotate===90 || c.rotate===270).length;
+  $('nIssues').textContent = cards.filter(c=> c.issues.length).length;
+}
+document.querySelectorAll('#toolbar [data-filter]').forEach(b=> b.addEventListener('click', ()=>{
+  filter = b.dataset.filter;
+  document.querySelectorAll('#toolbar [data-filter]').forEach(x=> x.classList.toggle('on', x===b));
+  renderGrid();
+}));
+$('search').addEventListener('input', renderGrid);
+function visibleCards(){
+  const q = $('search').value.trim().toLowerCase();
+  return cards.filter(c=>{
+    if(filter==='issues' && !c.issues.length) return false;
+    if(filter==='land' && !(c.rotate===90 || c.rotate===270)) return false;
+    if(filter==='backs' && !c.back) return false;
+    if(q && ![c.id, c.fields.name, c.fields.type, c.fields.subtitle].some(v=> String(v||'').toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+function tileHtml(c){
+  const land = c.rotate===90 || c.rotate===270;
+  const tags = [
+    land ? `<span class="tag land">Landscape</span>` : '',
+    c.back ? `<span class="tag">Has back</span>` : '',
+    c.issues.length ? `<span class="tag issue">${c.issues.length} issue${c.issues.length>1?'s':''}</span>` : '',
+  ].join('');
+  // Landscape fronts are shown turned upright (the saved image stays as printed).
+  const frontStyle = land ? `style="transform:translate(-50%,-50%) rotate(${c.rotate}deg)"` : '';
+  const backLand = c.backRotate===90 || c.backRotate===270;
+  const backStyle = backLand ? `style="transform:translate(-50%,-50%) rotate(${c.backRotate}deg)"` : '';
+  return `<div class="faces${land?' land':''}">
+      <div class="face front${land?' land':''}">${c.img.front ? `<img src="${c.img.front.url}" ${frontStyle}>` : ''}</div>
+      ${c.back ? `<div class="face back${backLand?' land':''}">${c.img.back ? `<img src="${c.img.back.url}" ${backStyle}>` : ''}</div>` : ''}
+    </div>
+    <div class="name" title="${esc(c.fields.name)}">${esc(c.fields.name||'(no name)')}</div>
+    <div class="meta">${esc(c.fields.type||'')}</div>
+    <div class="tags">${tags}</div>`;
+}
+function renderGrid(){
+  const grid = $('grid');
+  grid.innerHTML = visibleCards().map(c=> `<div class="tile" data-id="${esc(c.id)}">${tileHtml(c)}</div>`).join('');
+  grid.querySelectorAll('.tile').forEach(t=> t.addEventListener('click', ()=> openDetail(cards.find(c=> c.id===t.dataset.id))));
+}
+function updateTile(c){
+  const el = document.querySelector(`.tile[data-id="${CSS.escape(c.id)}"]`);
+  if(el) el.innerHTML = tileHtml(c);
+}
+
+// Detail: both faces at print size, the parsed record, and any issues.
+async function openDetail(c){
+  const panel = $('detailPanel');
+  const land = c.rotate===90 || c.rotate===270;
+  panel.innerHTML = `
+    <div class="btn close" id="btnCloseDetail">Close</div>
+    <h2>${esc(c.fields.name||'(no name)')}</h2>
+    <div style="color:var(--text-soft);font-size:12.5px;">${esc(c.fields.type||'')} · page ${c.front.n}${c.back?` + back on page ${c.back.n}`:''}</div>
+    ${c.issues.map(i=> `<div class="notice bad">${esc(i)}</div>`).join('')}
+    <div class="row" id="detailFaces"><div style="color:var(--text-soft);">Rendering at print size…</div></div>
+    <table>
+      <tr><td>Image names</td><td><code>${esc(c.id)}.png</code>${c.back?` <code>${esc(c.id)}-back.png</code>`:''} · screen size <code>…@sm.png</code></td></tr>
+      <tr><td>Orientation</td><td>${land ? `Landscape — shown turned ${c.rotate===90?'clockwise':'counter-clockwise'} (detected from its text)` : c.rotate===180 ? 'Upside down?' : 'Portrait'}</td></tr>
+      ${Object.entries(c.fields).map(([k,v])=> `<tr class="${v===''?'empty':''}"><td>${esc(k)}</td><td>${v==='' ? '(empty)' : esc(v)}</td></tr>`).join('')}
+    </table>`;
+  $('detail').classList.remove('hidden');
+  $('btnCloseDetail').addEventListener('click', closeDetail);
+  const faces = [];
+  const front = await renderFace(c.front, SIZES.print);
+  faces.push({label:`Front · ${SIZES.print.w}×${SIZES.print.h}`, r:front, rot: land ? c.rotate : 0});
+  if(c.back) faces.push({label:`Back · ${SIZES.print.w}×${SIZES.print.h}`, r: await renderFace(c.back, SIZES.print), rot:c.backRotate||0});
+  const w = 300, h = w*1.4;
+  $('detailFaces').innerHTML = faces.map(f=>{
+    const sideways = f.rot===90 || f.rot===270;
+    const bw = sideways ? h : w, bh = sideways ? w : h;
+    return `<div><div class="big" style="width:${bw}px;height:${bh}px;position:relative;">
+        <img src="${f.r.url}" style="position:absolute;left:50%;top:50%;width:${w}px;height:${h}px;transform:translate(-50%,-50%) rotate(${f.rot}deg);">
+      </div><div class="cap">${esc(f.label)}</div></div>`;
+  }).join('');
+}
+function closeDetail(){ $('detail').classList.add('hidden'); }
+$('detail').addEventListener('click', e=>{ if(e.target.id==='detail') closeDetail(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeDetail(); });
+
+// For testing: load a PDF by URL (?pdf=/path.pdf) instead of dropping one.
+(async ()=>{
+  const u = new URLSearchParams(location.search).get('pdf');
+  if(!u) return;
+  setStatus('Opening…', 0);
+  try{ doc = await pdfjsLib.getDocument(u).promise; await loadDoc(); }
+  catch(err){ setStatus('Could not read that PDF: ' + err.message); }
+})();
+</script>
+</body>
+</html>
