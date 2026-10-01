@@ -819,7 +819,10 @@ const HOVER_PREVIEW_SCHEME_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 7/5); // rot
 const HOVER_FETCH_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 1.3); // fetched a bit larger than display size for crispness
 
 // Structural fields the app's mechanics depend on — never treated as generic filters.
-const NEVER_FIELDS = new Set(['name','ability','id','is_double_sided','front-image-url','back-image-url','last-updated','is-double-sided','rotate']);
+// Bookkeeping columns the Card Updater writes alongside the card data (which
+// fields a card's record had, art fingerprints, small-image links) — never card fields.
+const CARD_UPDATER_COLUMNS = ['record-fields','image-hash','back-image-hash','front-image-sm-url','back-image-sm-url'];
+const NEVER_FIELDS = new Set(['name','ability','id','is_double_sided','front-image-url','back-image-url','last-updated','is-double-sided','rotate', ...CARD_UPDATER_COLUMNS]);
 // Numeric stat fields where a literal 0 means "doesn't have this stat" (as opposed to
 // cost/difficulty, which already correctly use a blank cell for "not applicable").
 const ZERO_AS_ABSENT = new Set(['health-number','attack','block','inherent-arcane','inherent-diplomacy','inherent-stealth','leadership','willpower']);
@@ -953,6 +956,8 @@ function processRawRows(rawRows, setName, sheetId, isEchoMode){
     r.loyalty = (r.loyalty||'').trim();
     r._front = (r['front-image-url']||'').trim();
     r._back = (r['back-image-url']||'').trim();
+    noteSmallImage(r._front, r['front-image-sm-url']);
+    noteSmallImage(r._back, r['back-image-sm-url']);
 
     if(isEchoMode){
       r._doubleSided = String(r.is_double_sided).trim().toUpperCase()==='TRUE';
@@ -1254,6 +1259,8 @@ function applySetImages(images){
     if(!c) return;
     const front = String(img['front-image-url']||'').trim();
     const back = String(img['back-image-url']||'').trim();
+    noteSmallImage(front, img['front-image-sm-url']);
+    noteSmallImage(back, img['back-image-sm-url']);
     if(c._front !== front || c._back !== back){ c._front = front; c._back = back; changed = true; }
   });
   if(changed) renderAll();
@@ -2580,8 +2587,19 @@ function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;
 // print-production scale — large enough that fetching/decoding it client-side is
 // what was actually failing PDF export for PNG-sourced cards. `force` skips the
 // "leave images alone" branch above and always appends the width, same as a PDF.
+// Cards published by the Card Updater also have a small copy of their art
+// (375 px wide, a third of the download). Known small copies, by full-size link:
+// whenever a picture is wanted at small-copy size or less, the small one is used.
+// Cards without one (every older card) are unaffected.
+const smallImageFor = new Map();
+const SMALL_IMAGE_MAX_WIDTH = 400;
+function noteSmallImage(url, smallUrl){
+  const sm = String(smallUrl||'').trim();
+  if(url && sm) smallImageFor.set(url, sm);
+}
 function sizedUrl(url, w, force){
   if(!url) return '';
+  if(!force && w <= SMALL_IMAGE_MAX_WIDTH && smallImageFor.has(url)) url = smallImageFor.get(url);
   const isImage = !force && url.includes('#img-src');
   const base = url.split('#')[0]; // e.g. ".../d/<fileId>" or ".../d/<fileId>?v=<token>" (see Code.gs artUrl())
   if(isImage) return base;
@@ -3018,7 +3036,10 @@ function openPreview(c){
    VERSION HISTORY + DIFF
    ========================================================================= */
 async function fetchCardHistory(cardId){
-  const url = `${WEBAPP_URL}?cardHistory=${encodeURIComponent(cardId)}&idToken=${encodeURIComponent(state.idToken)}`;
+  // The card's own set sheet: each set keeps its own change history.
+  const card = state.byId.get(cardId);
+  const sheetParam = card && card._sheetId ? `&sheetId=${encodeURIComponent(card._sheetId)}` : '';
+  const url = `${WEBAPP_URL}?cardHistory=${encodeURIComponent(cardId)}&idToken=${encodeURIComponent(state.idToken)}${sheetParam}`;
   try{
     const res = await fetch(url + '&_=' + Date.now());
     if(!res.ok) throw new Error('HTTP '+res.status);
@@ -3064,7 +3085,7 @@ async function openHistoryModal(card){
 // field, ignoring structural/meta columns. Art is compared separately since it's
 // shown as images, not text.
 function computeCardDiff(oldRow, currentCard){
-  const skip = new Set(['id','is_double_sided','front-image-url','back-image-url','last-updated','archived-at']);
+  const skip = new Set(['id','is_double_sided','front-image-url','back-image-url','last-updated','archived-at','archive-reason','changed-fields','rotate', ...CARD_UPDATER_COLUMNS]);
   const keys = new Set([...Object.keys(oldRow), ...Object.keys(currentCard)]);
   const diffs = [];
   keys.forEach(k=>{
@@ -3075,15 +3096,25 @@ function computeCardDiff(oldRow, currentCard){
   });
   const oldFront = (oldRow['front-image-url']||'').trim();
   const oldBack = (oldRow['back-image-url']||'').trim();
-  const artChanged = oldFront !== (currentCard._front||'') || oldBack !== (currentCard._back||'');
-  return { diffs, artChanged, oldFront };
+  // Card Updater cards carry fingerprints of their art. Their old images aren't
+  // kept (new art replaces the file in place), so the art change is told from the
+  // fingerprints, and there's no "then" picture to show.
+  const fingerprinted = !!(oldRow['image-hash'] || currentCard['image-hash']);
+  const artChanged = fingerprinted
+    ? ['image-hash','back-image-hash'].some(k=> (oldRow[k]||'') !== (currentCard[k]||''))
+    : oldFront !== (currentCard._front||'') || oldBack !== (currentCard._back||'');
+  return { diffs, artChanged, oldFront: fingerprinted ? '' : oldFront, fingerprinted };
 }
 
 function openDiffModal(oldRow, currentCard){
   document.getElementById('diffModalTitle').textContent = `Changes since ${formatDateLabel(oldRow['archived-at'])}`;
-  const { diffs, artChanged, oldFront } = computeCardDiff(oldRow, currentCard);
+  const { diffs, artChanged, oldFront, fingerprinted } = computeCardDiff(oldRow, currentCard);
   let html = '';
-  if(artChanged){
+  if(artChanged && fingerprinted){
+    html += `<div class="diff-art-row">
+      <div><div class="diff-art-label">Now (art updated)</div>${currentCard._front?`<img src="${escapeHtml(sizedUrl(currentCard._front,300))}">`:'<div class="diff-art-empty">No image</div>'}</div>
+    </div>`;
+  } else if(artChanged){
     html += `<div class="diff-art-row">
       <div><div class="diff-art-label">Then</div>${oldFront?`<img src="${escapeHtml(sizedUrl(oldFront,300))}">`:'<div class="diff-art-empty">No image</div>'}</div>
       <div><div class="diff-art-label">Now</div>${currentCard._front?`<img src="${escapeHtml(sizedUrl(currentCard._front,300))}">`:'<div class="diff-art-empty">No image</div>'}</div>

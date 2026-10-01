@@ -371,19 +371,32 @@ function syncImageLinksForSheet(sheet, folderId) {
   const headers = data[0];
 
   const idCol = headers.indexOf('id');
-  let frontCol = headers.indexOf('front-image-url');
-  let backCol = headers.indexOf('back-image-url');
-
-  if (frontCol === -1) { frontCol = headers.length; sheet.getRange(1, frontCol + 1).setValue('front-image-url'); }
-  if (backCol === -1) { backCol = headers.length + (frontCol === headers.length ? 1 : 0); sheet.getRange(1, backCol + 1).setValue('back-image-url'); }
 
   const folder = DriveApp.getFolderById(folderId);
   const files = folder.getFiles();
   const nameToFile = {}; // base name (extension stripped) -> the Drive File itself, so artUrl() below can still see its extension
+  let hasSmall = false;
   while (files.hasNext()) {
     const f = files.next();
-    nameToFile[f.getName().replace(artExtensionPattern(), '')] = f;
+    const base = f.getName().replace(artExtensionPattern(), '');
+    nameToFile[base] = f;
+    if (/@sm$/.test(base)) hasSmall = true;
   }
+
+  // The link columns this sheet gets, and the art file each one points at for a
+  // card id. The small-image columns (id@sm / id-back@sm, made by the Card
+  // Updater) are only added once a set actually has small images, so older
+  // sets' sheets are left exactly as they were.
+  const linkCols = [
+    { header: 'front-image-url', suffix: '' },
+    { header: 'back-image-url', suffix: '-back' },
+    { header: 'front-image-sm-url', suffix: '@sm', optional: true },
+    { header: 'back-image-sm-url', suffix: '-back@sm', optional: true },
+  ].filter(c => !c.optional || hasSmall || headers.indexOf(c.header) !== -1);
+  linkCols.forEach(c => {
+    c.col = headers.indexOf(c.header);
+    if (c.col === -1) { c.col = headers.length; headers.push(c.header); sheet.getRange(1, c.col + 1).setValue(c.header); }
+  });
 
   // Batched and change-detected rather than one setValue() call per cell, per row,
   // on every single call — this function runs on every getSetData request from every
@@ -397,31 +410,26 @@ function syncImageLinksForSheet(sheet, folderId) {
   // nothing at all.
   const numRows = data.length - 1;
   if (numRows <= 0) return;
-  const newFront = new Array(numRows);
-  const newBack = new Array(numRows);
-  let frontChanged = false;
-  let backChanged = false;
-  for (let r = 1; r < data.length; r++) {
-    const i = r - 1;
-    const id = data[r][idCol];
-    if (!id) {
-      // No id on this row -> leave its front/back cells exactly as they were (same
-      // as the original per-row "continue"), so the batch write below is a no-op here.
-      newFront[i] = [data[r][frontCol]];
-      newBack[i] = [data[r][backCol]];
-      continue;
+  linkCols.forEach(c => {
+    const newVals = new Array(numRows);
+    let changed = false;
+    for (let r = 1; r < data.length; r++) {
+      const i = r - 1;
+      const id = data[r][idCol];
+      const old = data[r][c.col] == null ? '' : data[r][c.col]; // a just-added column reads as blank
+      if (!id) {
+        // No id on this row -> leave its cell exactly as it was, so the batch
+        // write below is a no-op here.
+        newVals[i] = [old];
+        continue;
+      }
+      const f = nameToFile[id + c.suffix];
+      const url = f ? artUrl(f.getId(), f.getName(), f.getLastUpdated()) : '';
+      newVals[i] = [url];
+      if (url !== old) changed = true;
     }
-    const frontFile = nameToFile[id];
-    const backFile = nameToFile[id + '-back'];
-    const frontUrl = frontFile ? artUrl(frontFile.getId(), frontFile.getName(), frontFile.getLastUpdated()) : '';
-    const backUrl = backFile ? artUrl(backFile.getId(), backFile.getName(), backFile.getLastUpdated()) : '';
-    newFront[i] = [frontUrl];
-    newBack[i] = [backUrl];
-    if (frontUrl !== data[r][frontCol]) frontChanged = true;
-    if (backUrl !== data[r][backCol]) backChanged = true;
-  }
-  if (frontChanged) sheet.getRange(2, frontCol + 1, numRows, 1).setValues(newFront);
-  if (backChanged) sheet.getRange(2, backCol + 1, numRows, 1).setValues(newBack);
+    if (changed) sheet.getRange(2, c.col + 1, numRows, 1).setValues(newVals);
+  });
 }
 
 // Every set across every known game, flattened — the one lookup both
@@ -635,12 +643,16 @@ function syncSetImages(folderId, idToken, callback) {
     const idCol = headers.indexOf('id');
     const frontCol = headers.indexOf('front-image-url');
     const backCol = headers.indexOf('back-image-url');
+    const frontSmCol = headers.indexOf('front-image-sm-url');
+    const backSmCol = headers.indexOf('back-image-sm-url');
     const images = data.slice(1)
       .filter(row => idCol !== -1 && row[idCol])
       .map(row => ({
         id: row[idCol],
         'front-image-url': frontCol !== -1 ? row[frontCol] : '',
         'back-image-url': backCol !== -1 ? row[backCol] : '',
+        'front-image-sm-url': frontSmCol !== -1 ? row[frontSmCol] : '',
+        'back-image-sm-url': backSmCol !== -1 ? row[backSmCol] : '',
       }));
 
     result = { ok: true, sheetId: sheetFile.getId(), images: images };
@@ -1086,7 +1098,7 @@ function getOrCreateHistorySheet(currentHeaders, ss) {
 // ---------------------------------------------------------------------
 function doGet(e) {
   if (e.parameter.cardHistory) {
-    return getCardHistory(e.parameter.cardHistory, e.parameter.idToken, e.parameter.callback);
+    return getCardHistory(e.parameter.cardHistory, e.parameter.idToken, e.parameter.callback, e.parameter.sheetId);
   }
   if (e.parameter.latestPcio) {
     return getLatestPcioInfo(e.parameter.folderId, e.parameter.callback);
@@ -1166,36 +1178,40 @@ function requestAccess(game, setName, requesterEmail, note, callback) {
 }
 
 // GATED: reveals a card's past versions (including possibly unreleased
-// text/stats it once had), given just its id. This function always reads
-// the CardHistory tab of THIS script's own bound spreadsheet (never an
-// arbitrary one), so the access check is: which known set's sheet IS
-// this bound spreadsheet, and does the caller have Drive access to that
-// set's folder? Same verifyIdToken/emailCanAccessFolder pattern as
-// getSetData/getCardsBySheetId above.
-function getCardHistory(cardId, idToken, callback) {
+// text/stats it once had), given just its id. Only known sets' spreadsheets
+// are ever read (never an arbitrary sheet id), and only those whose set
+// folder the caller has Drive access to. Same verifyIdToken/
+// emailCanAccessFolder pattern as getSetData/getCardsBySheetId above.
+// Past versions live in two places: the script's own spreadsheet (where
+// Pending Updates have always archived, whatever set the card is in) and, for
+// cards published with the Card Updater, the CardHistory tab of the card's own
+// set sheet (sheetId). Both are read; each only if the person has access to
+// the set that spreadsheet belongs to.
+function getCardHistory(cardId, idToken, callback, sheetId) {
   let rows = [];
   try {
     const v = verifyIdToken(idToken);
     if (!v.email) throw new Error('Not signed in, or your sign-in has expired — please sign in again. [debug: ' + v.reason + ']');
 
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const match = getKnownSetSheets().find(s => s.sheetId === ss.getId());
-    if (!match) throw new Error('This card library is not registered as a known set.');
-    if (!emailCanAccessFolder(v.email, match.folderId)) throw new Error('You do not have access to this set.');
-
-    const sheet = ss.getSheetByName(HISTORY_SHEET_NAME);
-    if (sheet) {
+    const known = getKnownSetSheets();
+    const sources = [SpreadsheetApp.getActiveSpreadsheet().getId()];
+    if (sheetId && sources.indexOf(sheetId) === -1) sources.push(sheetId);
+    sources.forEach(id => {
+      const match = known.find(s => s.sheetId === id);
+      if (!match || !emailCanAccessFolder(v.email, match.folderId)) return;
+      const sheet = SpreadsheetApp.openById(id).getSheetByName(HISTORY_SHEET_NAME);
+      if (!sheet) return;
       const data = sheet.getDataRange().getValues();
       const headers = data[0];
       const idCol = headers.indexOf('id');
-      rows = data.slice(1)
+      data.slice(1)
         .filter(row => row[idCol] === cardId)
-        .map(row => {
+        .forEach(row => {
           const obj = {};
           headers.forEach((h, i) => { obj[h] = (row[i] instanceof Date) ? row[i].toISOString() : row[i]; });
-          return obj;
+          rows.push(obj);
         });
-    }
+    });
   } catch (err) {
     // Fails "closed" as an empty history rather than a raw error — a caller
     // without access sees the same empty result as a genuinely history-less
