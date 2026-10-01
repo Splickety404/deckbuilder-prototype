@@ -614,6 +614,15 @@ function folderIdFrom(text){
 }
 $('btnConnect').addEventListener('click', connectSet);
 $('destInput').addEventListener('keydown', e=>{ if(e.key==='Enter') connectSet(); });
+// Connect by itself once a usable link is pasted or typed (and signed in).
+let destTimer = 0;
+$('destInput').addEventListener('input', ()=>{
+  clearTimeout(destTimer);
+  destTimer = setTimeout(()=>{
+    const id = folderIdFrom($('destInput').value);
+    if(id && idToken && !(dest && dest.cardsFolderId===id)) connectSet();
+  }, 400);
+});
 async function connectSet(){
   const id = folderIdFrom($('destInput').value);
   const note = $('destNote');
@@ -660,7 +669,17 @@ function cuDiff(record, row, preHeaders){
 function compareWithSet(){
   const ready = dest && cards.length && cards.every(c=> c.img.front && (!c.back || c.img.back));
   document.querySelectorAll('.cmp').forEach(el=> el.classList.toggle('hidden', !ready));
-  if(!ready){ cards.forEach(c=> delete c.diff); $('publishBar').classList.add('hidden'); return; }
+  if(!ready){
+    cards.forEach(c=> delete c.diff);
+    // Cards are loaded but no set yet: say what's missing instead of showing nothing.
+    const waiting = cards.length && !dest;
+    $('publishBar').classList.toggle('hidden', !waiting);
+    if(waiting){
+      $('publishText').textContent = 'Connect a set (step 2) to see which cards are new or changed, and to publish them.';
+      $('btnPublish').classList.add('disabled');
+    }
+    return;
+  }
   const count = {'new':0,'updated':0,'art':0,'fields added':0,'unchanged':0};
   cards.forEach(c=>{
     const row = dest.rowById.get(c.id) || null;
