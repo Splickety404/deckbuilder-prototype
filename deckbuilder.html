@@ -443,6 +443,8 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 #export-progress{font-size:13px;padding:8px;display:none;}
 #preconList .row-item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
 .load-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-soft);margin:4px 0 6px;}
+.precon-status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-soft);padding:6px 2px 8px;}
+.precon-status .mini-spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);animation:eoo-spin 0.9s linear infinite;flex:none;}
 .precon-warn{font-size:12px;color:var(--danger);font-weight:600;}
 #loadModalBody .row-item{display:flex;justify-content:space-between;align-items:center;padding:8px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
 #setsList .row-item, #sealedSetList .row-item, #gameSelectList .row-item{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
@@ -741,6 +743,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
         <input type="file" id="importFileInput" accept=".txt,.json">
         <div id="preconSection" style="display:none;">
           <div class="load-section-title">Preconstructed decks</div>
+          <div id="preconStatus" class="precon-status" style="display:none;"></div>
           <div id="preconList"></div>
           <div class="load-section-title" style="margin-top:12px;">Your saved decks</div>
         </div>
@@ -3978,17 +3981,20 @@ async function fetchPrecons(gameFolderId){
   return result; // {ok, canEdit, decks:[{fileId, fileName, name, updated, deck, missing:[ids]}]}
 }
 let preconsLoading = null;
+let preconsStatus = ''; // 'loading' | 'error' | '' — shown in the Load window
+function preconModalOpen(){ return !document.getElementById('loadModal').classList.contains('hidden'); }
 // notify: on game load, tell editors about out-of-date decks.
 async function loadPrecons(notify){
   const gameId = state.currentGameFolderId;
   if(!gameId || preconsLoading) return preconsLoading;
+  preconsStatus = 'loading';
   preconsLoading = (async ()=>{
     try{
       const res = await fetchPrecons(gameId);
       if(gameId !== state.currentGameFolderId) return; // switched games meanwhile
       state.precons = { canEdit: !!res.canEdit, decks: res.decks || [] };
+      preconsStatus = '';
       applyPreconUI();
-      if(!document.getElementById('loadModal').classList.contains('hidden')) renderPreconList();
       const stale = state.precons.decks.filter(p=> p.missing && p.missing.length);
       if(notify && state.precons.canEdit && stale.length){
         const names = stale.slice(0,3).map(p=> p.name).join(', ') + (stale.length>3 ? '…' : '');
@@ -3996,10 +4002,14 @@ async function loadPrecons(notify){
       }
     }catch(e){
       console.error('Could not load preconstructed decks:', e); // non-fatal: the section just stays as it was
+      preconsStatus = 'error';
     }finally{
       preconsLoading = null;
+      if(preconsStatus==='loading') preconsStatus = ''; // switched games meanwhile
+      if(preconModalOpen()) renderPreconList();
     }
   })();
+  if(preconModalOpen()) renderPreconList();
   return preconsLoading;
 }
 function applyPreconUI(){
@@ -4007,7 +4017,14 @@ function applyPreconUI(){
 }
 function renderPreconList(){
   const decks = state.precons.decks;
-  document.getElementById('preconSection').style.display = decks.length ? '' : 'none';
+  // While the list is being fetched (or if that failed), say so — with the
+  // decks already known still listed underneath.
+  document.getElementById('preconSection').style.display = (decks.length || preconsStatus) ? '' : 'none';
+  const status = document.getElementById('preconStatus');
+  status.style.display = preconsStatus ? '' : 'none';
+  status.innerHTML = preconsStatus==='loading'
+    ? `<span class="mini-spinner"></span>${decks.length ? 'Checking for new preconstructed decks…' : 'Loading preconstructed decks…'}`
+    : preconsStatus==='error' ? 'Couldn\'t load preconstructed decks — close and reopen this window to try again.' : '';
   const el = document.getElementById('preconList');
   el.innerHTML = decks.map((p,i)=>{
     const n = (p.missing||[]).length;
