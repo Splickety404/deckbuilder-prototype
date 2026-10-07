@@ -441,6 +441,9 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .export-option h3{font-size:13px;margin-bottom:4px;}
 .export-option p{font-size:12.5px;margin:0;color:var(--text-soft);}
 #export-progress{font-size:13px;padding:8px;display:none;}
+#preconList .row-item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+.load-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-soft);margin:4px 0 6px;}
+.precon-warn{font-size:12px;color:var(--danger);font-weight:600;}
 #loadModalBody .row-item{display:flex;justify-content:space-between;align-items:center;padding:8px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
 #setsList .row-item, #sealedSetList .row-item, #gameSelectList .row-item{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
 #sealedSetList .row-item, #gameSelectList .row-item{cursor:pointer;}
@@ -562,6 +565,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     <div class="btn" id="btnSealedDecks" title="Randomly build BOTH the Overlord and Champion decks (plus the scheme deck) from a single shared card pool, following the sealed-deck rules">Get Sealed Decks</div>
     <div class="btn" id="btnSaveDeck">Save</div>
     <div class="btn" id="btnLoadDeck">Load ▾</div>
+    <div class="btn" id="btnPrecon" style="display:none;" title="Share this deck with every player as a preconstructed deck">Precon ▾</div>
     <div class="btn btn-accent" id="btnExport">Export ▾</div>
     <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
     <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
@@ -735,8 +739,21 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
           <div class="btn" id="btnImportFile" style="justify-content:center;margin-top:8px;">Choose a file…</div>
         </div>
         <input type="file" id="importFileInput" accept=".txt,.json">
+        <div id="preconSection" style="display:none;">
+          <div class="load-section-title">Preconstructed decks</div>
+          <div id="preconList"></div>
+          <div class="load-section-title" style="margin-top:12px;">Your saved decks</div>
+        </div>
         <div id="loadModalBody"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- Preconstructed deck: add / update (game-folder editors only) -->
+  <div class="modal-overlay hidden" id="preconModal">
+    <div class="modal-box" style="width:min(440px,92vw);">
+      <div class="modal-header"><h2>Preconstructed deck</h2><div class="btn btn-icon" data-close="preconModal">✕</div></div>
+      <div class="modal-body" id="preconModalBody"></div>
     </div>
   </div>
 
@@ -900,6 +917,7 @@ const state = {
   genericBacks: { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' }, // Echo mode's own per-type card backs, for exports only
   genericBackUrl: '', // generic (non-Echo) mode's single shared "back.png"/"back.pdf" per game, for exports only
   pcio: {found:false}, // this game's .pcio board file, if it has one — see applyPcioUI()
+  precons: {canEdit:false, decks:[]}, // this game's preconstructed decks this person may see — see loadPrecons()
   flippedCards: new Set(), // ids currently showing their real back (double-sided cards only)
 };
 // Whichever key state.decks/state.filtersByType should currently be read/written
@@ -1223,6 +1241,7 @@ async function loadData(silent){
       setSyncStatus('synced ' + new Date().toLocaleTimeString() + (state.hasImages?'':' — no art columns found yet'));
     }
     if(state.currentGameFolderId) loadGameAssetsInBackground(state.currentGameFolderId);
+    if(state.currentGameFolderId) loadPrecons(true);
   }catch(err){
     console.error(err);
     setSyncStatus('sync failed — check your connection ('+err.message+')');
@@ -1438,6 +1457,8 @@ function resetGameSpecificState(){
   state.genericBacks = { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' };
   state.genericBackUrl = '';
   state.pcio = {found:false};
+  state.precons = {canEdit:false, decks:[]};
+  applyPreconUI();
   applyPcioUI(); // reset all three playingcards.io-flavored UI bits until the new game's loadData() re-evaluates them
 }
 
@@ -3405,6 +3426,7 @@ document.getElementById('btnSaveDeck').addEventListener('click', ()=>{
 });
 
 function refreshLoadModal(){
+  renderPreconList();
   const decks = getSavedDecks();
   const body = document.getElementById('loadModalBody');
   const names = Object.keys(decks);
@@ -3429,6 +3451,7 @@ function refreshLoadModal(){
     curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
     curDeck().schemeIds = d.schemeIds||[];
     curDeck().name = b.dataset.load;
+    curDeck().preconFileId = null;
     document.getElementById('loadModal').classList.add('hidden');
     renderAll();
   });
@@ -3461,6 +3484,7 @@ function refreshLoadModal(){
   });
 }
 document.getElementById('btnLoadDeck').addEventListener('click', ()=>{
+  loadPrecons(false); // pick up decks added since the game loaded
   refreshLoadModal();
   document.getElementById('loadModal').classList.remove('hidden');
 });
@@ -3530,6 +3554,7 @@ function importDeckFromJson(d){
   curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
   curDeck().name = d.name || '';
   curDeck().sourceExportedAt = d.exportedAt || null;
+  curDeck().preconFileId = null; // set again by loadPreconDeck when this came from one
   renderAll();
   toast('Deck imported.');
 }
@@ -3897,10 +3922,9 @@ function computeSourceSheets(){
   return [...seen.entries()].map(([sheetId, setName])=>({sheetId, setName}));
 }
 
-document.getElementById('optExportJson').addEventListener('click', ()=>{
-  const now = new Date().toISOString();
-  curDeck().sourceExportedAt = now;
-  const data = {
+// The deck as a .json decklist — also the preconstructed-deck file format.
+function deckJsonData(now){
+  return {
     formatVersion:2, // v2 adds sourceSheets
     name: document.getElementById('deckNameInput').value.trim()||'Untitled Deck',
     deckType: activeDeckKey(),
@@ -3917,9 +3941,145 @@ document.getElementById('optExportJson').addEventListener('click', ()=>{
     deckCards: Object.fromEntries(curDeck().deckCards),
     sourceSheets: computeSourceSheets(),
   };
+}
+document.getElementById('optExportJson').addEventListener('click', ()=>{
+  const now = new Date().toISOString();
+  curDeck().sourceExportedAt = now;
+  const data = deckJsonData(now);
   downloadBlob(JSON.stringify(data,null,2), deckFileBase()+'.json', 'application/json');
   renderAll();
 });
+
+/* =========================================================================
+   PRECONSTRUCTED DECKS — deck .json files in the game's own folder (see
+   getPrecons/savePrecon in Code.gs). Decks hold card ids only, so a loaded
+   one always shows today's cards. People who can edit the game folder also
+   get the Precon button (add the open deck as one, or update the one it was
+   loaded from) and a heads-up when a deck has cards that no longer exist.
+   ========================================================================= */
+async function fetchPrecons(gameFolderId){
+  const url = `${WEBAPP_URL}?precons=${encodeURIComponent(gameFolderId)}&idToken=${encodeURIComponent(state.idToken)}`;
+  let result;
+  try{
+    result = await fetchWithTimeout(url + '&_=' + Date.now(), 30000);
+  }catch(fetchErr){
+    result = await new Promise((resolve,reject)=>{
+      const cbName = '__eooPreconCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to list preconstructed decks.')); }, 40000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+  if(!result.ok) throw new Error(result.error || 'Could not list preconstructed decks.');
+  return result; // {ok, canEdit, decks:[{fileId, fileName, name, updated, deck, missing:[ids]}]}
+}
+let preconsLoading = null;
+// notify: on game load, tell editors about out-of-date decks.
+async function loadPrecons(notify){
+  const gameId = state.currentGameFolderId;
+  if(!gameId || preconsLoading) return preconsLoading;
+  preconsLoading = (async ()=>{
+    try{
+      const res = await fetchPrecons(gameId);
+      if(gameId !== state.currentGameFolderId) return; // switched games meanwhile
+      state.precons = { canEdit: !!res.canEdit, decks: res.decks || [] };
+      applyPreconUI();
+      if(!document.getElementById('loadModal').classList.contains('hidden')) renderPreconList();
+      const stale = state.precons.decks.filter(p=> p.missing && p.missing.length);
+      if(notify && state.precons.canEdit && stale.length){
+        const names = stale.slice(0,3).map(p=> p.name).join(', ') + (stale.length>3 ? '…' : '');
+        toast(`${stale.length} preconstructed deck${stale.length>1?'s':''} contain${stale.length>1?'':'s'} removed cards: ${names}`, 'Review', ()=> document.getElementById('btnLoadDeck').click());
+      }
+    }catch(e){
+      console.error('Could not load preconstructed decks:', e); // non-fatal: the section just stays as it was
+    }finally{
+      preconsLoading = null;
+    }
+  })();
+  return preconsLoading;
+}
+function applyPreconUI(){
+  document.getElementById('btnPrecon').style.display = state.precons.canEdit ? '' : 'none';
+}
+function renderPreconList(){
+  const decks = state.precons.decks;
+  document.getElementById('preconSection').style.display = decks.length ? '' : 'none';
+  const el = document.getElementById('preconList');
+  el.innerHTML = decks.map((p,i)=>{
+    const n = (p.missing||[]).length;
+    const warn = state.precons.canEdit && n ? `<div class="precon-warn" title="Load it, swap those cards out, then use Precon ▾ › Update">⚠ ${n} removed card${n>1?'s':''} — needs updating</div>` : '';
+    return `<div class="row-item">
+      <span>${escapeHtml(p.name)} <span style="font-size:12px;color:var(--text-soft);">(${escapeHtml(p.deck.deckType)})</span>${warn}</span>
+      <span class="btn btn-sm" data-precon="${i}">Load</span>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('[data-precon]').forEach(b=> b.onclick = ()=> loadPreconDeck(decks[Number(b.dataset.precon)]));
+}
+function loadPreconDeck(p){
+  importDeckFromJson(p.deck);
+  curDeck().name = p.name;
+  curDeck().preconFileId = p.fileId;
+  document.getElementById('deckNameInput').value = p.name;
+  document.getElementById('loadModal').classList.add('hidden');
+  renderAll();
+  toast(`Loaded the preconstructed deck "${p.name}".`);
+}
+
+document.getElementById('btnPrecon').addEventListener('click', ()=>{
+  const body = document.getElementById('preconModalBody');
+  const fromPrecon = curDeck().preconFileId ? state.precons.decks.find(p=> p.fileId===curDeck().preconFileId) : null;
+  const name = document.getElementById('deckNameInput').value.trim();
+  body.innerHTML = `
+    <p style="margin-top:0;color:var(--text-soft);font-size:13px;">Shares the deck that's open now with every player who can see its cards. They'll find it under Load ▾ right away.</p>
+    ${fromPrecon ? `<p style="font-size:13px;">This deck was loaded from <b>${escapeHtml(fromPrecon.name)}</b>.</p>
+      <div class="btn btn-accent" id="btnPreconUpdate" style="justify-content:center;width:100%;box-sizing:border-box;margin-bottom:8px;">Update "${escapeHtml(fromPrecon.name)}"</div>` : ''}
+    <div class="btn ${fromPrecon?'':'btn-accent'}" id="btnPreconAdd" style="justify-content:center;width:100%;box-sizing:border-box;">Add as a new precon${name ? ` — "${escapeHtml(name)}"` : ''}</div>`;
+  document.getElementById('preconModal').classList.remove('hidden');
+  if(fromPrecon) document.getElementById('btnPreconUpdate').onclick = ()=> savePreconDeck(fromPrecon.fileId);
+  document.getElementById('btnPreconAdd').onclick = ()=> savePreconDeck('');
+});
+
+// fileId: the deck file to overwrite, or '' to add a new one.
+async function savePreconDeck(fileId){
+  let name = document.getElementById('deckNameInput').value.trim();
+  if(!name){
+    name = (prompt('Name this preconstructed deck:') || '').trim();
+    if(!name) return;
+    curDeck().name = name;
+    document.getElementById('deckNameInput').value = name;
+  }
+  const deck = deckJsonData(new Date().toISOString());
+  const ids = [deck.leaderId, deck.bonusCardId, deck.extraCardId, ...(deck.schemeIds||[]), ...Object.keys(deck.deckCards||{})].filter(Boolean);
+  if(!ids.length){ toast('This deck is empty.'); return; }
+  const gone = [...new Set(ids)].filter(id=> !state.byId.has(id));
+  if(gone.length && !confirm(`This deck still has ${gone.length} card${gone.length>1?'s':''} that no longer exist${gone.length>1?'':'s'}. Save it anyway?`)) return;
+  const send = async (replace)=>{
+    const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'precSave', idToken: state.idToken, gameFolderId: state.currentGameFolderId, fileId, deck, replace }) });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    if(!j.ok) throw new Error(j.error || 'Unknown error');
+    return j;
+  };
+  try{
+    toast('Saving the preconstructed deck…');
+    let res = await send(false);
+    if(res.exists){
+      if(!confirm(`There's already a deck file named "${res.fileName}" in the game folder. Replace it with this deck?`)) return;
+      res = await send(true);
+    }
+    curDeck().preconFileId = res.fileId;
+    document.getElementById('preconModal').classList.add('hidden');
+    await loadPrecons(false);
+    toast(res.created ? `Added "${name}" as a preconstructed deck — players can load it now.` : `Updated the preconstructed deck "${name}".`);
+  }catch(e){
+    toast('Could not save the preconstructed deck: ' + e.message);
+  }
+}
 
 /* =========================================================================
    TOAST

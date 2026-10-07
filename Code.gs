@@ -1118,6 +1118,9 @@ function doGet(e) {
   if (e.parameter.gameAssets) {
     return getGameAssets(e.parameter.gameAssets, e.parameter.idToken, e.parameter.callback);
   }
+  if (e.parameter.precons) {
+    return getPrecons(e.parameter.precons, e.parameter.idToken, e.parameter.callback);
+  }
   if (e.parameter.cardsForSheet) {
     return getCardsBySheetId(e.parameter.cardsForSheet, e.parameter.idToken, e.parameter.callback);
   }
@@ -1494,6 +1497,11 @@ function doPost(e) {
     const req = JSON.parse(e.postData.contents);
     const v = verifyIdToken(req.idToken);
     if (!v.email) throw new Error('Not signed in, or your sign-in has expired — please sign in again.');
+    if (req.action === 'precSave') {
+      result = savePrecon(req.gameFolderId, v.email, req.fileId || '', req.deck, !!req.replace);
+      result.ok = true;
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
     const target = cuResolveTarget(req.cardsFolderId, v.email);
     if (req.action === 'cuState') result = cuState(target);
     else if (req.action === 'cuUpload') result = cuUpload(target, req.files || []);
@@ -1751,4 +1759,109 @@ function cuWrite(target, records, email, comprehensive) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// =====================================================================
+// PRECONSTRUCTED DECKS — deck .json files (the deckbuilder's own "Export ›
+// JSON decklist" format) placed directly in a GAME's folder. Decks only
+// hold card ids, so loading one always shows the cards as they are now.
+//
+// getPrecons (GET ?precons=<gameFolderId>): the decks this person may see.
+// A deck is shown only if they can access every set its cards are in —
+// worked out here from the card ids themselves, never from what the file
+// says, since deck files also carry card names. Ids that are in no set at
+// all (removed cards) don't count against anyone, and are reported as
+// `missing` so editors can see which decks are out of date.
+// canEdit: whether this person can edit the game folder (and so can add
+// or update decks there, via savePrecon).
+// =====================================================================
+function preconCardIds(d) {
+  const ids = [];
+  const add = id => { if (id) ids.push(String(id)); };
+  add(d.leaderId); add(d.bonusCardId); add(d.extraCardId);
+  (d.schemeIds || []).forEach(add);
+  (d.deckOrder || []).forEach(add);
+  Object.keys(d.deckCards || {}).forEach(add);
+  return ids.filter((id, i) => ids.indexOf(id) === i);
+}
+
+function getPrecons(gameFolderId, idToken, callback) {
+  let result;
+  try {
+    const v = verifyIdToken(idToken);
+    if (!v.email) throw new Error('Not signed in, or your sign-in has expired — please sign in again. [debug: ' + v.reason + ']');
+    const game = KNOWN_GAMES.find(g => g.folderId === gameFolderId);
+    if (!game) throw new Error('Unknown game.');
+    const sets = getSetsForGame(game);
+    const canSee = {};
+    sets.forEach(s => { try { canSee[s.folderId] = emailCanAccessFolder(v.email, s.folderId); } catch (e) { canSee[s.folderId] = false; } });
+    if (!sets.some(s => canSee[s.folderId])) throw new Error('You do not have access to this game.');
+
+    // Which set every card id is in.
+    const setOf = {};
+    sets.forEach(s => {
+      try {
+        const sheet = SpreadsheetApp.openById(s.sheetId).getSheetByName('Sheet1');
+        if (!sheet) return;
+        const data = sheet.getDataRange().getValues();
+        const idCol = data[0].indexOf('id');
+        if (idCol === -1) return;
+        data.slice(1).forEach(r => { const id = String(r[idCol] || '').trim(); if (id && !setOf[id]) setOf[id] = s.folderId; });
+      } catch (e) { /* an unreadable set contributes no ids */ }
+    });
+
+    const decks = [];
+    const it = DriveApp.getFolderById(gameFolderId).getFiles();
+    while (it.hasNext()) {
+      const f = it.next();
+      if (!/\.json$/i.test(f.getName())) continue;
+      let d;
+      try { d = JSON.parse(f.getBlob().getDataAsString()); } catch (e) { continue; }
+      if (!d || !d.deckType) continue; // not a deck file
+      const ids = preconCardIds(d);
+      const missing = ids.filter(id => !setOf[id]);
+      if (ids.some(id => setOf[id] && !canSee[setOf[id]])) continue; // uses a set this person can't see
+      decks.push({ fileId: f.getId(), fileName: f.getName(), name: d.name || f.getName().replace(/\.json$/i, ''), updated: f.getLastUpdated().toISOString(), deck: d, missing: missing });
+    }
+    decks.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    let canEdit = false;
+    try { canEdit = emailCanEditFolder(v.email, gameFolderId); } catch (e) { /* treat as no */ }
+    result = { ok: true, canEdit: canEdit, decks: decks };
+  } catch (err) {
+    result = { ok: false, error: String((err && err.message) || err) };
+  }
+  const json = JSON.stringify(result);
+  if (callback) return ContentService.createTextOutput(callback + '(' + json + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
+}
+
+// Adds a deck to the game folder (fileId empty) or overwrites an existing
+// one in place (fileId given: must be a .json directly in that game folder).
+// Only for people who can edit the game folder. A new deck whose file name
+// is already taken is refused with `exists` (that file's id) unless
+// replace=true, so the person can choose to overwrite it.
+function savePrecon(gameFolderId, email, fileId, deck, replace) {
+  const game = KNOWN_GAMES.find(g => g.folderId === gameFolderId);
+  if (!game) throw new Error('Unknown game.');
+  if (!emailCanEditFolder(email, gameFolderId)) throw new Error('You need edit access to the game folder to change preconstructed decks.');
+  if (!deck || !deck.deckType) throw new Error('That isn\'t a deck.');
+  const json = JSON.stringify(deck, null, 2);
+  const folder = DriveApp.getFolderById(gameFolderId);
+  const inFolder = f => { const p = f.getParents(); while (p.hasNext()) if (p.next().getId() === gameFolderId) return true; return false; };
+  if (!fileId) {
+    const fileName = String(deck.name || 'Deck').replace(/[\\/:*?"<>|]+/g, '_').trim() + '.json';
+    const same = folder.getFilesByName(fileName);
+    if (same.hasNext()) {
+      const existing = same.next();
+      if (!replace) return { exists: existing.getId(), fileName: fileName };
+      fileId = existing.getId();
+    } else {
+      const f = folder.createFile(fileName, json, 'application/json');
+      return { fileId: f.getId(), fileName: fileName, created: true };
+    }
+  }
+  const f = DriveApp.getFileById(fileId);
+  if (!/\.json$/i.test(f.getName()) || !inFolder(f)) throw new Error('That deck file isn\'t in this game\'s folder.');
+  f.setContent(json); // same file, so Drive keeps the earlier version in its history
+  return { fileId: fileId, fileName: f.getName(), created: false };
 }
