@@ -125,6 +125,12 @@ tr.empty td:last-child{color:var(--text-soft);}
 .tag.st-updated{background:var(--warn-bg);color:var(--warn);}
 .tag.st-art{background:var(--warn-bg);color:var(--warn);}
 .tag.st-added{background:var(--accent-soft);color:var(--accent);}
+.tag.st-removed{background:var(--danger-bg);color:var(--danger);}
+.tile.removed{cursor:default;border-style:dashed;}
+.tile.removed:hover{border-color:var(--danger);transform:none;}
+.tile.removed .faces{opacity:.55;}
+.comp{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none;}
+.comp input{width:16px;height:16px;accent-color:var(--danger);}
 #publishBar{position:sticky;bottom:0;display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap;
   padding:12px 20px;background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -4px 16px rgba(0,0,0,.12);z-index:5;}
 #publishText{font-size:13px;flex:1;min-width:200px;}
@@ -172,9 +178,11 @@ tr.empty td:last-child{color:var(--text-soft);}
     <span class="chip cmp hidden">Art updated <b id="nArt">0</b></span>
     <span class="chip cmp hidden">Fields added <b id="nAdded">0</b></span>
     <span class="chip cmp hidden">Unchanged <b id="nSame">0</b></span>
+    <span class="chip rm hidden">Will be removed <b id="nRemoved">0</b></span>
     <span class="spacer"></span>
     <div class="btn on" data-filter="all">All</div>
     <div class="btn cmp hidden" data-filter="changes">Changes</div>
+    <div class="btn rm hidden" data-filter="removed">Removed</div>
     <div class="btn" data-filter="issues">Issues</div>
     <div class="btn" data-filter="land">Landscape</div>
     <div class="btn" data-filter="backs">With backs</div>
@@ -184,6 +192,7 @@ tr.empty td:last-child{color:var(--text-soft);}
 </main>
 <div id="publishBar" class="hidden">
   <div id="publishText"></div>
+  <label class="comp hidden" id="compLabel" title="Tick only when this PDF has every card in the set: cards on file that aren't in it get removed."><input type="checkbox" id="chkComprehensive" autocomplete="off"> Comprehensive — this PDF is every card in the set</label>
   <div class="btn primary" id="btnPublish">Publish</div>
 </div>
 <div id="detail" class="hidden"><div class="panel" id="detailPanel"></div></div>
@@ -234,6 +243,7 @@ async function loadFile(file){
   }
 }
 async function loadDoc(){
+  $('chkComprehensive').checked = false;
   recordTextFromOperators.autoHyphens = 0;
   for(let n=1; n<=doc.numPages; n++){
     pages.push(await readPage(n));
@@ -518,10 +528,29 @@ function tileHtml(c){
     <div class="meta">${esc(c.fields.type||'')}</div>
     <div class="tags">${tags}</div>`;
 }
+// A card on file that a comprehensive publish would remove — shown with its
+// current art from the set.
+function removedTileHtml(row){
+  const link = String(row['front-image-sm-url'] || row['front-image-url'] || '');
+  let src = link.split('#')[0];
+  if(src && link.includes('#pdf-src')){ const q = src.indexOf('?'); src = q===-1 ? src+'=w300' : src.slice(0,q)+'=w300'+src.slice(q); }
+  const rot = parseInt(row.rotate,10) || 0, land = rot===90 || rot===270;
+  const style = land ? `style="transform:translate(-50%,-50%) rotate(${rot}deg)"` : '';
+  return `<div class="faces${land?' land':''}"><div class="face front${land?' land':''}">${src ? `<img src="${esc(src)}" ${style} referrerpolicy="no-referrer">` : ''}</div></div>
+    <div class="name" title="${esc(row.name)}">${esc(row.name||'(no name)')}</div>
+    <div class="meta">${esc(row.type||'')}</div>
+    <div class="tags"><span class="tag st-removed">Will be removed</span></div>`;
+}
+function visibleRemoved(){
+  if(!['all','changes','removed'].includes(filter)) return [];
+  const q = $('search').value.trim().toLowerCase();
+  return removedRows.filter(r=> !q || [r.id, r.name, r.type, r.subtitle].some(v=> String(v||'').toLowerCase().includes(q)));
+}
 function renderGrid(){
   const grid = $('grid');
-  grid.innerHTML = visibleCards().map(c=> `<div class="tile" data-id="${esc(c.id)}">${tileHtml(c)}</div>`).join('');
-  grid.querySelectorAll('.tile').forEach(t=> t.addEventListener('click', ()=> openDetail(cards.find(c=> c.id===t.dataset.id))));
+  grid.innerHTML = (filter==='removed' ? [] : visibleCards()).map(c=> `<div class="tile" data-id="${esc(c.id)}">${tileHtml(c)}</div>`).join('')
+    + visibleRemoved().map(r=> `<div class="tile removed" title="On file in the set but not in this PDF">${removedTileHtml(r)}</div>`).join('');
+  grid.querySelectorAll('.tile:not(.removed)').forEach(t=> t.addEventListener('click', ()=> openDetail(cards.find(c=> c.id===t.dataset.id))));
 }
 function updateTile(c){
   const el = document.querySelector(`.tile[data-id="${CSS.escape(c.id)}"]`);
@@ -630,6 +659,7 @@ async function connectSet(){
   if(!idToken){ note.textContent = 'Sign in first (step 1).'; note.className = 'step-note bad'; return; }
   note.textContent = 'Connecting…'; note.className = 'step-note';
   dest = null;
+  $('chkComprehensive').checked = false;
   try{
     const st = await api('cuState', { cardsFolderId: id });
     dest = { cardsFolderId:id, ...st, rowById: new Map(st.rows.map(r=> [r.id, r])) };
@@ -666,9 +696,22 @@ function cuDiff(record, row, preHeaders){
   const status = changed.length ? 'updated' : artChanged ? 'art' : (added.length || hashesMissing) ? 'fields added' : 'unchanged';
   return { status, changed, added };
 }
+// Comprehensive publish: cards on file in the set that aren't in this PDF.
+// The box is ticked deliberately for each PDF and set: it starts unticked and
+// unticks itself whenever a new PDF is loaded or a set is connected.
+let removedRows = [];
+$('chkComprehensive').checked = false;
+$('chkComprehensive').addEventListener('change', compareWithSet);
 function compareWithSet(){
   const ready = dest && cards.length && cards.every(c=> c.img.front && (!c.back || c.img.back));
   document.querySelectorAll('.cmp').forEach(el=> el.classList.toggle('hidden', !ready));
+  $('compLabel').classList.toggle('hidden', !ready);
+  const comprehensive = !!(ready && $('chkComprehensive').checked);
+  const inPdf = new Set(cards.map(c=> c.id));
+  removedRows = comprehensive ? dest.rows.filter(r=> !inPdf.has(r.id)) : [];
+  document.querySelectorAll('.rm').forEach(el=> el.classList.toggle('hidden', !comprehensive));
+  $('nRemoved').textContent = removedRows.length;
+  if(!comprehensive && filter==='removed') document.querySelector('#toolbar [data-filter="all"]').click();
   if(!ready){
     cards.forEach(c=> delete c.diff);
     // Cards are loaded but no set yet: say what's missing instead of showing nothing.
@@ -690,11 +733,14 @@ function compareWithSet(){
   $('nAdded').textContent = count['fields added']; $('nSame').textContent = count['unchanged'];
   renderGrid();
   const todo = cards.length - count['unchanged'];
+  const nRm = removedRows.length;
   $('publishBar').classList.remove('hidden');
-  $('publishText').innerHTML = todo
-    ? `Publish to <b>${esc(dest.game)} › ${esc(dest.set)}</b>: ${[['new','new'],['updated','updated'],['art','art updated'],['fields added','with fields added']].filter(([k])=>count[k]).map(([k,t])=>`${count[k]} ${t}`).join(', ')}. ${count['unchanged']} unchanged card${count['unchanged']===1?'':'s'} will be left alone.`
-    : `Everything in this PDF already matches <b>${esc(dest.game)} › ${esc(dest.set)}</b>. Nothing to publish.`;
-  $('btnPublish').classList.toggle('disabled', !todo);
+  const parts = [['new','new'],['updated','updated'],['art','art updated'],['fields added','with fields added']].filter(([k])=>count[k]).map(([k,t])=>`${count[k]} ${t}`);
+  if(nRm) parts.push(`<b style="color:var(--danger)">${nRm} removed</b>`);
+  $('publishText').innerHTML = (todo || nRm)
+    ? `Publish to <b>${esc(dest.game)} › ${esc(dest.set)}</b>: ${parts.join(', ')}. ${count['unchanged']} unchanged card${count['unchanged']===1?'':'s'} will be left alone.`
+    : `Everything in this PDF already matches <b>${esc(dest.game)} › ${esc(dest.set)}</b>${comprehensive ? ', and nothing on file is missing from it' : ''}. Nothing to publish.`;
+  $('btnPublish').classList.toggle('disabled', !(todo || nRm));
 }
 
 const blobToBase64 = blob=> new Promise((res, rej)=>{
@@ -708,8 +754,21 @@ let publishing = false;
 async function publish(){
   if(publishing || !dest) return;
   const todo = cards.filter(c=> c.diff && c.diff.status!=='unchanged');
-  if(!todo.length) return;
-  if(!confirm(`Publish ${todo.length} card${todo.length===1?'':'s'} to ${dest.game} › ${dest.set}?\n\nImages go into its Cards folder (older images of the same cards go to the Drive trash), and card data into its sheet.`)) return;
+  const removing = removedRows.slice();
+  if(!todo.length && !removing.length) return;
+  let msg = `Publish to ${dest.game} › ${dest.set}?\n\n`;
+  if(todo.length) msg += `${todo.length} card${todo.length===1?'':'s'} added or changed. Images go into its Cards folder (older images of the same cards go to the Drive trash), and card data into its sheet.\n\n`;
+  if(removing.length){
+    const names = removing.slice(0,10).map(r=> '  • ' + (r.name || r.id)).join('\n') + (removing.length>10 ? `\n  …and ${removing.length-10} more` : '');
+    msg += `${removing.length} card${removing.length===1?'':'s'} REMOVED from the set (not in this PDF). Their last version is kept in the change history; their images go to the Drive trash:\n${names}\n\n`;
+  }
+  if(!confirm(msg.trim())) return;
+  // A big removal is more likely a half-finished export than real deletions.
+  if(removing.length > dest.rows.length/4){
+    const typed = prompt(`This removes ${removing.length} of the ${dest.rows.length} cards in ${dest.set}. If that's really right, type the set's name to confirm:`);
+    if(typed==null) return;
+    if(typed.trim().toLowerCase() !== String(dest.set).trim().toLowerCase()){ alert('That doesn\'t match the set name — nothing was published.'); return; }
+  }
   publishing = true;
   $('btnPublish').classList.add('disabled');
   try{
@@ -744,9 +803,12 @@ async function publish(){
     await flush();
     // 2) Records, in one go — the server re-checks every card itself.
     setStatus('Saving card data…');
-    const res = await api('cuWrite', { records: todo.map(c=> ({ fields: recordFor(c) })) });
+    const res = await api('cuWrite', {
+      records: todo.map(c=> ({ fields: recordFor(c) })),
+      comprehensive: $('chkComprehensive').checked ? { pdfIds: cards.map(c=> c.id), expectRemove: removing.map(r=> r.id) } : null,
+    });
     const k = res.counts;
-    setStatus(`Published to ${dest.game} › ${dest.set}: ${k['new']} new, ${k['updated']} updated, ${k['art']} art updated, ${k['fields added']} with fields added, ${k['unchanged']} unchanged. ${res.archived} older version${res.archived===1?'':'s'} saved to the change history.`);
+    setStatus(`Published to ${dest.game} › ${dest.set}: ${k['new']} new, ${k['updated']} updated, ${k['art']} art updated, ${k['fields added']} with fields added, ${k['unchanged']} unchanged${res.removed ? `, ${res.removed} removed` : ''}. ${res.archived} older version${res.archived===1?'':'s'} saved to the change history.`);
     await connectSet(); // re-read the set: everything should now show as Unchanged
   }catch(err){
     console.error(err);

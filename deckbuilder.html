@@ -3036,9 +3036,13 @@ function openPreview(c){
    VERSION HISTORY + DIFF
    ========================================================================= */
 async function fetchCardHistory(cardId){
-  // The card's own set sheet: each set keeps its own change history.
+  // The card's own set sheet: each set keeps its own change history. A card
+  // that's no longer in any set (removed) could be from any of them, so
+  // every loaded set is asked.
   const card = state.byId.get(cardId);
-  const sheetParam = card && card._sheetId ? `&sheetId=${encodeURIComponent(card._sheetId)}` : '';
+  const sheetIds = card ? [card._sheetId] : [...new Set(state.cards.map(c=> c._sheetId))];
+  const list = sheetIds.filter(Boolean).join(',');
+  const sheetParam = list ? `&sheetId=${encodeURIComponent(list)}` : '';
   const url = `${WEBAPP_URL}?cardHistory=${encodeURIComponent(cardId)}&idToken=${encodeURIComponent(state.idToken)}${sheetParam}`;
   try{
     const res = await fetch(url + '&_=' + Date.now());

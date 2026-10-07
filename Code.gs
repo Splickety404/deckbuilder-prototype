@@ -1185,8 +1185,9 @@ function requestAccess(game, setName, requesterEmail, note, callback) {
 // Past versions live in two places: the script's own spreadsheet (where
 // Pending Updates have always archived, whatever set the card is in) and, for
 // cards published with the Card Updater, the CardHistory tab of the card's own
-// set sheet (sheetId). Both are read; each only if the person has access to
-// the set that spreadsheet belongs to.
+// set sheet (sheetId — or several, comma-separated, when the card's set isn't
+// known, e.g. a removed card). All are read; each only if the person has
+// access to the set that spreadsheet belongs to.
 function getCardHistory(cardId, idToken, callback, sheetId) {
   let rows = [];
   try {
@@ -1195,7 +1196,10 @@ function getCardHistory(cardId, idToken, callback, sheetId) {
 
     const known = getKnownSetSheets();
     const sources = [SpreadsheetApp.getActiveSpreadsheet().getId()];
-    if (sheetId && sources.indexOf(sheetId) === -1) sources.push(sheetId);
+    String(sheetId || '').split(',').forEach(id => {
+      id = id.trim();
+      if (id && sources.indexOf(id) === -1) sources.push(id);
+    });
     sources.forEach(id => {
       const match = known.find(s => s.sheetId === id);
       if (!match || !emailCanAccessFolder(v.email, match.folderId)) return;
@@ -1481,7 +1485,8 @@ function authorizeMail() {
 //               file of the same card face (same name, any extension);
 //               a same-named file is replaced IN PLACE, keeping its Drive
 //               id so existing image links keep working
-//   cuWrite  -> { records:[{fields:{...}}] } — see cuWrite for the rules
+//   cuWrite  -> { records:[{fields:{...}}], comprehensive? } — see cuWrite
+//               for the rules
 // =====================================================================
 function doPost(e) {
   let result;
@@ -1492,7 +1497,7 @@ function doPost(e) {
     const target = cuResolveTarget(req.cardsFolderId, v.email);
     if (req.action === 'cuState') result = cuState(target);
     else if (req.action === 'cuUpload') result = cuUpload(target, req.files || []);
-    else if (req.action === 'cuWrite') result = cuWrite(target, req.records || [], v.email);
+    else if (req.action === 'cuWrite') result = cuWrite(target, req.records || [], v.email, req.comprehensive || null);
     else throw new Error('Unknown action.');
     result.ok = true;
   } catch (err) {
@@ -1616,6 +1621,13 @@ function cuUpload(target, files) {
 // (record-fields), or, for a card that predates the Card Updater, every
 // column the Sheet already had. Fields a record doesn't include keep their
 // old values. card-updater.html shows the same statuses before publishing.
+//
+// comprehensive = { pdfIds, expectRemove }: the PDF was every card in the set.
+// Cards on file whose id isn't in pdfIds are removed: their last version is
+// archived to CardHistory ("deletion", as Pending Updates deletions always
+// were), their row is deleted, and their images (id, id@sm, id-back,
+// id-back@sm, any extension) go to the Drive trash. expectRemove is what the
+// person was shown; if the set no longer matches it, nothing is written.
 const CU_MANAGED = ['record-fields', 'last-updated', 'front-image-url', 'back-image-url'];
 function cuDiff(record, row, preHeaders) {
   if (!row) return { status: 'new', changed: [], added: [] };
@@ -1633,7 +1645,7 @@ function cuDiff(record, row, preHeaders) {
   return { status: status, changed: changed, added: added };
 }
 
-function cuWrite(target, records, email) {
+function cuWrite(target, records, email, comprehensive) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('Someone else is publishing right now — try again in a moment.');
   try {
@@ -1654,6 +1666,20 @@ function cuWrite(target, records, email) {
     });
     const rowById = {};
     rows.forEach(o => { if (o.id && !rowById[o.id]) rowById[o.id] = o; });
+
+    // Comprehensive: which cards on file aren't in the PDF. Checked against
+    // what the person confirmed before anything is written.
+    let removeIds = [];
+    if (comprehensive) {
+      const inPdf = {};
+      (comprehensive.pdfIds || []).forEach(id => { inPdf[cuCell(id)] = true; });
+      if (!Object.keys(inPdf).length) throw new Error('A comprehensive publish needs the ids of the cards in the PDF.');
+      removeIds = Object.keys(rowById).filter(id => !inPdf[id]).sort();
+      const expected = (comprehensive.expectRemove || []).map(cuCell).sort();
+      if (removeIds.join('|') !== expected.join('|')) {
+        throw new Error('The set changed since it was compared (cards to remove: ' + removeIds.length + ' now, ' + expected.length + ' shown). Nothing was saved — connect again and re-check.');
+      }
+    }
 
     const now = new Date().toISOString();
     const counts = { new: 0, updated: 0, art: 0, 'fields added': 0, unchanged: 0 };
@@ -1681,6 +1707,14 @@ function cuWrite(target, records, email) {
     });
     ['record-fields', 'last-updated'].forEach(h => { if (headers.indexOf(h) === -1) headers.push(h); });
 
+    // Removed cards: archived, then dropped from the rows written below.
+    const removeSet = {};
+    removeIds.forEach(id => {
+      removeSet[id] = true;
+      archive.push([Object.assign({}, rowById[id]), 'deletion', '']);
+    });
+    const keptRows = removeIds.length ? rows.filter(o => !removeSet[o.id]) : rows;
+
     // Archive first, then write the whole sheet as plain text in one go (plain
     // text so values like "002" or "TRUE" read back exactly as written).
     if (archive.length) {
@@ -1695,13 +1729,25 @@ function cuWrite(target, records, email) {
       const start = hist.getLastRow() + 1;
       hist.getRange(start, 1, histRows.length, histHeaders.length).setNumberFormat('@').setValues(histRows);
     }
-    const out = [headers.map(h => (/^__col\d+$/.test(h) ? '' : h))].concat(rows.map(o => headers.map(h => (o[h] == null ? '' : o[h]))));
+    const out = [headers.map(h => (/^__col\d+$/.test(h) ? '' : h))].concat(keptRows.map(o => headers.map(h => (o[h] == null ? '' : o[h]))));
     const range = sheet.getRange(1, 1, out.length, headers.length);
     range.setNumberFormat('@');
     range.setValues(out);
+    // Fewer rows than before (cards removed): clear what's left below.
+    const lastRow = sheet.getLastRow();
+    if (lastRow > out.length) sheet.getRange(out.length + 1, 1, lastRow - out.length, Math.max(sheet.getLastColumn(), headers.length)).clearContent();
+    if (removeIds.length) {
+      const imageNames = {};
+      removeIds.forEach(id => ['', '@sm', '-back', '-back@sm'].forEach(sfx => { imageNames[id + sfx] = true; }));
+      const it = target.cardsFolder.getFiles();
+      while (it.hasNext()) {
+        const f = it.next();
+        if (imageNames[f.getName().replace(/\.[^.]+$/, '')]) f.setTrashed(true);
+      }
+    }
     syncImageLinksForSheet(sheet, target.cardsFolderId);
     try { CacheService.getScriptCache().remove('whoAmI:' + email); } catch (cacheErr) { /* not fatal */ }
-    return { counts: counts, archived: archive.length, sheetUrl: ss.getUrl() };
+    return { counts: counts, archived: archive.length - removeIds.length, removed: removeIds.length, sheetUrl: ss.getUrl() };
   } finally {
     lock.releaseLock();
   }
