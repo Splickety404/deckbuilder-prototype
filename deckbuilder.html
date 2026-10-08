@@ -219,6 +219,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 #deckRulesChecklist .rule-ok{color:var(--ok);}
 #deckRulesChecklist .rule-warn{color:var(--danger);}
 #deckStatsPanel, #viewStatsPanel, #deckSetupPanel, #deckRulesPanel{margin:8px 0;font-size:12px;}
+#filters-panel #viewStatsPanel{margin:0 0 10px;}
 #deckStatsPanel summary, #viewStatsPanel summary, #deckSetupPanel summary, #deckRulesPanel summary{cursor:pointer;font-weight:600;color:var(--text-soft);padding:4px 2px;border-radius:var(--radius-sm);}
 #deckStatsPanel summary:hover, #viewStatsPanel summary:hover, #deckSetupPanel summary:hover, #deckRulesPanel summary:hover{background:var(--surface-2);}
 #deckStatsBody, #viewStatsBody{padding:6px 2px 2px 2px;}
@@ -236,8 +237,10 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .stat-bar-value{width:26px;flex:none;text-align:left;font-weight:600;color:var(--text);}
 #deck-drop-zone{
   position:relative; /* containing block for the absolutely-positioned .reorder-indicator */
-  min-height:120px;padding:6px;flex:1;
-  display:flex;flex-direction:column;gap:5px;overflow-y:auto;
+  /* Grows with the deck rather than scrolling on its own — the whole left
+     panel (#deck-panel) is the one scrolling area. */
+  min-height:120px;padding:6px;flex:1 0 auto;
+  display:flex;flex-direction:column;gap:5px;
   border:1px dashed var(--border);border-radius:var(--radius);
 }
 #deck-drop-zone.dragover{background:var(--accent-soft);border-color:var(--accent);}
@@ -577,7 +580,6 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
       <div class="tab" data-type="champion">Champion</div>
     </div>
     <div class="btn" id="btnSealedDecks" title="Randomly build BOTH the Overlord and Champion decks (plus the scheme deck) from a single shared card pool, following the sealed-deck rules">Get Sealed Decks</div>
-    <div class="btn btn-accent" id="btnSendToRoom" style="display:none;" title="Play this deck in the game room">Send deck to room ↗</div>
     <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
     <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
     <div class="btn btn-sm" id="btnManageSets" title="Which card sets you have access to">Sets</div>
@@ -604,6 +606,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
           <div class="btn btn-sm" id="btnLoadDeck">Load ▾</div>
           <div class="btn btn-sm" id="btnPrecon" style="display:none;" title="Share this deck with every player as a preconstructed deck">Precon ▾</div>
           <div class="btn btn-sm btn-accent" id="btnExport">Export ▾</div>
+          <div class="btn btn-sm btn-accent" id="btnSendToRoom" style="display:none;" title="Play this deck in the game room">Send to room ↗</div>
         </div>
       </div>
       <div id="deck-controls">
@@ -658,6 +661,10 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     </section>
 
     <aside id="filters-panel">
+      <details id="viewStatsPanel">
+        <summary>Current View Stats</summary>
+        <div id="viewStatsBody"></div>
+      </details>
       <h3>Filters</h3>
       <label id="deckViewToggle" class="toggle-row">
         <input type="checkbox" id="deckViewCheckbox">
@@ -667,10 +674,6 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
       <input type="text" id="searchBox" placeholder="Search name / ability...">
       <div id="filterGroups"></div>
       <div class="btn btn-sm" id="btnClearFilters" style="width:100%;justify-content:center;margin-top:6px;">Clear Filters</div>
-      <details id="viewStatsPanel">
-        <summary>Current View Stats</summary>
-        <div id="viewStatsBody"></div>
-      </details>
     </aside>
 
   </div>
