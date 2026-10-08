@@ -325,7 +325,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .zone.zone-editable{cursor:move;}
 .zone-label{position:absolute;top:0;left:0;transform-origin:0 0;transform:rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1)) translate(6px,4px);font-size:11px;font-weight:700;color:var(--text);
   background:rgba(20,22,27,.55);border-radius:var(--radius-pill);padding:2px 10px;pointer-events:none;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 12px);}
+  line-height:1.25; /* the font size is set to fit the zone — see fitZoneLabel */}
 .zone-handle{position:absolute;width:16px;height:16px;background:var(--accent);border:2px solid var(--accent-contrast);
   border-radius:6px;transition:transform .15s var(--bounce);}
 .zone-handle:hover{transform:scale(1.2);}
@@ -2334,6 +2334,7 @@ function applyView(){
   world.style.setProperty('--zoom', state.view.scale);
   world.style.setProperty('--inv-zoom', 1/state.view.scale);
   syncGridBackground();
+  fitAllZoneLabels(); // zone labels shrink/hide to fit the zone at this zoom
 }
 // Rotation is a SEPARATE outer layer (#boardRotate) around the already-panned/zoomed
 // content, pivoting on the viewport's own visual center — this avoids needing to
@@ -6722,6 +6723,40 @@ function applyZoneSnap(x, y, w, h){
   return {x,y};
 }
 const ZONE_DEFAULT_OPACITY = 0.28; // fill opacity for zones made before opacity was editable
+// A zone's label shrinks to fit inside the zone as it appears on screen
+// (labels are zoom-independent, so the room available changes with zoom and
+// with which way the board is turned): from 11px down to 6pt (8px); if even
+// that won't fit, the label is hidden. Re-run on every zoom (see applyView).
+const ZONE_LABEL_MAX_PX = 11, ZONE_LABEL_MIN_PX = 8; // 8px = 6pt
+const ZONE_LABEL_PAD_X = 20, ZONE_LABEL_INSET = 12; // the label's own side padding; its offset into the zone plus a little margin
+let zoneLabelMeasure = null;
+function zoneLabelTextWidth(text){ // at ZONE_LABEL_MAX_PX
+  if(!zoneLabelMeasure){
+    zoneLabelMeasure = document.createElement('canvas').getContext('2d');
+    zoneLabelMeasure.font = `700 ${ZONE_LABEL_MAX_PX}px ${getComputedStyle(document.body).fontFamily}`;
+  }
+  return zoneLabelMeasure.measureText(text).width;
+}
+function fitZoneLabel(labelEl, z){
+  const sideways = (state.viewRotation||0) % 180 !== 0;
+  const scale = state.view.scale;
+  const availW = (sideways ? z.h : z.w)*scale - ZONE_LABEL_INSET;
+  const availH = (sideways ? z.w : z.h)*scale - 8;
+  const textW = zoneLabelTextWidth(z.label || '');
+  let px = ZONE_LABEL_MAX_PX;
+  if(textW > 0) px = Math.min(px, (availW - ZONE_LABEL_PAD_X) / textW * ZONE_LABEL_MAX_PX); // width grows in step with the font size
+  px = Math.min(px, (availH - 4) / 1.25); // and the label's height (line + padding) has to fit too
+  px = Math.floor(px*10)/10;
+  if(!(px >= ZONE_LABEL_MIN_PX)){ labelEl.style.display = 'none'; return; }
+  labelEl.style.display = '';
+  labelEl.style.fontSize = px + 'px';
+}
+function fitAllZoneLabels(){
+  document.querySelectorAll('#boardWorld .zone > .zone-label').forEach(el=>{
+    const z = state.zones.get(el.parentElement.dataset.id);
+    if(z) fitZoneLabel(el, z);
+  });
+}
 function renderZones(){
   const world = document.getElementById('boardWorld');
   state.zones.forEach(z=>{
@@ -6741,7 +6776,7 @@ function renderZones(){
     const labelEl = el.querySelector('.zone-label');
     if(labelEl){
       placeAtPoint(labelEl, boxPointToward(box, view, -1, -1, 0));
-      labelEl.style.maxWidth = `calc(${view % 180 ? z.h : z.w}px * var(--zoom,1) - 12px)`; // the zone's on-screen width (the label itself is zoom-independent)
+      fitZoneLabel(labelEl, z);
     }
     const lockEl = el.querySelector('.lock-badge');
     if(lockEl){ lockEl.classList.add('pov'); placeAtPoint(lockEl, boxPointToward(box, view, 1, -1, 0)); }
