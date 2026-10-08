@@ -1663,6 +1663,45 @@ function shareCardImagesWithLink(folderId) {
   return summary;
 }
 
+// Run by hand from the Apps Script editor: turns a game folder's card-back
+// PDFs (back / overlordback / schemeback / championback .pdf) into PNGs —
+// a PDF has to be rendered by Google on every request, which is slow and
+// isn't cached, so backs loaded slowly and flickered in the game room.
+// Uses Drive's own rendering of the PDF (its preview image) at card size
+// (1050px tall, like the Card Updater's print images), saves it as
+// <name>.png in the same folder, shares it with anyone with the link, and
+// only then moves the PDF to the Drive trash (recoverable for 30 days).
+// Defaults to the Echo of Omens game folder.
+function convertGameBacksToPng(gameFolderId) {
+  const game = KNOWN_GAMES.find(g => g.label === 'Echo of Omens');
+  const folder = DriveApp.getFolderById(gameFolderId || game.folderId);
+  const names = ['back', 'overlordback', 'schemeback', 'championback'];
+  const report = [];
+  const it = folder.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    const m = /^(.*)\.pdf$/i.exec(f.getName());
+    if (!m || names.indexOf(m[1].toLowerCase()) === -1) continue;
+    try {
+      const meta = Drive.Files.get(f.getId(), { fields: 'thumbnailLink', supportsAllDrives: true });
+      if (!meta.thumbnailLink) { report.push(f.getName() + ': Drive has no preview image for it yet — skipped'); continue; }
+      const url = meta.thumbnailLink.replace(/=s\d+$/, '') + '=s1050';
+      const resp = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+      if (resp.getResponseCode() !== 200) { report.push(f.getName() + ': preview download failed (HTTP ' + resp.getResponseCode() + ') — skipped'); continue; }
+      const png = resp.getBlob().getAs('image/png').setName(m[1] + '.png');
+      const made = folder.createFile(png);
+      const shared = shareWithLink(made);
+      f.setTrashed(true);
+      report.push(f.getName() + ' → ' + made.getName() + ' (' + Math.round(png.getBytes().length / 1024) + ' KB' + (shared ? ', shared with anyone with the link' : ', NOT shared: ' + shareWithLink.lastError) + '); PDF moved to the trash');
+    } catch (err) {
+      report.push(f.getName() + ': ' + String((err && err.message) || err) + ' — left as it was');
+    }
+  }
+  const summary = 'Card backs in "' + folder.getName() + '": ' + (report.length ? report.join(' | ') : 'no back PDFs found.');
+  Logger.log(summary);
+  return summary;
+}
+
 // Writes card records into the set's Sheet. For each card (matched by id):
 //  - not there yet            -> added ("new")
 //  - a value it had changed   -> the old row is archived to CardHistory
