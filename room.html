@@ -1438,10 +1438,17 @@ function sizedUrl(url, w){
 // cache a URL without putting anything on screen; nothing here holds a
 // reference to the Image past this call because nothing needs to — once
 // the browser has it cached, the real <img> tag rendered later reuses it.
+// The Image objects are kept (heldArt) so the browser keeps them in memory:
+// the board redraws its cards after nearly every move, and a picture no
+// longer held anywhere could otherwise be fetched (and pop in) all over again.
+const heldArt = new Map();
 function preloadCardFace(url){
   if(!url) return;
-  new Image().src = sizedUrl(url, 320);
-  new Image().src = sizedUrl(url, 700);
+  [sizedUrl(url, 320), sizedUrl(url, 700)].forEach(src=>{
+    if(heldArt.has(src)) return;
+    const img = new Image(); img.decoding = 'async'; img.src = src;
+    heldArt.set(src, img);
+  });
 }
 // Picks the right "generic" card-back image for a card that isn't itself a
 // genuinely double-sided card (cardFaceHtml/pieceFaceHtml/showHoverPreview all
@@ -4182,10 +4189,25 @@ function findOverlapTarget(draggedPiece, clientX, clientY){
   const w = clientToWorld(clientX, clientY);
   return findPileAtWorld(w.x, w.y, draggedPiece.id);
 }
+// pieceBounds is the UNROTATED frame (see its comment). A pile turned 90°
+// looks 196 wide and 140 tall on the table, so anything asking "is this
+// point/card actually over that pile?" uses this instead: pieceBounds turned
+// by the pile's own angle about its pivot (the anchor card's center, the
+// same center .piece rotates around), as the box that covers it.
+function pieceVisualBounds(p){
+  const b = pieceBounds(p);
+  const deg = normAngle(p.rotation||0);
+  if(!deg) return b;
+  const cx = p.x + (p.kind==='image' ? pieceW(p) : PIECE_W)/2, cy = p.y + (p.kind==='image' ? pieceH(p) : PIECE_H)/2;
+  const pts = [[b.x,b.y],[b.x+b.w,b.y],[b.x,b.y+b.h],[b.x+b.w,b.y+b.h]].map(([x,y])=> rotateVector(x-cx, y-cy, -deg));
+  const xs = pts.map(v=> cx+v.x), ys = pts.map(v=> cy+v.y);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  return { x:minX, y:minY, w:Math.max(...xs)-minX, h:Math.max(...ys)-minY };
+}
 function findPileAtWorld(worldX, worldY, excludeId){
   for(const p of state.pieces.values()){
     if(p.id===excludeId || p.kind==='image' || !onCurrentTab(p)) continue; // custom images are never a merge target
-    const b = pieceBounds(p);
+    const b = pieceVisualBounds(p);
     if(worldX>=b.x && worldX<=b.x+b.w && worldY>=b.y && worldY<=b.y+b.h) return p;
   }
   return null;
@@ -4212,12 +4234,12 @@ function stackDropTarget(p){
 // all (see resolveDragTarget below) — so it never changes the existing
 // cursor-precise behavior for hovering a bigger stack or a splayed pile.
 function findSingleCardTuckTarget(draggedPiece){
-  const db = pieceBounds(draggedPiece);
+  const db = pieceVisualBounds(draggedPiece);
   let best = null, bestDist = Infinity;
   state.pieces.forEach(p=>{
     if(p.id===draggedPiece.id || p.kind==='image' || !onCurrentTab(p)) return;
     if(p.splayed || p.cardIds.length!==1) return; // only a lone unsplayed single card is a tuck target
-    const b = pieceBounds(p);
+    const b = pieceVisualBounds(p);
     const touching = db.x < b.x+b.w && db.x+db.w > b.x && db.y < b.y+b.h && db.y+db.h > b.y;
     if(!touching) return;
     const dx = (db.x+db.w/2)-(b.x+b.w/2), dy = (db.y+db.h/2)-(b.y+b.h/2);
@@ -6485,7 +6507,7 @@ function peelTokenOntoStack(sourceId, targetId){
 function findPieceAtPoint(worldX, worldY){
   for(const p of state.pieces.values()){
     if(!onCurrentTab(p)) continue;
-    const b = pieceBounds(p);
+    const b = pieceVisualBounds(p);
     if(worldX>=b.x && worldX<=b.x+b.w && worldY>=b.y && worldY<=b.y+b.h) return p;
   }
   return null;
@@ -7186,6 +7208,7 @@ function wireHandCardDrag(el, idx){
     const startX=e.clientX, startY=e.clientY;
     let dragging=false, pick=null, lastEv=null;
     const ghost = el.cloneNode(true); // cloned BEFORE the card ever leaves the hand, so it still shows the right face
+    const handGhostWidth = el.getBoundingClientRect().width || 70;
     ghost.classList.add('hand-drop-ghost');
     ghost.removeAttribute('title');
     const ghostHint = document.createElement('div');
@@ -7213,13 +7236,18 @@ function wireHandCardDrag(el, idx){
         renderHand();
         syncHandCount();
       }
-      ghost.style.left=(ev.clientX-35)+'px'; ghost.style.top=(ev.clientY-49)+'px';
       // A card played from hand can land directly on a pile, merging into it.
       // Dropped on a SPLAYED pile specifically, it previews a "tuck" at the
       // exact fanned position it would land at (see placePeeledCardToBoard's
       // matching comment for the board-side version of this).
       const boardRect = document.getElementById('boardViewport').getBoundingClientRect();
       const overBoard = ev.clientX>=boardRect.left && ev.clientX<=boardRect.right && ev.clientY>=boardRect.top && ev.clientY<=boardRect.bottom;
+      // Over the board the card shows at the size (and angle) it will have once
+      // it lands, at the board's current zoom; over the hand, its hand size.
+      const gw = overBoard ? PIECE_W*state.view.scale : handGhostWidth;
+      ghost.style.setProperty('--hand-card-width', gw+'px'); // .hand-card and its .face size off this
+      ghost.style.left = (ev.clientX - gw/2)+'px'; ghost.style.top = (ev.clientY - gw*(PIECE_H/PIECE_W)/2)+'px';
+      ghost.style.transform = (overBoard && state.viewRotation) ? `rotate(${state.viewRotation}deg)` : '';
       const target = overBoard ? findOverlapTarget({id:null}, ev.clientX, ev.clientY) : null;
       const sameTurn = canSplayWith(target, 0); // a hand card comes in upright — see canSplayWith
       const splayTarget = sameTurn && target.splayed && target.cardIds.length>1 ? target : null;
