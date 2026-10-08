@@ -1502,6 +1502,7 @@ const state = {
   tokenTypes: new Map(), // name -> color (hex) — shared table-wide, user-defined; no built-in types
   tokenTypeStyles: new Map(), // name -> {symbol, image, shape} — the rest of a type's look (see tokenFaceMarkup)
   deckRecords: new Map(), // id -> {id, name, owner, order:[cardIds, top card first], pieceId} — every imported deck, for Reform Deck
+  gameFolderId: '', // the game this table's board came from (board link / Send deck to room) — shared with the table; enables Import Precon
   zones: new Map(),    // id -> { id, x, y, w, h, color, strokeColor, strokeWidth, label, snapMode }
   theme: { boardColor:'#1a1c22', handColor:'#1c1f26' }, // shared table theme, synced
   hand: [],            // array of cardIds — private, never synced except as a count
@@ -1982,6 +1983,7 @@ function applyRoomEvent(type, payload){
     case 'LOAD_LAYOUT': {
       state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear(); state.tokenTypeStyles.clear();
       state.deckRecords.clear(); (payload.deckRecords||[]).forEach(r=> state.deckRecords.set(r.id, {...r}));
+      state.gameFolderId = payload.gameFolderId || '';
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
       (payload.tokenTypeStyles||[]).forEach(([name,st])=> setTokenTypeStyle(name, st));
       state.tabs = (payload.tabs && payload.tabs.length) ? payload.tabs.map(t=>({...t})) : [{id:'main', name:'Table'}];
@@ -2069,6 +2071,7 @@ function applyRoomEvent(type, payload){
       if(payload.to !== state.playerId) break; // addressed to a different requester — not for us
       state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear(); state.tokenTypeStyles.clear();
       state.deckRecords.clear(); (payload.deckRecords||[]).forEach(r=> state.deckRecords.set(r.id, {...r}));
+      state.gameFolderId = payload.gameFolderId || '';
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
       (payload.tokenTypeStyles||[]).forEach(([name,st])=> setTokenTypeStyle(name, st));
       state.tabs = (payload.tabs && payload.tabs.length) ? payload.tabs.map(t=>({...t})) : [{id:'main', name:'Table'}];
@@ -5658,8 +5661,44 @@ function openBoardRadialMenu(clientX, clientY){
       document.getElementById('deckFileInput').click();
     })},
     {icon:'🔘', label:'Add Token', action:act(()=> openTokenTypeMenuAt(clientX, clientY))},
+    // Only on a table whose board came from a game (board link or "Send deck
+    // to room") — that's how the room knows whose preconstructed decks to list.
+    ...(state.gameFolderId ? [{icon:'📦', label:'Import Precon', action:act(()=> openPreconMenuAt(clientX, clientY))}] : []),
   ];
   openRadialMenu(()=> done ? null : items, clientX, clientY);
+}
+/* ---- Import Precon: the game's preconstructed decks (deck .json files in its
+   game folder — see getPrecons in Code.gs; a player only sees decks whose
+   cards they can access), listed fresh each time; picking one places it
+   where you right-clicked, just like Import Deck. */
+async function openPreconMenuAt(clientX, clientY){
+  const menu = document.getElementById('tokenMenu');
+  const drop = clientToWorld(clientX, clientY);
+  tokenMenuAnchor = {x:clientX, y:clientY}; tokenPlaceAtWorld = null;
+  menu.innerHTML = `<div class="token-swap-title">Preconstructed decks</div><div class="token-type-item" style="cursor:default;color:var(--text-soft);">Loading…</div>`;
+  menu.classList.remove('hidden');
+  positionMenuNear(menu, tokenMenuAnchorEl());
+  let res;
+  try{ res = await fetchGameBoards(state.gameFolderId); }
+  catch(err){ res = { ok:false, error: err.message }; }
+  if(menu.classList.contains('hidden')) return; // closed while loading
+  const decks = (res && res.ok && res.decks) || [];
+  if(!decks.length){
+    menu.innerHTML = `<div class="token-swap-title">Preconstructed decks</div><div class="token-type-item" style="cursor:default;color:var(--text-soft);">${escapeHtml(res && !res.ok ? 'Could not load them: ' + (res.error||'') : 'This game has no preconstructed decks yet.')}</div>`;
+    positionMenuNear(menu, tokenMenuAnchorEl());
+    return;
+  }
+  menu.innerHTML = `<div class="token-swap-title">Preconstructed decks</div>` + decks.map((p,i)=>
+    `<div class="token-type-item" data-precon="${i}">📦 ${escapeHtml(p.name)} <span style="margin-left:auto;font-size:11px;color:var(--text-soft);">${escapeHtml(p.deck.deckType||'')}</span></div>`).join('');
+  menu.querySelectorAll('[data-precon]').forEach(el=> el.addEventListener('click', async (e)=>{
+    e.stopPropagation();
+    menu.classList.add('hidden');
+    const p = decks[Number(el.dataset.precon)];
+    const at = snapPos(drop.x - PIECE_W/2, drop.y - PIECE_H/2, PIECE_W, PIECE_H); // centered on the click
+    try{ await importDeckJson({...p.deck, name: p.name}, at.x, at.y); }
+    catch(err){ toast(`Could not import "${p.name}": ${err.message}`); }
+  }));
+  positionMenuNear(menu, tokenMenuAnchorEl());
 }
 function closeImageScalePopover(){ document.getElementById('imageScalePopover').classList.add('hidden'); }
 document.addEventListener('click', (e)=>{
@@ -7726,6 +7765,7 @@ function exportLayout(){
     pieces: [...state.pieces.values()],
     tokens: [...state.tokens.values()],
     deckRecords: [...state.deckRecords.values()],
+    gameFolderId: state.gameFolderId,
   };
 }
 document.getElementById('btnExportLayout').addEventListener('click', ()=>{
@@ -7763,6 +7803,7 @@ document.getElementById('layoutFileInput').addEventListener('change', (e)=>{
         pieces: json.pieces||[],
         tokens: json.tokens||[],
         deckRecords: json.deckRecords||[],
+        gameFolderId: json.gameFolderId||'',
       });
       fitAll();
       toast('Layout loaded.');
@@ -8113,7 +8154,7 @@ async function startFromBoardLink(gameId){
     return;
   }
   boards.sort((a,b)=> String(b.updated||'').localeCompare(String(a.updated||''))); // newest first
-  startFromHandoff({ mode:'new', board: boards[0].layout, boardName: boards[0].name, deck: null });
+  startFromHandoff({ mode:'new', board: boards[0].layout, boardName: boards[0].name, deck: null, gameFolderId: gameId });
 }
 async function startFromHandoff(h){
   try{ sessionStorage.removeItem(ROOM_HANDOFF_KEY); }catch(e){}
@@ -8127,7 +8168,8 @@ async function startFromHandoff(h){
     if(h.board){
       const b = h.board;
       doAction('LOAD_LAYOUT', { sourceSheets:b.sourceSheets||[], theme:b.theme||null, tokenTypes:b.tokenTypes||[], tokenTypeStyles:b.tokenTypeStyles||[],
-        tabs:b.tabs||null, zones:b.zones||[], pieces:b.pieces||[], tokens:b.tokens||[], deckRecords:b.deckRecords||[] });
+        tabs:b.tabs||null, zones:b.zones||[], pieces:b.pieces||[], tokens:b.tokens||[], deckRecords:b.deckRecords||[],
+        gameFolderId: h.gameFolderId || b.gameFolderId || '' });
     }
     fitAll();
     await placeHandoffDeck(h.deck);

@@ -4208,7 +4208,7 @@ document.getElementById('btnSendToRoom').addEventListener('click', ()=>{
     const sel = document.getElementById('sendRoomBoard');
     const board = sendRoomMode==='new' ? boards[sel ? Number(sel.value) : 0] : null;
     const handoff = { at: Date.now(), mode: sendRoomMode, code: sendRoomMode==='join' ? code : '', deck: {...deck, name},
-      board: board ? board.layout : null, boardName: board ? board.name : '' };
+      board: board ? board.layout : null, boardName: board ? board.name : '', gameFolderId: state.currentGameFolderId };
     try{ localStorage.setItem(ROOM_HANDOFF_KEY, JSON.stringify(handoff)); }
     catch(e){ err.textContent = 'Could not hand the deck over: ' + e.message; return; }
     window.open('room.html', '_blank');
