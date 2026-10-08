@@ -454,6 +454,11 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .load-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-soft);margin:4px 0 6px;}
 .precon-status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-soft);padding:6px 2px 8px;}
 .precon-status .mini-spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);animation:eoo-spin 0.9s linear infinite;flex:none;}
+.send-room-choice{display:flex;gap:8px;align-items:flex-start;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;cursor:pointer;}
+.send-room-choice.on{border-color:var(--accent);background:var(--accent-soft);}
+.send-room-choice input[type=radio]{margin-top:2px;}
+.send-room-choice .src-sub{margin-top:6px;display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--text-soft);}
+.send-room-choice select, .send-room-choice input[type=text]{flex:1;min-width:0;}
 .precon-warn{font-size:12px;color:var(--danger);font-weight:600;}
 #loadModalBody .row-item{display:flex;justify-content:space-between;align-items:center;padding:8px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
 #setsList .row-item, #sealedSetList .row-item, #gameSelectList .row-item{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
@@ -572,6 +577,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
       <div class="tab" data-type="champion">Champion</div>
     </div>
     <div class="btn" id="btnSealedDecks" title="Randomly build BOTH the Overlord and Champion decks (plus the scheme deck) from a single shared card pool, following the sealed-deck rules">Get Sealed Decks</div>
+    <div class="btn btn-accent" id="btnSendToRoom" style="display:none;" title="Play this deck in the game room">Send deck to room ↗</div>
     <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
     <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
     <div class="btn btn-sm" id="btnManageSets" title="Which card sets you have access to">Sets</div>
@@ -769,6 +775,14 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     </div>
   </div>
 
+  <!-- Send deck to room: start a new room on one of the game's boards, or join one -->
+  <div class="modal-overlay hidden" id="sendRoomModal">
+    <div class="modal-box" style="width:min(420px,92vw);">
+      <div class="modal-header"><h2>Send deck to room</h2><div class="btn btn-icon" data-close="sendRoomModal">✕</div></div>
+      <div class="modal-body" id="sendRoomBody"></div>
+    </div>
+  </div>
+
   <!-- Preconstructed deck: add / update (game-folder editors only) -->
   <div class="modal-overlay hidden" id="preconModal">
     <div class="modal-box" style="width:min(440px,92vw);">
@@ -937,7 +951,7 @@ const state = {
   genericBacks: { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' }, // Echo mode's own per-type card backs, for exports only
   genericBackUrl: '', // generic (non-Echo) mode's single shared "back.png"/"back.pdf" per game, for exports only
   pcio: {found:false}, // this game's .pcio board file, if it has one — see applyPcioUI()
-  precons: {canEdit:false, decks:[]}, // this game's preconstructed decks this person may see — see loadPrecons()
+  precons: {canEdit:false, decks:[], boards:[]}, // this game's preconstructed decks and room board layouts this person may see — see loadPrecons()
   flippedCards: new Set(), // ids currently showing their real back (double-sided cards only)
 };
 // Whichever key state.decks/state.filtersByType should currently be read/written
@@ -1336,10 +1350,15 @@ function hideLoadingOverlay(){ document.getElementById('loading-overlay').classL
 // option) only make sense for a game that actually has a .pcio file in its main
 // folder — never dead buttons/options that just error when used, for a game that
 // isn't set up for playingcards.io at all.
+// A game with one or more room board layouts in its folder (see getPrecons in
+// Code.gs) plays in the game room instead: "Send deck to room" replaces the
+// playingcards.io buttons (its CSV export stays available under Export).
 function applyPcioUI(){
   const hasPcio = !!(state.pcio && state.pcio.found);
-  document.getElementById('btnDownloadPcio').style.display = hasPcio ? 'inline-flex' : 'none';
-  document.getElementById('btnPlaytestRoom').style.display = hasPcio ? 'inline-flex' : 'none';
+  const hasBoards = !!(state.precons && state.precons.boards && state.precons.boards.length);
+  document.getElementById('btnDownloadPcio').style.display = (hasPcio && !hasBoards) ? 'inline-flex' : 'none';
+  document.getElementById('btnPlaytestRoom').style.display = (hasPcio && !hasBoards) ? 'inline-flex' : 'none';
+  document.getElementById('btnSendToRoom').style.display = hasBoards ? 'inline-flex' : 'none';
   document.getElementById('optExportCsv').style.display = hasPcio ? '' : 'none';
 }
 
@@ -1479,7 +1498,7 @@ function resetGameSpecificState(){
   state.genericBacks = { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' };
   state.genericBackUrl = '';
   state.pcio = {found:false};
-  state.precons = {canEdit:false, decks:[]};
+  state.precons = {canEdit:false, decks:[], boards:[]};
   applyPreconUI();
   applyPcioUI(); // reset all three playingcards.io-flavored UI bits until the new game's loadData() re-evaluates them
 }
@@ -4011,7 +4030,8 @@ async function loadPrecons(notify){
     try{
       const res = await fetchPrecons(gameId);
       if(gameId !== state.currentGameFolderId) return; // switched games meanwhile
-      state.precons = { canEdit: !!res.canEdit, decks: res.decks || [] };
+      state.precons = { canEdit: !!res.canEdit, decks: res.decks || [], boards: res.boards || [] };
+      applyPcioUI(); // a game with room boards plays in the room instead of playingcards.io
       preconsStatus = '';
       applyPreconUI();
       const stale = state.precons.decks.filter(p=> p.missing && p.missing.length);
@@ -4139,6 +4159,60 @@ async function savePreconDeck(fileId){
     toast('Could not save the preconstructed deck: ' + e.message);
   }
 }
+
+/* =========================================================================
+   SEND DECK TO ROOM — hands the open deck (and, for a new room, the chosen
+   board layout) to room.html in a new tab. Both pages are on the same site,
+   so the hand-off rides localStorage (key below); the room picks it up after
+   sign-in, loads the board, places the deck and opens or joins the room.
+   ========================================================================= */
+const ROOM_HANDOFF_KEY = 'eoo_room_handoff';
+let sendRoomMode = 'new';
+document.getElementById('btnSendToRoom').addEventListener('click', ()=>{
+  const boards = state.precons.boards || [];
+  const name = document.getElementById('deckNameInput').value.trim() || 'Untitled deck';
+  const deck = deckJsonData(new Date().toISOString());
+  const n = (deck.leaderId?1:0) + (deck.bonusCardId?1:0) + (deck.extraCardId?1:0) + (deck.schemeIds||[]).length
+    + Object.values(deck.deckCards||{}).reduce((a,b)=>a+Number(b||0),0);
+  const body = document.getElementById('sendRoomBody');
+  body.innerHTML = `
+    <p style="margin-top:0;font-size:13px;"><b>${escapeHtml(name)}</b> <span style="color:var(--text-soft);">(${escapeHtml(deck.deckType)}, ${n} card${n===1?'':'s'})</span> — goes onto the table shuffled and face down.</p>
+    <label class="send-room-choice" data-mode="new"><input type="radio" name="sendRoomMode" value="new">
+      <div><b>Start a new room</b>
+        <div class="src-sub">${boards.length>1
+          ? `Board <select id="sendRoomBoard">${boards.map((b,i)=>`<option value="${i}">${escapeHtml(b.name)}</option>`).join('')}</select>`
+          : `Board: ${escapeHtml(boards[0] ? boards[0].name : '—')}`}</div></div></label>
+    <label class="send-room-choice" data-mode="join"><input type="radio" name="sendRoomMode" value="join">
+      <div><b>Join a room that's already going</b>
+        <div class="src-sub">Room code <input type="text" id="sendRoomCode" maxlength="12" placeholder="e.g. K3XQ7P" autocomplete="off"></div></div></label>
+    <div id="sendRoomError" style="color:var(--danger);font-size:12.5px;min-height:16px;"></div>
+    <div class="btn btn-accent" id="btnSendRoomGo" style="justify-content:center;width:100%;box-sizing:border-box;">Open room ↗</div>`;
+  const setMode = m=>{
+    sendRoomMode = m;
+    body.querySelectorAll('.send-room-choice').forEach(el=>{ el.classList.toggle('on', el.dataset.mode===m); el.querySelector('input[type=radio]').checked = el.dataset.mode===m; });
+  };
+  body.querySelectorAll('.send-room-choice').forEach(el=> el.addEventListener('click', ()=> setMode(el.dataset.mode)));
+  document.getElementById('sendRoomCode').addEventListener('focus', ()=> setMode('join'));
+  document.getElementById('sendRoomCode').addEventListener('input', e=>{ const el = e.target, at = el.selectionStart; el.value = el.value.toUpperCase(); el.setSelectionRange(at, at); });
+  document.getElementById('sendRoomCode').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('btnSendRoomGo').click(); });
+  setMode(sendRoomMode);
+  document.getElementById('btnSendRoomGo').addEventListener('click', ()=>{
+    const err = document.getElementById('sendRoomError');
+    if(!n){ err.textContent = 'This deck is empty.'; return; }
+    if(!deck.sourceSheets || !deck.sourceSheets.length){ err.textContent = 'None of this deck\'s cards are loaded yet — wait a moment and try again.'; return; }
+    const code = document.getElementById('sendRoomCode').value.trim().toUpperCase();
+    if(sendRoomMode==='join' && !code){ err.textContent = 'Type the room code.'; return; }
+    const sel = document.getElementById('sendRoomBoard');
+    const board = sendRoomMode==='new' ? boards[sel ? Number(sel.value) : 0] : null;
+    const handoff = { at: Date.now(), mode: sendRoomMode, code: sendRoomMode==='join' ? code : '', deck: {...deck, name},
+      board: board ? board.layout : null, boardName: board ? board.name : '' };
+    try{ localStorage.setItem(ROOM_HANDOFF_KEY, JSON.stringify(handoff)); }
+    catch(e){ err.textContent = 'Could not hand the deck over: ' + e.message; return; }
+    window.open('room.html', '_blank');
+    document.getElementById('sendRoomModal').classList.add('hidden');
+  });
+  document.getElementById('sendRoomModal').classList.remove('hidden');
+});
 
 /* =========================================================================
    TOAST

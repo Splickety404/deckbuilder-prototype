@@ -1774,6 +1774,11 @@ function cuWrite(target, records, email, comprehensive) {
 // `missing` so editors can see which decks are out of date.
 // canEdit: whether this person can edit the game folder (and so can add
 // or update decks there, via savePrecon).
+//
+// The same scan also returns `boards`: game-room layout files (the room's
+// Board ▾ › Export Layout — pieces/zones/tokens, no deckType) in the game
+// folder, with the same visibility rule applied to the cards placed on them.
+// When a game has any, the deckbuilder offers "Send deck to room" with one.
 // =====================================================================
 function preconCardIds(d) {
   const ids = [];
@@ -1810,13 +1815,20 @@ function getPrecons(gameFolderId, idToken, callback) {
       } catch (e) { /* an unreadable set contributes no ids */ }
     });
 
-    const decks = [];
+    const decks = [], boards = [];
     const it = DriveApp.getFolderById(gameFolderId).getFiles();
     while (it.hasNext()) {
       const f = it.next();
       if (!/\.json$/i.test(f.getName())) continue;
       let d;
       try { d = JSON.parse(f.getBlob().getDataAsString()); } catch (e) { continue; }
+      if (d && !d.deckType && Array.isArray(d.pieces) && (Array.isArray(d.zones) || Array.isArray(d.tokens))) {
+        const boardIds = [];
+        d.pieces.forEach(p => (p.cardIds || []).forEach(id => boardIds.push(String(id))));
+        if (boardIds.some(id => setOf[id] && !canSee[setOf[id]])) continue; // has cards from a set this person can't see
+        boards.push({ fileId: f.getId(), name: f.getName().replace(/\.json$/i, ''), layout: d });
+        continue;
+      }
       if (!d || !d.deckType) continue; // not a deck file
       const ids = preconCardIds(d);
       const missing = ids.filter(id => !setOf[id]);
@@ -1824,9 +1836,10 @@ function getPrecons(gameFolderId, idToken, callback) {
       decks.push({ fileId: f.getId(), fileName: f.getName(), name: d.name || f.getName().replace(/\.json$/i, ''), updated: f.getLastUpdated().toISOString(), deck: d, missing: missing });
     }
     decks.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    boards.sort((a, b) => String(a.name).localeCompare(String(b.name)));
     let canEdit = false;
     try { canEdit = emailCanEditFolder(v.email, gameFolderId); } catch (e) { /* treat as no */ }
-    result = { ok: true, canEdit: canEdit, decks: decks };
+    result = { ok: true, canEdit: canEdit, decks: decks, boards: boards };
   } catch (err) {
     result = { ok: false, error: String((err && err.message) || err) };
   }
