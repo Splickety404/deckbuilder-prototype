@@ -1599,7 +1599,7 @@ function cuUpload(target, files) {
     const base = f.getName().replace(/\.[^.]+$/, '');
     (byBase[base] = byBase[base] || []).push(f);
   }
-  const done = [];
+  const done = [], notShared = [];
   files.forEach(file => {
     const m = /^([\w.@-]+)\.(jpg|png)$/i.exec(file.name);
     if (!m) throw new Error('Unexpected image name: ' + file.name);
@@ -1607,12 +1607,60 @@ function cuUpload(target, files) {
     const blob = Utilities.newBlob(Utilities.base64Decode(file.data), m[2].toLowerCase() === 'png' ? 'image/png' : 'image/jpeg', file.name);
     const existing = byBase[base] || [];
     const same = existing.find(f => f.getName() === file.name);
-    if (same) Drive.Files.update({}, same.getId(), blob, { supportsAllDrives: true }); // same id, so its links stay the same
-    else folder.createFile(blob);
+    let saved;
+    if (same) { Drive.Files.update({}, same.getId(), blob, { supportsAllDrives: true }); saved = same; } // same id, so its links stay the same
+    else saved = folder.createFile(blob);
+    if (!shareWithLink(saved)) notShared.push(file.name);
     existing.forEach(f => { if (f !== same) f.setTrashed(true); }); // e.g. an older id.pdf for this card face
     done.push(file.name);
   });
-  return { done: done };
+  return { done: done, notShared: notShared };
+}
+
+// Card images are viewable by anyone with the link, so the deckbuilder and
+// game room can show them to any player (the card DATA stays gated by set
+// folder sharing). Uses the Drive API's permission call, which works on
+// Shared Drive files — DriveApp's setSharing is refused there, and its
+// getSharingAccess even throws once such a file is link-shared, so neither
+// is used. Adding the permission again is harmless. False if Drive refused —
+// e.g. a Workspace policy that doesn't allow link sharing; the reason is
+// kept in shareWithLink.lastError.
+function shareWithLink(file) {
+  try {
+    Drive.Permissions.create({ type: 'anyone', role: 'reader', allowFileDiscovery: false }, file.getId(), { supportsAllDrives: true });
+    return true;
+  } catch (err) {
+    shareWithLink.lastError = String((err && err.message) || err);
+    return false;
+  }
+}
+
+// Run by hand from the Apps Script editor: sets every card image (PDF, PNG,
+// JPEG) in a Cards folder to "anyone with the link can view". Defaults to
+// Set 1's Cards folder (CARD_FOLDER_ID). Safe to run again; stops after ~5
+// minutes to stay inside Apps Script's time limit — if the log says so, run
+// it again and it carries on where it stopped.
+function shareCardImagesWithLink(folderId) {
+  const folder = DriveApp.getFolderById(folderId || CARD_FOLDER_ID);
+  const props = PropertiesService.getScriptProperties();
+  const resumeKey = 'shareCardImagesWithLink:' + folder.getId();
+  const resume = props.getProperty(resumeKey);
+  const started = Date.now();
+  let shared = 0, failed = 0, skipped = 0, stoppedEarly = false;
+  const it = resume ? DriveApp.continueFileIterator(resume) : folder.getFiles();
+  while (it.hasNext()) {
+    if (Date.now() - started > 5 * 60 * 1000) { stoppedEarly = true; break; }
+    const f = it.next();
+    if (!artExtensionPattern().test(f.getName())) { skipped++; continue; }
+    if (shareWithLink(f)) shared++;
+    else if (++failed >= 3 && !shared) break; // Drive is refusing them all — no point trying the rest
+  }
+  if (stoppedEarly) props.setProperty(resumeKey, it.getContinuationToken()); else props.deleteProperty(resumeKey);
+  const summary = (resume ? '(Carried on from the last run.) ' : '') + 'Card images in "' + folder.getName() + '": ' + shared + ' shared with anyone with the link, ' + failed + ' failed, ' + skipped + ' non-image files left alone.' +
+    (failed ? ' Drive said: ' + shareWithLink.lastError : '') +
+    (stoppedEarly ? ' Stopped early to stay in the time limit — run it again to finish.' : (failed && !shared ? ' Stopped.' : ' Done.'));
+  Logger.log(summary);
+  return summary;
 }
 
 // Writes card records into the set's Sheet. For each card (matched by id):

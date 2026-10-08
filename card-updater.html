@@ -778,11 +778,12 @@ async function publish(){
     const needImages = todo.filter(c=> !c.diff.row
       || c.diff.row['image-hash']!==c.img.front.hash
       || (c.back && c.diff.row['back-image-hash']!==c.img.back.hash));
-    let batch = [], batchSize = 0, sent = 0;
+    let batch = [], batchSize = 0, sent = 0, notShared = 0;
     const total = needImages.reduce((n,c)=> n + (c.back ? 4 : 2), 0);
     const flush = async ()=>{
       if(!batch.length) return;
-      await api('cuUpload', { files: batch });
+      const up = await api('cuUpload', { files: batch });
+      notShared += (up.notShared || []).length; // images Drive wouldn't set to anyone-with-the-link
       sent += batch.length; batch = []; batchSize = 0;
       setStatus(`Uploading images: ${sent} of ${total}…`, sent/total);
     };
@@ -808,7 +809,7 @@ async function publish(){
       comprehensive: $('chkComprehensive').checked ? { pdfIds: cards.map(c=> c.id), expectRemove: removing.map(r=> r.id) } : null,
     });
     const k = res.counts;
-    setStatus(`Published to ${dest.game} › ${dest.set}: ${k['new']} new, ${k['updated']} updated, ${k['art']} art updated, ${k['fields added']} with fields added, ${k['unchanged']} unchanged${res.removed ? `, ${res.removed} removed` : ''}. ${res.archived} older version${res.archived===1?'':'s'} saved to the change history.`);
+    setStatus(`Published to ${dest.game} › ${dest.set}: ${k['new']} new, ${k['updated']} updated, ${k['art']} art updated, ${k['fields added']} with fields added, ${k['unchanged']} unchanged${res.removed ? `, ${res.removed} removed` : ''}. ${res.archived} older version${res.archived===1?'':'s'} saved to the change history.${notShared ? ` Note: ${notShared} image${notShared===1?'':'s'} couldn't be set to "anyone with the link" — players without access to this set's folder won't see ${notShared===1?'it':'them'}.` : ''}`);
     await connectSet(); // re-read the set: everything should now show as Unchanged
   }catch(err){
     console.error(err);
