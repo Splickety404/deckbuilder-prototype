@@ -3800,7 +3800,8 @@ function finishWholeMove(p, startX, startY, clientX, clientY){
     // singleOverSingleSplayPreview/driveWholePieceDrag's newSplay branch)
     // creates that splay in the same merge, rather than an ordinary
     // top/bottom placement.
-    const newSplay = (target.splayed && target.cardIds.length>1) ? null : singleOverSingleSplayPreview(target, p.cardIds.length, p.x+PIECE_W/2, p.y+PIECE_H/2);
+    const sameTurn = canSplayWith(target, absCardRotation(p, 0));
+    const newSplay = (!sameTurn || (target.splayed && target.cardIds.length>1)) ? null : singleOverSingleSplayPreview(target, p.cardIds.length, p.x+PIECE_W/2, p.y+PIECE_H/2);
     if(newSplay){
       mergePieceOntoTarget(p.id, target.id, 0, newSplay);
       return;
@@ -3816,7 +3817,7 @@ function finishWholeMove(p, startX, startY, clientX, clientY){
     // threshold must NOT also apply here — it used to fire first and made
     // this look identical to hovering a real stack).
     const insertIndex = (target.splayed && target.cardIds.length>1)
-      ? splayInsertIndex(target, p.x, p.y)
+      ? (sameTurn ? splayInsertIndex(target, p.x, p.y) : target.cardIds.length) // turned differently: onto the top, no tuck
       : (target.cardIds.length>1)
         ? (shouldInsertBelow(target, world.x, world.y) ? 0 : target.cardIds.length)
         : target.cardIds.length;
@@ -3883,14 +3884,15 @@ function driveWholePieceDrag(ctx, dx, dy, ev){
   const d = screenDeltaToWorldDelta(dx, dy);
   p.x = ctx.startX+d.x; p.y = ctx.startY+d.y;
   const target = p.kind==='image' ? null : resolveDragTarget(p, ev.clientX, ev.clientY);
-  const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
+  const sameTurn = p.kind!=='image' && canSplayWith(target, absCardRotation(p, 0)); // see canSplayWith
+  const splayTarget = sameTurn && target.splayed && target.cardIds.length>1 ? target : null;
   // Distinct from splayTarget above (tucking into an ALREADY-splayed pile):
   // this is hovering a single dragged card over another single, unsplayed
   // card, nudged far enough off-center to preview forming a brand-new splay
   // — see singleOverSingleSplayPreview's own comment. null while still close
   // to center (ordinary stack-on-top merge) or when either side isn't a lone
   // single card.
-  const newSplay = splayTarget ? null : singleOverSingleSplayPreview(target, p.cardIds.length, p.x+PIECE_W/2, p.y+PIECE_H/2);
+  const newSplay = (splayTarget || !sameTurn) ? null : singleOverSingleSplayPreview(target, p.cardIds.length, p.x+PIECE_W/2, p.y+PIECE_H/2);
   const world = clientToWorld(ev.clientX, ev.clientY);
   if(splayTarget){
     // Close enough to tuck: preview it with this piece's OWN card face (it's
@@ -5040,6 +5042,14 @@ const SINGLE_STACK_TO_SPLAY_RADIUS = Math.min(PIECE_W, PIECE_H) * 0.25;
 // "its y position should snap" half of the same request — snapping flush to
 // the target is exactly right there, since that's what "joining the splay"
 // on that axis means.
+// A dragged card only splays with (tucks into, or forms a new splay with)
+// a card or pile turned the same way it is — otherwise the fan comes out on
+// a diagonal. (Inside a splay, cards can still be turned individually.)
+// Anything else just stacks on top as usual. absDeg: the dragged card's own
+// angle on the table (a hand card is upright, 0).
+function canSplayWith(target, absDeg){
+  return !!target && normAngle(target.rotation||0) === normAngle(absDeg||0);
+}
 function singleOverSingleSplayPreview(target, sourceCardCount, pieceCenterX, pieceCenterY){
   if(!target || target.splayed || target.cardIds.length!==1) return null;
   if(sourceCardCount!==1) return null;
@@ -6531,16 +6541,21 @@ function openTokenRadialMenu(tokenId, clientX, clientY){
 // the new type on it merges into that one instead.
 function openTokenSwapMenu(tokenId, clientX, clientY){
   const t = state.tokens.get(tokenId); if(!t) return;
+  showTokenSwapMenu(t.type, clientX, clientY, name=> swapTokenType(tokenId, name));
+}
+// The "swap for…" list itself — every other type plus New type… — calling
+// onPick(newType). Shared by board tokens and hand tokens.
+function showTokenSwapMenu(currentType, clientX, clientY, onPick){
   const menu = document.getElementById('tokenMenu');
-  const others = [...state.tokenTypes.keys()].filter(n=> n!==t.type);
-  menu.innerHTML = `<div class="token-swap-title">Swap ${tokenFaceMarkup(t.type,'token-dot')} ${escapeHtml(t.type)} for…</div>` +
+  const others = [...state.tokenTypes.keys()].filter(n=> n!==currentType);
+  menu.innerHTML = `<div class="token-swap-title">Swap ${tokenFaceMarkup(currentType,'token-dot')} ${escapeHtml(currentType)} for…</div>` +
     others.map(name=> `<div class="token-type-item" data-swap="${escapeHtml(name)}">${tokenFaceMarkup(name,'token-dot')}${escapeHtml(name)}</div>`).join('') +
     `<div class="token-type-item" data-swap="__new"><span class="token-dot" style="background:var(--surface-2);border:1px dashed var(--text-soft);"></span>New type…</div>`;
   tokenMenuAnchor = {x:clientX, y:clientY}; tokenPlaceAtWorld = null;
   menu.querySelectorAll('[data-swap]').forEach(el=> el.addEventListener('click', (e)=>{
     e.stopPropagation(); // the editor replaces this element (see openTokenTypeMenu)
-    if(el.dataset.swap==='__new') openTokenTypeEditor(null, name=> swapTokenType(tokenId, name));
-    else { swapTokenType(tokenId, el.dataset.swap); menu.classList.add('hidden'); }
+    if(el.dataset.swap==='__new') openTokenTypeEditor(null, onPick);
+    else { onPick(el.dataset.swap); menu.classList.add('hidden'); }
   }));
   menu.classList.remove('hidden');
   positionMenuNear(menu, tokenMenuAnchorEl());
@@ -6563,9 +6578,20 @@ function swapTokenType(tokenId, newType){
 // zero or negative — see SET_TOKEN_COUNT). Enter sets it, Escape cancels.
 function openTokenValuePopover(tokenId, clientX, clientY){
   const t = state.tokens.get(tokenId); if(!t) return;
+  showTokenValuePopover(t.type, t.count, clientX, clientY, (value)=>{
+    const live = state.tokens.get(tokenId);
+    if(!live || value===live.count) return;
+    const oldCount = live.count;
+    doAction('SET_TOKEN_COUNT', {id:tokenId, count:value});
+    setUndo(()=> doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount}));
+  });
+}
+// The little "type a number" box, calling onSet(wholeNumber). Shared by board
+// tokens and hand tokens.
+function showTokenValuePopover(type, count, clientX, clientY, onSet){
   const menu = document.getElementById('tokenMenu');
   menu.innerHTML = `
-    <div class="popover-row"><label>${escapeHtml(t.type)}</label><input type="number" id="tokenValueInput" value="${t.count}" step="1" style="width:90px;"></div>
+    <div class="popover-row"><label>${escapeHtml(type)}</label><input type="number" id="tokenValueInput" value="${count}" step="1" style="width:90px;"></div>
     <div class="popover-actions"><div class="btn btn-accent btn-sm" id="btnSetTokenValue" style="flex:1;justify-content:center;">Set</div></div>
   `;
   tokenMenuAnchor = {x:clientX, y:clientY}; tokenPlaceAtWorld = null;
@@ -6576,11 +6602,8 @@ function openTokenValuePopover(tokenId, clientX, clientY){
   const apply = ()=>{
     const value = Math.round(Number(input.value));
     menu.classList.add('hidden');
-    const live = state.tokens.get(tokenId);
-    if(!live || !Number.isFinite(value) || input.value.trim()==='' || value===live.count) return;
-    const oldCount = live.count;
-    doAction('SET_TOKEN_COUNT', {id:tokenId, count:value});
-    setUndo(()=> doAction('SET_TOKEN_COUNT', {id:tokenId, count:oldCount}));
+    if(!Number.isFinite(value) || input.value.trim()==='') return;
+    onSet(value);
   };
   document.getElementById('btnSetTokenValue').addEventListener('click', (e)=>{ e.stopPropagation(); apply(); });
   input.addEventListener('keydown', (e)=>{
@@ -7197,7 +7220,8 @@ function wireHandCardDrag(el, idx){
       const boardRect = document.getElementById('boardViewport').getBoundingClientRect();
       const overBoard = ev.clientX>=boardRect.left && ev.clientX<=boardRect.right && ev.clientY>=boardRect.top && ev.clientY<=boardRect.bottom;
       const target = overBoard ? findOverlapTarget({id:null}, ev.clientX, ev.clientY) : null;
-      const splayTarget = target && target.splayed && target.cardIds.length>1 ? target : null;
+      const sameTurn = canSplayWith(target, 0); // a hand card comes in upright — see canSplayWith
+      const splayTarget = sameTurn && target.splayed && target.cardIds.length>1 ? target : null;
       // A hand card has no real piece/board position yet — by convention (see
       // playHandCardToBoard) the cursor's world point stands in for its
       // would-be CENTER, which is exactly what singleOverSingleSplayPreview
@@ -7207,7 +7231,7 @@ function wireHandCardDrag(el, idx){
       // Same brand-new-splay preview as driveWholePieceDrag's newSplay branch
       // — see singleOverSingleSplayPreview. A hand card is always a lone
       // single card, so the only gate left is the target itself.
-      const newSplay = splayTarget ? null : singleOverSingleSplayPreview(target, 1, world.x, world.y);
+      const newSplay = (splayTarget || !sameTurn) ? null : singleOverSingleSplayPreview(target, 1, world.x, world.y);
       if(splayTarget){
         // Same "the card itself tucks in, no separate silhouette" preview as
         // a peeled/whole-piece drag (see driveWholePieceDrag) — the card's
@@ -7275,11 +7299,12 @@ function playHandCardToBoard(pick, clientX, clientY){
     // singleOverSingleSplayPreview/wireHandCardDrag's newSplay branch)
     // creates that splay in the same merge — same as playPieceToBoard/
     // finishWholeMove's matching check.
-    const newSplayInfo = (target.splayed && target.cardIds.length>1) ? null : singleOverSingleSplayPreview(target, 1, world.x, world.y);
+    const sameTurn = canSplayWith(target, 0); // see canSplayWith
+    const newSplayInfo = (!sameTurn || (target.splayed && target.cardIds.length>1)) ? null : singleOverSingleSplayPreview(target, 1, world.x, world.y);
     // Same would-be top-left corner as wireHandCardDrag's matching preview —
     // see its comment.
     const insertIndex = newSplayInfo ? 0
-      : (target.splayed && target.cardIds.length>1) ? splayInsertIndex(target, world.x-PIECE_W/2, world.y-PIECE_H/2)
+      : (target.splayed && target.cardIds.length>1) ? (sameTurn ? splayInsertIndex(target, world.x-PIECE_W/2, world.y-PIECE_H/2) : target.cardIds.length)
       : (target.cardIds.length>1) ? (shouldInsertBelow(target, world.x, world.y) ? 0 : target.cardIds.length)
       : target.cardIds.length;
     const cardIds = [...target.cardIds.slice(0,insertIndex), pick.cardId, ...target.cardIds.slice(insertIndex)];
@@ -7419,10 +7444,113 @@ function renderHandTokens(){
   }).join('');
   // Same as a board token stack: grab the token itself for one, its quantity for the whole stack.
   el.querySelectorAll('.hand-token').forEach(chip=>{
-    wireHandTokenDrag(chip.querySelector('.dot'), chip.dataset.type, false);
-    wireHandTokenDrag(chip.querySelector('.qty'), chip.dataset.type, true);
+    const type = chip.dataset.type;
+    wireHandTokenDrag(chip.querySelector('.dot'), type, false);
+    wireHandTokenDrag(chip.querySelector('.qty'), type, true);
+    // Also like a board token: W/S and the scroll wheel while hovering, right-click for the ring.
+    chip.addEventListener('mouseenter', ()=>{ hoveredHandTokenType = type; showTokenHotkeyHint(chip); });
+    chip.addEventListener('mouseleave', ()=>{ if(hoveredHandTokenType===type){ hoveredHandTokenType = null; hideHotkeyHint(); endHandTokenRun(); } });
+    chip.addEventListener('contextmenu', (e)=>{ e.preventDefault(); e.stopPropagation(); openHandTokenRadialMenu(type, e.clientX, e.clientY); });
+    if(hoveredHandTokenType===type) showTokenHotkeyHint(chip); // re-anchor after a rebuild (the count just changed)
   });
 }
+/* ---- Tokens in hand: the same quick adjustments as on the board. A hand
+   holds real tokens, so it never goes below zero (at zero the token leaves
+   the hand). W/S/wheel changes sync live but quietly; one summary goes to
+   the table when the cursor leaves ("changed Damage in hand from 3 to 5"),
+   and one Undo reverts the run — same as board tokens (see hotkeyAdjustToken). */
+let hoveredHandTokenType = null;
+let handTokenRun = null; // {type, startCount}
+function setHandTokenCount(type, count){
+  if(count>0) state.handTokens.set(type, count); else state.handTokens.delete(type);
+  renderHand();
+}
+function hotkeyAdjustHandToken(type, delta){
+  const cur = state.handTokens.get(type)||0;
+  if(!handTokenRun || handTokenRun.type!==type){ endHandTokenRun(); handTokenRun = {type, startCount:cur}; }
+  const next = Math.max(0, cur+delta);
+  if(next===cur) return;
+  setHandTokenCount(type, next);
+  doQuietAction('HAND_COUNT', { playerId: state.playerId, playerName: state.playerName, count: state.hand.length, tokens: Object.fromEntries(state.handTokens) });
+  renderPlayerCounters();
+}
+function endHandTokenRun(){
+  const run = handTokenRun; handTokenRun = null;
+  if(!run) return;
+  const now = state.handTokens.get(run.type)||0;
+  if(now===run.startCount) return;
+  syncHandCount(`changed ${run.type} in hand from ${run.startCount} to ${now}`);
+  setUndo(()=>{ setHandTokenCount(run.type, run.startCount); syncHandCount(`changed ${run.type} in hand back to ${run.startCount}`); });
+}
+// One-shot change (ring items, Set Value): announced and undoable right away.
+function changeHandToken(type, next){
+  endHandTokenRun();
+  const old = state.handTokens.get(type)||0;
+  next = Math.max(0, Math.round(next));
+  if(next===old) return;
+  setHandTokenCount(type, next);
+  syncHandCount(`changed ${type} in hand from ${old} to ${next}`);
+  setUndo(()=>{ setHandTokenCount(type, old); syncHandCount(`changed ${type} in hand back to ${old}`); });
+}
+function swapHandTokenType(type, newType){
+  endHandTokenRun();
+  const n = state.handTokens.get(type)||0;
+  if(!n || newType===type) return;
+  const oldNew = state.handTokens.get(newType)||0;
+  state.handTokens.delete(type);
+  state.handTokens.set(newType, oldNew + n);
+  renderHand();
+  syncHandCount(`swapped ${n} ${type} in hand for ${newType}`);
+  setUndo(()=>{
+    state.handTokens.set(type, n);
+    if(oldNew) state.handTokens.set(newType, oldNew); else state.handTokens.delete(newType);
+    renderHand();
+    syncHandCount(`undid swapping ${type} in hand`);
+  });
+}
+function openHandTokenRadialMenu(type, clientX, clientY){
+  let closed = false;
+  openRadialMenu(()=>{
+    if(closed) return null;
+    const n = state.handTokens.get(type)||0; if(!n) return null;
+    return [
+      ...TOKEN_INCREMENTS.map((k,i)=>({icon:'+'+k, label:'+'+k, angle:tokenRadialAngle('top',i), action:()=> changeHandToken(type, n+k)})),
+      ...TOKEN_INCREMENTS.map((k,i)=>({icon:'−'+k, label:'-'+k, angle:tokenRadialAngle('bottom',i), action:()=> changeHandToken(type, n-k)})),
+      {icon:'✕', label:'Remove All', angle:0, action:()=> changeHandToken(type, 0)},
+      {icon:'#', label:'Set Value', angle:Math.PI, action:()=>{ closed = true; showTokenValuePopover(type, n, clientX, clientY, v=> changeHandToken(type, v)); }},
+      {icon:'✎', label:'Edit Token', angle:-0.45, action:()=>{ closed = true; tokenMenuAnchor = {x:clientX, y:clientY}; tokenPlaceAtWorld = null; openTokenTypeEditor(type); }},
+      {icon:'⇄', label:'Swap Token', angle:0.45, action:()=>{ closed = true; showTokenSwapMenu(type, clientX, clientY, nt=> swapHandTokenType(type, nt)); }},
+    ];
+  }, clientX, clientY);
+}
+document.addEventListener('keydown', (e)=>{
+  if(!hoveredHandTokenType || e.ctrlKey || e.metaKey || e.altKey) return;
+  if(isTextEntryFocused()) return;
+  const k = e.key.toLowerCase();
+  const delta = k==='w' ? 1 : k==='s' ? -1 : 0;
+  if(!delta) return;
+  e.preventDefault();
+  hotkeyAdjustHandToken(hoveredHandTokenType, delta);
+});
+let handTokenWheelAcc = 0;
+document.getElementById('handTokens').addEventListener('wheel', (e)=>{
+  const chip = e.target.closest && e.target.closest('.hand-token'); if(!chip) return;
+  e.preventDefault(); e.stopPropagation();
+  handTokenWheelAcc += e.deltaMode===1 ? e.deltaY*33 : e.deltaY;
+  if(Math.abs(handTokenWheelAcc) < TOKEN_WHEEL_STEP) return;
+  const delta = handTokenWheelAcc < 0 ? 1 : -1;
+  handTokenWheelAcc = 0;
+  hoveredHandTokenType = chip.dataset.type;
+  hotkeyAdjustHandToken(chip.dataset.type, delta);
+}, {passive:false});
+// A count change rebuilds the chip (no mouseleave from a removed element), so
+// also end the hover the moment the cursor is over anything else.
+window.addEventListener('mousemove', (e)=>{
+  if(!hoveredHandTokenType) return;
+  const chip = e.target && e.target.closest && e.target.closest('.hand-token');
+  if(chip && chip.dataset.type===hoveredHandTokenType) return;
+  hoveredHandTokenType = null; hideHotkeyHint(); endHandTokenRun();
+});
 // Puts `amount` tokens from a board token stack into the hand.
 // From a stack at zero or below, one peeled token can still go in (the stack
 // just counts further down, as with any peel).
