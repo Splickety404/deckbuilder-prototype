@@ -1023,6 +1023,7 @@ function onGoogleSignIn(response){
   hideSigninGate();
   document.getElementById('setupSignedInAs').textContent = state.playerName + (state.userEmail ? ` (${state.userEmail})` : '');
   if(roomHandoff){ startFromHandoff(roomHandoff); return; } // sent here from the deckbuilder: skip the setup screen
+  if(boardLinkGameId){ startFromBoardLink(boardLinkGameId); return; } // a direct "open a room on this game's board" link
   document.getElementById('setup-screen').classList.remove('hidden');
 }
 
@@ -8041,6 +8042,51 @@ if(roomHandoff){
     : `Sign in to open a new room${roomHandoff.boardName ? ` on "${roomHandoff.boardName}"` : ''} with "${roomHandoff.deck.name||'your deck'}".`;
   note.style.display = '';
 }
+/* ---- Direct board link: room.html?board=<game folder id> opens a new room
+   on that game's newest board layout (the same .json files the deckbuilder's
+   "Send deck to room" offers — see getPrecons in Code.gs), read fresh from
+   the game folder after sign-in. The link is used once: it's taken off the
+   address bar, so a refresh rejoins the room instead of opening another. */
+const boardLinkGameId = (()=>{ try{ return new URLSearchParams(location.search).get('board') || ''; }catch(e){ return ''; } })();
+if(boardLinkGameId && !roomHandoff){
+  const note = document.getElementById('signinHandoff');
+  note.textContent = 'Sign in to open a new room with this game\'s board.';
+  note.style.display = '';
+}
+async function fetchGameBoards(gameId){
+  const url = `${CARD_WEBAPP_URL}?precons=${encodeURIComponent(gameId)}&idToken=${encodeURIComponent(state.idToken)}`;
+  try{
+    const res = await fetch(url + '&_=' + Date.now());
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    return await res.json();
+  }catch(fetchErr){
+    return await new Promise((resolve, reject)=>{ // same JSONP fallback as the card fetches
+      const cbName = '__roomBoardsCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to answer.')); }, 30000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('Could not reach the server.')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+}
+async function startFromBoardLink(gameId){
+  try{ history.replaceState(null, '', location.pathname); }catch(e){}
+  toast('Loading the board…');
+  let res;
+  try{ res = await fetchGameBoards(gameId); }
+  catch(err){ res = { ok:false, error: err.message }; }
+  const boards = (res && res.ok && res.boards) ? res.boards.slice() : [];
+  if(!boards.length){
+    document.getElementById('setup-screen').classList.remove('hidden');
+    toast(res && !res.ok ? `Could not load the board: ${res.error}` : 'That game has no board layout in its folder yet.');
+    return;
+  }
+  boards.sort((a,b)=> String(b.updated||'').localeCompare(String(a.updated||''))); // newest first
+  startFromHandoff({ mode:'new', board: boards[0].layout, boardName: boards[0].name, deck: null });
+}
 async function startFromHandoff(h){
   try{ sessionStorage.removeItem(ROOM_HANDOFF_KEY); }catch(e){}
   enterGameScreen();
@@ -8077,6 +8123,7 @@ function waitForRoomState(){
 }
 // The deck goes in the first free spot near the middle of the table.
 async function placeHandoffDeck(deck){
+  if(!deck) return; // a board link brings no deck
   const b = boardBounds();
   const cx = (b.minX+b.maxX)/2 - PIECE_W/2, cy = (b.minY+b.maxY)/2 - PIECE_H/2;
   const stepX = PIECE_W + 24, stepY = PIECE_H + 24;

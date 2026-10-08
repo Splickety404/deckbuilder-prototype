@@ -1874,7 +1874,7 @@ function getPrecons(gameFolderId, idToken, callback) {
         const boardIds = [];
         d.pieces.forEach(p => (p.cardIds || []).forEach(id => boardIds.push(String(id))));
         if (boardIds.some(id => setOf[id] && !canSee[setOf[id]])) continue; // has cards from a set this person can't see
-        boards.push({ fileId: f.getId(), name: f.getName().replace(/\.json$/i, ''), layout: d });
+        boards.push({ fileId: f.getId(), name: f.getName().replace(/\.json$/i, ''), updated: f.getLastUpdated().toISOString(), layout: d });
         continue;
       }
       if (!d || !d.deckType) continue; // not a deck file
