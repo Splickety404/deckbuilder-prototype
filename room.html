@@ -845,6 +845,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
     <div class="focus-item" id="btnTheme">🎨 Table Theme…</div>
     <div class="focus-item" id="btnExportLayout">⬇️ Export Layout</div>
     <div class="focus-item" id="btnImportLayout">⬆️ Import Layout</div>
+    <div class="focus-item" id="btnImportPrecon" style="display:none;">📦 Import Precon…</div>
   </div>
   <div id="gridMenu" class="hidden">
     <label class="focus-item"><input type="checkbox" id="showGridCheckbox"> Show grid</label>
@@ -2550,8 +2551,19 @@ document.getElementById('btnBoardMenu').addEventListener('click', (e)=>{
   e.stopPropagation();
   const menu = document.getElementById('boardMenu');
   const willShow = menu.classList.contains('hidden');
+  document.getElementById('btnImportPrecon').style.display = state.gameFolderId ? '' : 'none'; // only for a table that knows its game
   menu.classList.toggle('hidden');
   if(willShow) positionMenuNear(menu, document.getElementById('btnBoardMenu'));
+});
+// Same list as the table's right-click Import Precon (which needs a spot of
+// bare table to right-click — the Echo of Omens board is mostly zones). The
+// list opens by the menu; the deck lands in the middle of your view.
+document.getElementById('btnImportPrecon').addEventListener('click', (e)=>{
+  e.stopPropagation(); // the outside-click closers would shut the list as it opens
+  document.getElementById('boardMenu').classList.add('hidden');
+  const r = document.getElementById('btnBoardMenu').getBoundingClientRect();
+  const vp = document.getElementById('boardViewport').getBoundingClientRect();
+  openPreconMenuAt(r.left, r.bottom + 4, clientToWorld(vp.left + vp.width/2, vp.top + vp.height/2));
 });
 document.addEventListener('click', (e)=>{ if(!e.target.closest('#btnBoardMenu') && !e.target.closest('#btnTheme')) document.getElementById('boardMenu').classList.add('hidden'); });
 
@@ -5672,9 +5684,10 @@ function openBoardRadialMenu(clientX, clientY){
    game folder — see getPrecons in Code.gs; a player only sees decks whose
    cards they can access), listed fresh each time; picking one places it
    where you right-clicked, just like Import Deck. */
-async function openPreconMenuAt(clientX, clientY){
+// dropWorld: where the deck goes (default: the clicked spot).
+async function openPreconMenuAt(clientX, clientY, dropWorld){
   const menu = document.getElementById('tokenMenu');
-  const drop = clientToWorld(clientX, clientY);
+  const drop = dropWorld || clientToWorld(clientX, clientY);
   tokenMenuAnchor = {x:clientX, y:clientY}; tokenPlaceAtWorld = null;
   menu.innerHTML = `<div class="token-swap-title">Preconstructed decks</div><div class="token-type-item" style="cursor:default;color:var(--text-soft);">Loading…</div>`;
   menu.classList.remove('hidden');
