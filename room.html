@@ -1493,6 +1493,7 @@ const state = {
   tokens: new Map(),   // id -> { id, x, y, type, count, attachedTo: pieceId|null, attachedCardIndex: number|null }
   tokenTypes: new Map(), // name -> color (hex) — shared table-wide, user-defined; no built-in types
   tokenTypeStyles: new Map(), // name -> {symbol, image, shape} — the rest of a type's look (see tokenFaceMarkup)
+  deckRecords: new Map(), // id -> {id, name, owner, order:[cardIds, top card first], pieceId} — every imported deck, for Reform Deck
   zones: new Map(),    // id -> { id, x, y, w, h, color, strokeColor, strokeWidth, label, snapMode }
   theme: { boardColor:'#1a1c22', handColor:'#1c1f26' }, // shared table theme, synced
   hand: [],            // array of cardIds — private, never synced except as a count
@@ -1738,6 +1739,7 @@ function applyRoomEvent(type, payload){
       // Older versions sent the same angle in both fields; what showed was
       // `rotation`, so that's what's kept.
       { const np = state.pieces.get(payload.id); if(np.cardIds.length===1) np.cardRotations = [0]; }
+      if(payload.deckRecord) state.deckRecords.set(payload.deckRecord.id, {...payload.deckRecord, pieceId: payload.id});
       if(payload.sourceSheets && payload.sourceSheets.length){
         // fire-and-forget: this piece renders with "Access Pending" faces until
         // whichever sheets it needs finish loading, then a re-render picks up
@@ -1971,6 +1973,7 @@ function applyRoomEvent(type, payload){
     }
     case 'LOAD_LAYOUT': {
       state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear(); state.tokenTypeStyles.clear();
+      state.deckRecords.clear(); (payload.deckRecords||[]).forEach(r=> state.deckRecords.set(r.id, {...r}));
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
       (payload.tokenTypeStyles||[]).forEach(([name,st])=> setTokenTypeStyle(name, st));
       state.tabs = (payload.tabs && payload.tabs.length) ? payload.tabs.map(t=>({...t})) : [{id:'main', name:'Table'}];
@@ -2057,6 +2060,7 @@ function applyRoomEvent(type, payload){
     case 'STATE_SNAPSHOT': {
       if(payload.to !== state.playerId) break; // addressed to a different requester — not for us
       state.pieces.clear(); state.tokens.clear(); state.zones.clear(); state.tokenTypes.clear(); state.tokenTypeStyles.clear();
+      state.deckRecords.clear(); (payload.deckRecords||[]).forEach(r=> state.deckRecords.set(r.id, {...r}));
       (payload.tokenTypes||[]).forEach(([name,color])=> state.tokenTypes.set(name,color));
       (payload.tokenTypeStyles||[]).forEach(([name,st])=> setTokenTypeStyle(name, st));
       state.tabs = (payload.tabs && payload.tabs.length) ? payload.tabs.map(t=>({...t})) : [{id:'main', name:'Table'}];
@@ -2279,25 +2283,32 @@ async function importDeckJson(deckJson, dropX, dropY){
   if(!deckJson.sourceSheets || !deckJson.sourceSheets.length){
     throw new Error('This deck file has no sourceSheets info — re-export it from the latest deckbuilder version.');
   }
-  const cardIds = [];
-  if(deckJson.leaderId) cardIds.push(deckJson.leaderId);
-  if(deckJson.bonusCardId) cardIds.push(deckJson.bonusCardId);
-  if(deckJson.extraCardId) cardIds.push(deckJson.extraCardId);
-  (deckJson.schemeIds||[]).forEach(id=>cardIds.push(id));
-  Object.entries(deckJson.deckCards||{}).forEach(([id,count])=>{ for(let i=0;i<count;i++) cardIds.push(id); });
-
-  shuffle(cardIds);
+  // The deck goes down in its own list order, NOT shuffled — leader, bonus,
+  // extra, schemes, then the main deck in its saved order — with the first
+  // card on top (a pile's top card is its LAST array entry).
+  const order = [];
+  if(deckJson.leaderId) order.push(deckJson.leaderId);
+  if(deckJson.bonusCardId) order.push(deckJson.bonusCardId);
+  if(deckJson.extraCardId) order.push(deckJson.extraCardId);
+  (deckJson.schemeIds||[]).forEach(id=>order.push(id));
+  const counts = deckJson.deckCards || {};
+  const mainIds = [...new Set([...(deckJson.deckOrder||[]).filter(id=> counts[id]), ...Object.keys(counts)])];
+  mainIds.forEach(id=>{ for(let i=0;i<Number(counts[id]||0);i++) order.push(id); });
+  const cardIds = order.slice().reverse();
   const id = newPieceId();
   const payload = {
     id, x:dropX, y:dropY,
     cardIds,
+    // Remembered by every client (and saved with the table) so the deck can be
+    // put back together later — see reformDeck.
+    deckRecord: { id: 'deck-' + randomId(8), name: deckJson.name || 'Deck', owner: state.playerId, order },
     faceStates: cardIds.map(()=>false), // face-down by default
     owner: state.playerId,
     sourceSheets: deckJson.sourceSheets, // so OTHER clients can also resolve these cards when this event syncs to them
   };
   doAction('PLACE_PIECE', payload);
   setUndo(()=> doAction('REMOVE_PIECE', {id}));
-  toast(`Imported "${deckJson.name||'deck'}" — ${cardIds.length} cards, shuffled.`);
+  toast(`Imported "${deckJson.name||'deck'}" — ${cardIds.length} cards, in deck order.`);
 }
 
 /* =========================================================================
@@ -5627,12 +5638,103 @@ document.addEventListener('click', (e)=>{
 // all scoped to `cardIndex` specifically (not "the pile" in any sense). Used
 // standalone for a genuinely single-card piece or any card picked out of a
 // splay, and as the first half of the combined stack menu below.
+/* =========================================================================
+   REFORM DECK — puts an imported deck back together: every card of it on
+   the board (any pile, any tab) and in YOUR hand comes back into one
+   face-down pile in the deck's original order, where its original pile is
+   (or else where you right-clicked). Other players' hands are private, so
+   their cards stay put. Cards are matched by card id, so if two decks on
+   the table share a card, whichever copies are found first are taken.
+   Synced with the ordinary pile events (quietly), plus one summary note.
+   ========================================================================= */
+function deckRecordForCard(cardId){
+  if(!cardId) return null;
+  let found = null;
+  for(const r of state.deckRecords.values()){
+    if(!r.order || !r.order.includes(cardId)) continue;
+    if(r.owner===state.playerId) return r; // your own deck first
+    found = found || r;
+  }
+  return found;
+}
+function deckRecordForPile(p){
+  for(const r of state.deckRecords.values()) if(r.pieceId===p.id) return r; // the deck's own pile
+  for(let i=p.cardIds.length-1; i>=0; i--){ const r = deckRecordForCard(p.cardIds[i]); if(r) return r; }
+  return null;
+}
+function doQuietAction(type, payload){ // synced and applied, but no history bubble/row of its own
+  payload = {...payload, quiet:true};
+  applyRoomEvent(type, payload);
+  postRoomEvent(type, payload);
+}
+function reformDeck(recordId, clickedPieceId){
+  const rec = state.deckRecords.get(recordId); if(!rec) return;
+  const need = new Map();
+  rec.order.forEach(id=> need.set(id, (need.get(id)||0) + 1));
+  const take = (id)=>{ const n = need.get(id)||0; if(n<=0) return false; need.set(id, n-1); return true; };
+  // Where it goes back together: its own pile if that's still on the table.
+  const home = state.pieces.get(rec.pieceId) || state.pieces.get(clickedPieceId);
+  if(!home) return;
+  const dest = { x:home.x, y:home.y, tab:home.tab||'main' };
+  // Collect from piles — its own pile first, then the rest.
+  const piles = [...state.pieces.values()].filter(p=> p.kind!=='image' && p.cardIds && p.cardIds.length)
+    .sort((a,b)=> (b.id===rec.pieceId) - (a.id===rec.pieceId));
+  const changes = []; // {before (clone), keepIdx:[...]}
+  let collected = 0;
+  piles.forEach(p=>{
+    const keepIdx = [];
+    p.cardIds.forEach((cid, i)=>{ if(take(cid)) collected++; else keepIdx.push(i); });
+    if(keepIdx.length !== p.cardIds.length) changes.push({ before: JSON.parse(JSON.stringify(p)), keepIdx });
+  });
+  // ...then your own hand.
+  const handBefore = state.hand.slice();
+  const handAfter = [];
+  let fromHand = 0;
+  state.hand.forEach(cid=>{ if(take(cid)){ collected++; fromHand++; } else handAfter.push(cid); });
+  const missing = [...need.values()].reduce((a,b)=>a+b, 0);
+  // Rebuild the deck from its original list, leaving out cards not found.
+  const short = new Map(need);
+  const order = rec.order.filter(cid=>{ const n = short.get(cid)||0; if(n>0){ short.set(cid, n-1); return false; } return true; });
+  if(!order.length){ toast(`None of "${rec.name}"'s cards are on the table or in your hand.`); return; }
+  // Apply: shrink/remove the piles cards came from, then place the reformed deck.
+  changes.forEach(({before, keepIdx})=>{
+    if(!keepIdx.length) doQuietAction('REMOVE_PIECE', {id:before.id});
+    else doQuietAction('RESTORE_PIECE_CARDS', { id:before.id,
+      cardIds: keepIdx.map(i=> before.cardIds[i]), faceStates: keepIdx.map(i=> before.faceStates[i]),
+      cardRotations: keepIdx.map(i=> (before.cardRotations||[])[i]||0) });
+  });
+  if(fromHand){ state.hand = handAfter; renderHand(); }
+  const newId = newPieceId();
+  const cardIds = order.slice().reverse(); // first card on top
+  doQuietAction('PLACE_PIECE', { id:newId, x:dest.x, y:dest.y, tab:dest.tab, cardIds, faceStates: cardIds.map(()=>false), owner: rec.owner,
+    deckRecord: { id:rec.id, name:rec.name, owner:rec.owner, order:rec.order } });
+  if(fromHand) syncHandCount();
+  doNote(`reformed the deck "${rec.name}" (${order.length} card${order.length===1?'':'s'})${missing ? ` — ${missing} weren't on the table` : ''}`);
+  toast(missing ? `Reformed "${rec.name}" — ${missing} card${missing===1?'':'s'} weren't on the table or in your hand.` : `Reformed "${rec.name}".`);
+  renderBoard();
+  setUndo(()=>{
+    doQuietAction('REMOVE_PIECE', {id:newId});
+    changes.forEach(({before})=>{
+      if(state.pieces.has(before.id)){
+        doQuietAction('RESTORE_PIECE_CARDS', { id:before.id, cardIds:before.cardIds, faceStates:before.faceStates, cardRotations:before.cardRotations });
+      } else {
+        doQuietAction('PLACE_PIECE', { ...before, ...(before.id===rec.pieceId ? {deckRecord:{ id:rec.id, name:rec.name, owner:rec.owner, order:rec.order }} : {}) });
+        if(before.splayed) doQuietAction('SET_SPLAY', { id:before.id, splayed:true, dir:before.splayDir, spacing:before.splaySpacing });
+      }
+    });
+    if(fromHand){ state.hand = handBefore; renderHand(); syncHandCount(); }
+    doNote(`undid reforming the deck "${rec.name}"`);
+    renderBoard();
+  });
+}
 function singleCardMenuItems(p, cardIndex){
+  const rec = deckRecordForCard(p.cardIds[cardIndex]);
   return [
     {icon:'⟲', label:'Flip', action:()=>flipTopCard(p.id, cardIndex)},
     {icon:'✋', label:'Draw', action:()=>drawTopCard(p.id, 'hand', cardIndex)},
     {icon:'↻', label:'Rotate', action:()=>rotateCardAt(p.id, cardIndex, 1)},
     {icon:'🗑', label:'Remove', action:()=>removeCard(p.id, cardIndex)},
+    ...(rec ? [{icon:'📚', label:'Reform Deck', action:()=>reformDeck(rec.id, p.id)}] : []),
   ];
 }
 // Two different menus, depending on WHAT was actually clicked — no more
@@ -5699,6 +5801,7 @@ function openPieceRadialMenu(pieceId, clientX, clientY, cardIndex){
       {icon:'🔍', label:'Search', group:'stack', action:()=>openSearchModal(pieceId)},
       {icon: p.locked?'🔓':'🔒', label: p.locked?'Unlock':'Lock', group:'stack', action:()=>togglePieceLock(pieceId)},
       {icon:'🗑', label:'Remove', group:'stack', action:()=>doAction('REMOVE_PIECE', {id:pieceId})},
+      ...(()=>{ const rec = deckRecordForPile(p); return rec ? [{icon:'📚', label:'Reform Deck', group:'stack', action:()=>reformDeck(rec.id, pieceId)}] : []; })(),
     ];
   }, clientX, clientY);
 }
@@ -7465,6 +7568,7 @@ function exportLayout(){
     zones: [...state.zones.values()],
     pieces: [...state.pieces.values()],
     tokens: [...state.tokens.values()],
+    deckRecords: [...state.deckRecords.values()],
   };
 }
 document.getElementById('btnExportLayout').addEventListener('click', ()=>{
@@ -7501,6 +7605,7 @@ document.getElementById('layoutFileInput').addEventListener('change', (e)=>{
         zones: json.zones||[],
         pieces: json.pieces||[],
         tokens: json.tokens||[],
+        deckRecords: json.deckRecords||[],
       });
       fitAll();
       toast('Layout loaded.');
@@ -7820,7 +7925,7 @@ async function startFromHandoff(h){
     if(h.board){
       const b = h.board;
       doAction('LOAD_LAYOUT', { sourceSheets:b.sourceSheets||[], theme:b.theme||null, tokenTypes:b.tokenTypes||[], tokenTypeStyles:b.tokenTypeStyles||[],
-        tabs:b.tabs||null, zones:b.zones||[], pieces:b.pieces||[], tokens:b.tokens||[] });
+        tabs:b.tabs||null, zones:b.zones||[], pieces:b.pieces||[], tokens:b.tokens||[], deckRecords:b.deckRecords||[] });
     }
     fitAll();
     await placeHandoffDeck(h.deck);
