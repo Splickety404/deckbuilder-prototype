@@ -155,7 +155,7 @@ select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(
 
 /* ---------- Top bar ---------- */
 #topbar{
-  display:flex;align-items:center;gap:8px;
+  display:flex;align-items:center;gap:6px;
   padding:8px 12px;
   border-bottom:1px solid var(--border);
   background:var(--surface);
@@ -165,8 +165,14 @@ select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(
 .tab-group{display:flex;gap:2px;background:var(--surface-2);padding:3px;border-radius:var(--radius-sm);}
 .tab{font-size:12px;font-weight:600;padding:6px 12px;cursor:pointer;border-radius:5px;color:var(--text-soft);}
 .tab.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow);}
-#sync-status{font-size:12px;color:var(--text-soft);margin-left:auto;white-space:nowrap;}
-#deckNameInput{width:160px;}
+/* The status and email take whatever room is left on the row (cut short with
+   "…", full text on hover) rather than pushing the header onto a second line. */
+#sync-status{font-size:12px;color:var(--text-soft);margin-left:auto;white-space:nowrap;text-align:right;flex:2 1 70px;max-width:240px;overflow:hidden;text-overflow:ellipsis;}
+#topbar #signinAccountLine{flex:1 1 90px;max-width:200px;overflow:hidden;text-overflow:ellipsis;}
+#deck-file-bar{position:sticky;top:-12px;z-index:3;margin:-12px -12px 0;padding:12px 12px 10px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;}
+#deckNameInput{width:100%;box-sizing:border-box;}
+.deck-file-buttons{display:flex;gap:5px;flex-wrap:wrap;}
+.deck-file-buttons .btn{flex:1 1 auto;justify-content:center;}
 
 /* ---------- Main layout: deck (left) | library (middle) | filters (right) ---------- */
 #main-layout{flex:1;display:flex;min-height:0;}
@@ -442,6 +448,9 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .export-option p{font-size:12.5px;margin:0;color:var(--text-soft);}
 #export-progress{font-size:13px;padding:8px;display:none;}
 #preconList .row-item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+#loadTabs{margin-bottom:10px;}
+#loadTabs .tab{flex:1;text-align:center;}
+.load-tab-count{font-weight:400;color:var(--text-soft);}
 .load-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-soft);margin:4px 0 6px;}
 .precon-status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-soft);padding:6px 2px 8px;}
 .precon-status .mini-spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);animation:eoo-spin 0.9s linear infinite;flex:none;}
@@ -562,31 +571,35 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
       <div class="tab" data-type="overlord">Overlord</div>
       <div class="tab" data-type="champion">Champion</div>
     </div>
-    <input type="text" id="deckNameInput" placeholder="Deck name...">
-    <div class="btn" id="btnNewDeck">New</div>
     <div class="btn" id="btnSealedDecks" title="Randomly build BOTH the Overlord and Champion decks (plus the scheme deck) from a single shared card pool, following the sealed-deck rules">Get Sealed Decks</div>
-    <div class="btn" id="btnSaveDeck">Save</div>
-    <div class="btn" id="btnLoadDeck">Load ▾</div>
-    <div class="btn" id="btnPrecon" style="display:none;" title="Share this deck with every player as a preconstructed deck">Precon ▾</div>
-    <div class="btn btn-accent" id="btnExport">Export ▾</div>
     <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
     <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
     <div class="btn btn-sm" id="btnManageSets" title="Which card sets you have access to">Sets</div>
     <div class="btn btn-sm" id="btnChangeGame" title="Switch to a different game" style="display:none;">Game ▾</div>
     <div class="btn btn-icon" id="btnHelp" title="Help">❔</div>
     <label id="cardScaleControl" title="Card size" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-soft);">
-      <span>Size</span>
       <input type="range" id="cardScaleSlider" min="120" max="280" step="10" style="width:80px;">
     </label>
     <div class="btn btn-icon" id="btnThemeToggle" title="Toggle light/dark">🌓</div>
-    <div id="signinAccountLine" title="Click to sign out"></div>
     <div id="sync-status">loading card data…</div>
-    <div class="btn btn-sm" id="btnResync" title="Re-fetch latest card data">↻ Resync</div>
+    <div class="btn btn-sm" id="btnResync" title="Resync — re-fetch the latest card data">↻</div>
+    <div id="signinAccountLine" title="Click to sign out"></div>
   </header>
 
   <div id="main-layout">
 
     <aside id="deck-panel">
+      <!-- Controls for the deck being edited (Overlord or Champion), pinned to the top of this column -->
+      <div id="deck-file-bar">
+        <input type="text" id="deckNameInput" placeholder="Deck name...">
+        <div class="deck-file-buttons">
+          <div class="btn btn-sm" id="btnNewDeck">New</div>
+          <div class="btn btn-sm" id="btnSaveDeck">Save</div>
+          <div class="btn btn-sm" id="btnLoadDeck">Load ▾</div>
+          <div class="btn btn-sm" id="btnPrecon" style="display:none;" title="Share this deck with every player as a preconstructed deck">Precon ▾</div>
+          <div class="btn btn-sm btn-accent" id="btnExport">Export ▾</div>
+        </div>
+      </div>
       <div id="deck-controls">
         <div class="mode-toggle" id="overlordModeToggle">
           <div class="tab" data-mode="main">Main Deck (50)</div>
@@ -736,18 +749,22 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     <div class="modal-box" style="width:min(440px,92vw);">
       <div class="modal-header"><h2>Load / import deck</h2><div class="btn btn-icon" data-close="loadModal">✕</div></div>
       <div class="modal-body">
-        <div id="importDropZone" style="width:100%;box-sizing:border-box;border:2px dashed var(--border);border-radius:var(--radius-sm);padding:14px 10px;text-align:center;margin-bottom:10px;color:var(--text-soft);transition:background .1s,border-color .1s;">
-          Drag &amp; drop a .txt or .json deck file here, or
-          <div class="btn" id="btnImportFile" style="justify-content:center;margin-top:8px;">Choose a file…</div>
+        <div class="tab-group" id="loadTabs" style="display:none;">
+          <div class="tab" data-loadtab="precon">Preconstructed <span class="load-tab-count" id="nPreconTab"></span></div>
+          <div class="tab" data-loadtab="mine">Your decks <span class="load-tab-count" id="nMineTab"></span></div>
         </div>
-        <input type="file" id="importFileInput" accept=".txt,.json">
-        <div id="preconSection" style="display:none;">
-          <div class="load-section-title">Preconstructed decks</div>
+        <div id="loadPanePrecon" style="display:none;">
           <div id="preconStatus" class="precon-status" style="display:none;"></div>
           <div id="preconList"></div>
-          <div class="load-section-title" style="margin-top:12px;">Your saved decks</div>
         </div>
-        <div id="loadModalBody"></div>
+        <div id="loadPaneMine">
+          <div id="importDropZone" style="width:100%;box-sizing:border-box;border:2px dashed var(--border);border-radius:var(--radius-sm);padding:14px 10px;text-align:center;margin-bottom:10px;color:var(--text-soft);transition:background .1s,border-color .1s;">
+            Drag &amp; drop a .txt or .json deck file here, or
+            <div class="btn" id="btnImportFile" style="justify-content:center;margin-top:8px;">Choose a file…</div>
+          </div>
+          <input type="file" id="importFileInput" accept=".txt,.json">
+          <div id="loadModalBody"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1238,10 +1255,10 @@ async function loadData(silent){
     // loadGameAssetsInBackground/applyPcioUI).
     hideLoadingOverlay();
     if(state.hasImages && rawSetResults.length){
-      setSyncStatus('synced ' + new Date().toLocaleTimeString() + ' — loading art…');
+      setSyncStatus('synced ' + syncTime() + ' — loading art…');
       syncAllSetImages(rawSetResults);
     } else {
-      setSyncStatus('synced ' + new Date().toLocaleTimeString() + (state.hasImages?'':' — no art columns found yet'));
+      setSyncStatus('synced ' + syncTime() + (state.hasImages?'':' — no art columns found yet'));
     }
     if(state.currentGameFolderId) loadGameAssetsInBackground(state.currentGameFolderId);
     if(state.currentGameFolderId) loadPrecons(true);
@@ -1267,7 +1284,7 @@ function syncAllSetImages(rawSetResults){
       toast(`Could not load art for "${s.setName}": ${e.message}`);
     }
     pending--;
-    if(pending<=0) setSyncStatus('synced ' + new Date().toLocaleTimeString());
+    if(pending<=0) setSyncStatus('synced ' + syncTime());
   });
 }
 
@@ -1309,7 +1326,8 @@ async function loadGameAssetsInBackground(gameFolderId){
     // blank until the next reload; nothing else in the app depends on this.
   }
 }
-function setSyncStatus(s){ document.getElementById('sync-status').textContent = s; }
+function syncTime(){ return new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}); }
+function setSyncStatus(s){ const el = document.getElementById('sync-status'); el.textContent = s; el.title = s; } // title: the full text when it's cut short
 function showLoadingOverlay(){ document.getElementById('loading-overlay').classList.add('active'); }
 function hideLoadingOverlay(){ document.getElementById('loading-overlay').classList.remove('active'); }
 
@@ -1400,6 +1418,7 @@ async function onGoogleSignIn(response){
     state.games = who.games;
     localStorage.setItem(LS_LAST_EMAIL_KEY, who.email);
     document.getElementById('signinAccountLine').textContent = who.email;
+    document.getElementById('signinAccountLine').title = who.email + ' — click to sign out';
     document.getElementById('btnChangeGame').style.display = who.games.length>1 ? 'inline-flex' : 'none';
     setSigninStatus('');
     setSigninChecking(false);
@@ -3429,7 +3448,7 @@ document.getElementById('btnSaveDeck').addEventListener('click', ()=>{
 });
 
 function refreshLoadModal(){
-  renderPreconList();
+  renderPreconList(); // also sets up the two tabs and their counts
   const decks = getSavedDecks();
   const body = document.getElementById('loadModalBody');
   const names = Object.keys(decks);
@@ -4019,7 +4038,7 @@ function renderPreconList(){
   const decks = state.precons.decks;
   // While the list is being fetched (or if that failed), say so — with the
   // decks already known still listed underneath.
-  document.getElementById('preconSection').style.display = (decks.length || preconsStatus) ? '' : 'none';
+  applyLoadTabs();
   const status = document.getElementById('preconStatus');
   status.style.display = preconsStatus ? '' : 'none';
   status.innerHTML = preconsStatus==='loading'
@@ -4036,6 +4055,29 @@ function renderPreconList(){
   }).join('');
   el.querySelectorAll('[data-precon]').forEach(b=> b.onclick = ()=> loadPreconDeck(decks[Number(b.dataset.precon)]));
 }
+// The Load window has two tabs, Preconstructed and Your decks. The tabs only
+// appear when this game has preconstructed decks (or they're still loading);
+// otherwise it's just your decks, as before. The last tab picked is remembered.
+const LS_LOAD_TAB_KEY = 'eoo_deckbuilder_load_tab';
+function applyLoadTabs(){
+  const showTabs = !!(state.precons.decks.length || preconsStatus);
+  let tab = 'precon';
+  try{ tab = localStorage.getItem(LS_LOAD_TAB_KEY) || 'precon'; }catch(e){}
+  if(!showTabs) tab = 'mine';
+  document.getElementById('loadTabs').style.display = showTabs ? '' : 'none';
+  document.querySelectorAll('#loadTabs .tab').forEach(t=> t.classList.toggle('active', t.dataset.loadtab===tab));
+  document.getElementById('loadPanePrecon').style.display = tab==='precon' ? '' : 'none';
+  document.getElementById('loadPaneMine').style.display = tab==='mine' ? '' : 'none';
+  document.getElementById('nPreconTab').textContent = state.precons.decks.length ? `(${state.precons.decks.length})` : '';
+  const mine = Object.keys(getSavedDecks()).length;
+  document.getElementById('nMineTab').textContent = mine ? `(${mine})` : '';
+}
+document.getElementById('loadTabs').addEventListener('click', e=>{
+  const t = e.target.closest('[data-loadtab]');
+  if(!t) return;
+  try{ localStorage.setItem(LS_LOAD_TAB_KEY, t.dataset.loadtab); }catch(err){}
+  applyLoadTabs();
+});
 function loadPreconDeck(p){
   importDeckFromJson(p.deck);
   curDeck().name = p.name;
