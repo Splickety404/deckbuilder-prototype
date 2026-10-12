@@ -14,6 +14,9 @@
 // Page markup that only the private build needs is wrapped in marker lines in index.html:
 //     <!--PRIVATE-BEGIN-->  …  <!--PRIVATE-END-->
 // The private build just drops the two marker lines; the public build drops everything between them.
+// The opposite pair, <!--PUBLIC-BEGIN--> … <!--PUBLIC-END-->, holds markup only the public build
+// shows (an alternative wording, say): the public build drops just the marker lines, the private
+// build drops everything between them.
 //
 // `--public` builds the version without anything private: files named *-private.js /
 // *-private.css are left out, output goes to dist/public/ instead of the repo root, and a
@@ -66,8 +69,11 @@ function leakHits(files){
 }
 
 function stripPrivateMarkup(text){
-  const block = /^[ \t]*<!--PRIVATE-BEGIN-->[ \t]*\n([\s\S]*?)^[ \t]*<!--PRIVATE-END-->[ \t]*\n/gm;
-  return publicBuild ? text.replace(block, '') : text.replace(block, (m, inner) => inner);
+  const priv = /^[ \t]*<!--PRIVATE-BEGIN-->[ \t]*\n([\s\S]*?)^[ \t]*<!--PRIVATE-END-->[ \t]*\n/gm;
+  const pub = /^[ \t]*<!--PUBLIC-BEGIN-->[ \t]*\n([\s\S]*?)^[ \t]*<!--PUBLIC-END-->[ \t]*\n/gm;
+  return publicBuild
+    ? text.replace(priv, '').replace(pub, (m, inner) => inner)
+    : text.replace(priv, (m, inner) => inner).replace(pub, '');
 }
 
 let failed = false;

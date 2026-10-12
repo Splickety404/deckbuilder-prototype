@@ -1,0 +1,52 @@
+/* =========================================================================
+   PRIVATE STYLES — the Google sign-in gate and the Echo-only controls that a
+   free-form game hides. Their markup is wrapped in PRIVATE markers in index.html,
+   so the public build has neither the markup nor these rules.
+   ========================================================================= */
+/* ---------- Sign-in gate ---------- */
+/* Blocks the whole app until Google sign-in succeeds AND the signed-in
+   email has been granted access to at least one card set (see whoAmI in
+   the Apps Script). Sits above everything, including #loading-overlay,
+   and is never dismissible by clicking outside or pressing Escape — this
+   isn't a modal, it's the front door. */
+#signin-gate{
+  position:fixed;inset:0;z-index:300;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);
+}
+#signin-gate.hidden{display:none;}
+#signin-gate .signin-box{
+  width:min(360px,90vw);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:16px;
+}
+#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
+#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
+#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
+#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
+/* The request-access form can be opened from the sign-in gate (signed in, but no
+   sets), so it has to sit above the gate rather than at the normal modal layer. */
+#requestAccessModal{z-index:350;}
+.signin-spinner{
+  width:26px;height:26px;border-radius:50%;
+  border:3px solid var(--border);border-top-color:var(--accent);
+  animation:eoo-spin 0.9s linear infinite;
+  margin:2px auto 0;
+}
+#signinAccountLine{font-size:12px;color:var(--text-soft);cursor:pointer;white-space:nowrap;}
+#signinAccountLine:hover{color:var(--text);text-decoration:underline;}
+
+
+#topbar #signinAccountLine{flex:1 1 90px;max-width:200px;overflow:hidden;text-overflow:ellipsis;}
+
+/* ---------- Generic-mode UI (game-agnostic decks: no leaders/aspects/side decks/stats/
+   sealed-deck-generation) — hides the Echo-of-Omens-specific deckbuilding controls
+   entirely rather than leaving them visible-but-inert. */
+body.generic-mode #deckTypeTabs,
+body.generic-mode #btnSealedDecks,
+body.generic-mode #overlordModeToggle,
+body.generic-mode #deckSetupPanel,
+body.generic-mode #btnClearIllegal,
+body.generic-mode #deckRulesPanel,
+body.generic-mode #deckStatsPanel,
+body.generic-mode #viewStatsPanel{ display:none !important; }
+

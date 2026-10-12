@@ -119,7 +119,7 @@ async function savePreconDeck(fileId){
     document.getElementById('deckNameInput').value = name;
   }
   const deck = deckJsonData(new Date().toISOString());
-  const ids = [deck.leaderId, deck.bonusCardId, deck.extraCardId, ...(deck.schemeIds||[]), ...Object.keys(deck.deckCards||{})].filter(Boolean);
+  const ids = [...deckCodec().referencedIds(deck), ...Object.keys(deck.deckCards||{})].filter(Boolean);
   if(!ids.length){ toast('This deck is empty.'); return; }
   const gone = [...new Set(ids)].filter(id=> !state.byId.has(id));
   if(gone.length && !confirm(`This deck still has ${gone.length} card${gone.length>1?'s':''} that no longer exist${gone.length>1?'':'s'}. Save it anyway?`)) return;
@@ -152,7 +152,7 @@ document.getElementById('btnSendToRoom').addEventListener('click', ()=>{
   const boards = state.precons.boards || [];
   const name = document.getElementById('deckNameInput').value.trim() || 'Untitled deck';
   const deck = deckJsonData(new Date().toISOString());
-  const n = (deck.leaderId?1:0) + (deck.bonusCardId?1:0) + (deck.extraCardId?1:0) + (deck.schemeIds||[]).length
+  const n = deckCodec().referencedIds(deck).filter(Boolean).length
     + Object.values(deck.deckCards||{}).reduce((a,b)=>a+Number(b||0),0);
   const body = document.getElementById('sendRoomBody');
   body.innerHTML = `

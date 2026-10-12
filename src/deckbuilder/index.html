@@ -3,18 +3,28 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--PRIVATE-BEGIN-->
 <title>Echo of Omens — Deckbuilder</title>
+<!--PRIVATE-END-->
+<!--PUBLIC-BEGIN-->
+<title>Open Room — Deckbuilder</title>
+<!--PUBLIC-END-->
+<!--PRIVATE-BEGIN-->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!--PRIVATE-END-->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!--PRIVATE-BEGIN-->
 <!-- Google Identity Services — the sign-in gate below is what card access
      is actually restricted by; see the ACCESS section further down. -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<!--PRIVATE-END-->
 <!--STYLES-->
 </head>
 <body>
 
+<!--PRIVATE-BEGIN-->
 <div id="signin-gate">
   <div class="signin-box">
     <h1>DECKBUILDER PROTOTYPE</h1>
@@ -26,6 +36,7 @@
     <div class="btn" id="btnSigninRequestAccess" style="display:none;">Request access…</div>
   </div>
 </div>
+<!--PRIVATE-END-->
 
 <div id="loading-overlay">
   <div class="loading-spinner"></div>
@@ -37,6 +48,7 @@
      no sets), before #app is ever shown. -->
 <div id="toast"></div>
 
+<!--PRIVATE-BEGIN-->
 <!-- Request access to a set — Game/Set are plain text (not a dropdown of known
      sets) so this form never reveals which games/sets actually exist to someone
      who doesn't already have access to at least one. -->
@@ -61,6 +73,7 @@
     </div>
   </div>
 </div>
+<!--PRIVATE-END-->
 
 <!-- Game selection — shown at sign-in when an account can see more than one game,
      and reopened on demand via the "Game" button to switch games later. This has to
@@ -94,7 +107,9 @@
 <!--PRIVATE-END-->
     <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
     <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
+<!--PRIVATE-BEGIN-->
     <div class="btn btn-sm" id="btnManageSets" title="Which card sets you have access to">Sets</div>
+<!--PRIVATE-END-->
     <div class="btn btn-sm" id="btnChangeGame" title="Switch to a different game" style="display:none;">Game ▾</div>
     <div class="btn btn-icon" id="btnHelp" title="Help">❔</div>
     <label id="cardScaleControl" title="Card size" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-soft);">
@@ -103,13 +118,20 @@
     <div class="btn btn-icon" id="btnThemeToggle" title="Toggle light/dark">🌓</div>
     <div id="sync-status">loading card data…</div>
     <div class="btn btn-sm" id="btnResync" title="Resync — re-fetch the latest card data">↻</div>
+<!--PRIVATE-BEGIN-->
     <div id="signinAccountLine" title="Click to sign out"></div>
+<!--PRIVATE-END-->
   </header>
 
   <div id="main-layout">
 
     <aside id="deck-panel">
+<!--PRIVATE-BEGIN-->
       <!-- Controls for the deck being edited (Overlord or Champion), pinned to the top of this column -->
+<!--PRIVATE-END-->
+<!--PUBLIC-BEGIN-->
+      <!-- Controls for the deck being edited, pinned to the top of this column -->
+<!--PUBLIC-END-->
       <div id="deck-file-bar">
         <input type="text" id="deckNameInput" placeholder="Deck name...">
         <div class="deck-file-buttons">
@@ -250,6 +272,7 @@
   </div>
 
   <!-- Manage card sets -->
+<!--PRIVATE-BEGIN-->
   <div class="modal-overlay hidden" id="setsModal">
     <div class="modal-box" style="width:min(480px,92vw);">
       <div class="modal-header"><h2>Card Sets</h2><div class="btn btn-icon" data-close="setsModal">✕</div></div>
@@ -260,6 +283,7 @@
       </div>
     </div>
   </div>
+<!--PRIVATE-END-->
 
 
 <!--PRIVATE-BEGIN-->
@@ -339,12 +363,22 @@
       <div class="modal-body">
         <div class="export-option card-surface" id="optExportPdf">
           <h3>🖨️ Print &amp; Play PDF (3×3, Letter)</h3>
+<!--PRIVATE-BEGIN-->
           <p>Overlord export order: leader, then your 5 schemes, then your 50-card deck (in your reordered sequence). Double-sided cards print front then back. Scheme cards print at their native angle, same physical size as every other card — rotate the printed card by hand to read it.</p>
+<!--PRIVATE-END-->
+<!--PUBLIC-BEGIN-->
+          <p>Cards print in the order you arranged your deck. Double-sided cards print front then back. Sideways cards print at their native angle, same physical size as every other card — rotate the printed card by hand to read it.</p>
+<!--PUBLIC-END-->
           <p id="pdfPageEstimate" style="font-weight:600;"></p>
         </div>
         <div class="export-option card-surface" id="optExportCsv">
           <h3>🃏 playingcards.io CSV</h3>
+<!--PRIVATE-BEGIN-->
           <p>Columns: name, front, back — one row per physical copy, in deck order. For an Overlord deck this downloads two files: the 50-card deck (leader first) and the 5-card scheme deck, separately.</p>
+<!--PRIVATE-END-->
+<!--PUBLIC-BEGIN-->
+          <p>Columns: name, front, back — one row per physical copy, in deck order.</p>
+<!--PUBLIC-END-->
         </div>
         <div class="export-option card-surface" id="optExportTxt">
           <h3>📋 Plain-text decklist</h3>

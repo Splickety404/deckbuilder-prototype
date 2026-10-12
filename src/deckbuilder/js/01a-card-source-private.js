@@ -11,6 +11,7 @@
      precons(gameFolderId)              preconstructed decks + boards
      savePrecon(fileId, deck, replace)  add/replace a preconstructed deck
      submitAccessRequest(game, set, email, note)
+     start() / hideStartScreen()        show the start screen, which ends in startWithGames(games) / take it down
      sizedUrl(url, width, force) / noteSmallImage(url, smallUrl)   how this host resizes art / which small copies exist
    This is the Google Apps Script / Drive implementation — unchanged behavior,
    moved here from the files that used to hold each function. */
@@ -302,6 +303,9 @@ const cardSource = {
   precons: fetchPrecons,
   savePrecon: savePreconToServer,
   submitAccessRequest: submitAccessRequest,
+  // Start-up: the Google sign-in gate. It ends by calling startWithGames(games) (see onGoogleSignIn).
+  start: ()=> initGoogleSignIn(),
+  hideStartScreen: ()=> hideSigninGate(),
   sizedUrl: driveSizedUrl,
   noteSmallImage: driveNoteSmallImage,
 };

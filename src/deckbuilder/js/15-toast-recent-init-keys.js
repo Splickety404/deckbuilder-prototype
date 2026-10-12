@@ -76,10 +76,9 @@ initCardScale();
 initVisitTracking();
 document.documentElement.style.setProperty('--hover-preview-width', HOVER_PREVIEW_WIDTH+'px');
 document.documentElement.style.setProperty('--hover-preview-landscape-width', HOVER_PREVIEW_LANDSCAPE_WIDTH+'px');
-// The app itself stays inert until sign-in succeeds — no card data, no sets, nothing
-// is fetched until the server has verified an ID token and told us what that account
-// may see. initGoogleSignIn() renders the button; onGoogleSignIn() is what calls loadData().
-initGoogleSignIn();
+// The app itself stays inert until the start screen hands it a game to open — see
+// cardSource.start and startWithGames().
+cardSource.start();
 // No early warm-up call here anymore: help content is per-game now, and which game
 // this account will end up viewing isn't known until sign-in resolves — see the
 // warm-up call in selectGame() instead, once state.currentGameFolderId is set.

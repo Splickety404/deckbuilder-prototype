@@ -97,14 +97,13 @@ select, input[type=text], input[type=number]{
 }
 select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent);}
 
-/* Hidden by default rather than only relying on #signin-gate's z-index to cover it:
-   once there's more than one game, the sign-in gate has to come down BEFORE the game
-   is picked (see hideSigninGate() in the multi-game branch of onGoogleSignIn) so the
-   "Choose a Game" modal beneath it is actually visible/clickable — and with the gate
-   gone, #app would otherwise show through underneath in its default Echo-flavored
-   state (Overlord/Champion tabs, leader/domination/stronghold slots, "ECHO OF OMENS"
-   branding) despite no game having been chosen yet. #app.game-active is added the
-   moment a game is actually selected (see selectGame()), never before. */
+/* Hidden by default rather than only relying on the start screen's z-index to cover it:
+   once there's more than one game, the start screen has to come down BEFORE the game
+   is picked (see startWithGames()) so the "Choose a Game" modal beneath it is actually
+   visible/clickable — and with the start screen gone, #app would otherwise show through
+   underneath in its default state despite no game having been chosen yet.
+   #app.game-active is added the moment a game is actually selected (see selectGame()),
+   never before. */
 #app{display:none;flex-direction:column;height:100vh;}
 #app.game-active{display:flex;}
 #loading-overlay{
@@ -121,38 +120,6 @@ select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(
 .loading-text{font-size:16px;font-weight:600;color:var(--text-soft);}
 @keyframes eoo-spin{ to{ transform:rotate(360deg); } }
 
-/* ---------- Sign-in gate ---------- */
-/* Blocks the whole app until Google sign-in succeeds AND the signed-in
-   email has been granted access to at least one card set (see whoAmI in
-   the Apps Script). Sits above everything, including #loading-overlay,
-   and is never dismissible by clicking outside or pressing Escape — this
-   isn't a modal, it's the front door. */
-#signin-gate{
-  position:fixed;inset:0;z-index:300;
-  display:flex;align-items:center;justify-content:center;
-  background:var(--bg);
-}
-#signin-gate.hidden{display:none;}
-#signin-gate .signin-box{
-  width:min(360px,90vw);text-align:center;
-  display:flex;flex-direction:column;align-items:center;gap:16px;
-}
-#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
-#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
-#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
-#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
-/* The request-access form can be opened from the sign-in gate (signed in, but no
-   sets), so it has to sit above the gate rather than at the normal modal layer. */
-#requestAccessModal{z-index:350;}
-.signin-spinner{
-  width:26px;height:26px;border-radius:50%;
-  border:3px solid var(--border);border-top-color:var(--accent);
-  animation:eoo-spin 0.9s linear infinite;
-  margin:2px auto 0;
-}
-#signinAccountLine{font-size:12px;color:var(--text-soft);cursor:pointer;white-space:nowrap;}
-#signinAccountLine:hover{color:var(--text);text-decoration:underline;}
-
 /* ---------- Top bar ---------- */
 #topbar{
   display:flex;align-items:center;gap:6px;
@@ -168,7 +135,6 @@ select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(
 /* The status and email take whatever room is left on the row (cut short with
    "…", full text on hover) rather than pushing the header onto a second line. */
 #sync-status{font-size:12px;color:var(--text-soft);margin-left:auto;white-space:nowrap;text-align:right;flex:2 1 70px;max-width:240px;overflow:hidden;text-overflow:ellipsis;}
-#topbar #signinAccountLine{flex:1 1 90px;max-width:200px;overflow:hidden;text-overflow:ellipsis;}
 #deck-file-bar{position:sticky;top:-12px;z-index:3;margin:-12px -12px 0;padding:12px 12px 10px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;}
 #deckNameInput{width:100%;box-sizing:border-box;}
 .deck-file-buttons{display:flex;gap:5px;flex-wrap:wrap;}
@@ -484,6 +450,53 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 #hoverPreviewImg.rotate-180-fill{transform:rotate(180deg);}
 #hover-preview .hp-name{font-size:12px;font-weight:700;margin-top:6px;}
 
+#toast{
+  position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+  background:var(--text);color:var(--bg);
+  padding:10px 16px;font-size:13px;z-index:400; /* above the start screen, so confirmations show there too */
+  border-radius:var(--radius-sm);display:none;
+  max-width:70vw;box-shadow:var(--shadow);
+}
+/* =========================================================================
+   PRIVATE STYLES — the Google sign-in gate and the Echo-only controls that a
+   free-form game hides. Their markup is wrapped in PRIVATE markers in index.html,
+   so the public build has neither the markup nor these rules.
+   ========================================================================= */
+/* ---------- Sign-in gate ---------- */
+/* Blocks the whole app until Google sign-in succeeds AND the signed-in
+   email has been granted access to at least one card set (see whoAmI in
+   the Apps Script). Sits above everything, including #loading-overlay,
+   and is never dismissible by clicking outside or pressing Escape — this
+   isn't a modal, it's the front door. */
+#signin-gate{
+  position:fixed;inset:0;z-index:300;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);
+}
+#signin-gate.hidden{display:none;}
+#signin-gate .signin-box{
+  width:min(360px,90vw);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:16px;
+}
+#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
+#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
+#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
+#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
+/* The request-access form can be opened from the sign-in gate (signed in, but no
+   sets), so it has to sit above the gate rather than at the normal modal layer. */
+#requestAccessModal{z-index:350;}
+.signin-spinner{
+  width:26px;height:26px;border-radius:50%;
+  border:3px solid var(--border);border-top-color:var(--accent);
+  animation:eoo-spin 0.9s linear infinite;
+  margin:2px auto 0;
+}
+#signinAccountLine{font-size:12px;color:var(--text-soft);cursor:pointer;white-space:nowrap;}
+#signinAccountLine:hover{color:var(--text);text-decoration:underline;}
+
+
+#topbar #signinAccountLine{flex:1 1 90px;max-width:200px;overflow:hidden;text-overflow:ellipsis;}
+
 /* ---------- Generic-mode UI (game-agnostic decks: no leaders/aspects/side decks/stats/
    sealed-deck-generation) — hides the Echo-of-Omens-specific deckbuilding controls
    entirely rather than leaving them visible-but-inert. */
@@ -496,13 +509,6 @@ body.generic-mode #deckRulesPanel,
 body.generic-mode #deckStatsPanel,
 body.generic-mode #viewStatsPanel{ display:none !important; }
 
-#toast{
-  position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
-  background:var(--text);color:var(--bg);
-  padding:10px 16px;font-size:13px;z-index:400; /* above #signin-gate, so the access-request confirmation shows there too */
-  border-radius:var(--radius-sm);display:none;
-  max-width:70vw;box-shadow:var(--shadow);
-}
 </style>
 </head>
 <body>
@@ -964,6 +970,7 @@ function curFilters(){ return state.filtersByType[activeFilterKey()]; }
      precons(gameFolderId)              preconstructed decks + boards
      savePrecon(fileId, deck, replace)  add/replace a preconstructed deck
      submitAccessRequest(game, set, email, note)
+     start() / hideStartScreen()        show the start screen, which ends in startWithGames(games) / take it down
      sizedUrl(url, width, force) / noteSmallImage(url, smallUrl)   how this host resizes art / which small copies exist
    This is the Google Apps Script / Drive implementation — unchanged behavior,
    moved here from the files that used to hold each function. */
@@ -1255,6 +1262,9 @@ const cardSource = {
   precons: fetchPrecons,
   savePrecon: savePreconToServer,
   submitAccessRequest: submitAccessRequest,
+  // Start-up: the Google sign-in gate. It ends by calling startWithGames(games) (see onGoogleSignIn).
+  start: ()=> initGoogleSignIn(),
+  hideStartScreen: ()=> hideSigninGate(),
   sizedUrl: driveSizedUrl,
   noteSmallImage: driveNoteSmallImage,
 };
@@ -1710,6 +1720,98 @@ function applyPcioUI(){
 }
 
 /* =========================================================================
+   GAMES — picking which game to open, and switching between them. Whatever start
+   screen the build uses (see cardSource.start) ends up in startWithGames().
+   ========================================================================= */
+// The start screen (whatever the build uses — see cardSource.start) calls this once it knows which games this person can open.
+function startWithGames(games){
+  state.games = games;
+  document.getElementById('btnChangeGame').style.display = games.length>1 ? 'inline-flex' : 'none';
+  if(games.length===1){
+    selectGame(games[0]);
+  } else {
+    // The start screen has to come down FIRST: the game-select modal sits at a lower
+    // z-index than it, so it would otherwise be fully rendered but invisibly stuck
+    // underneath (exactly what "gets stuck checking access" once looked like).
+    hideStartScreen();
+    // More than one game available — ask every time, rather than silently
+    // remembering the last choice, so switching is never surprising.
+    openGameSelectModal(selectGame);
+  }
+}
+function hideStartScreen(){ cardSource.hideStartScreen(); }
+
+// First-ever game pick after start-up: just loads it, nothing to reset yet.
+function selectGame(game){
+  state.currentGameFolderId = game.folderId;
+  state.currentGameLabel = game.label;
+  state.authorizedSets = game.sets;
+  hideStartScreen();
+  // #app stays display:none (see its CSS) until a game is actually chosen, so nothing
+  // game-flavored — tabs, deck-setup slots, branding — is visible behind the
+  // game-select modal or the sign-in gate before this point.
+  document.getElementById('app').classList.add('game-active');
+  loadData(false);
+  fetchHelpArticles().catch(()=>{}); // warm the cache early so opening Help later feels instant
+}
+
+// Resets every piece of state that's specific to a particular game's card pool —
+// used when switching games mid-session so the new game starts from a clean slate,
+// exactly as if it had just been signed into fresh.
+function resetGameSpecificState(){
+  state.cards = []; state.byId = new Map(); state.headers = []; state.hasImages = false; state.fieldDefs = [];
+  state.game = defaultGame();
+  freshDeckState();
+  state.selection = new Set();
+  state.lastClickIndex = null;
+  state.visibleCardsOrder = [];
+  state.flippedCards = new Set();
+  state.genericBacks = {};
+  state.genericBackUrl = '';
+  state.pcio = {found:false};
+  state.precons = {canEdit:false, decks:[], boards:[]};
+  applyPreconUI();
+  applyPcioUI(); // reset all three playingcards.io-flavored UI bits until the new game's loadData() re-evaluates them
+}
+
+// Switching games mid-session, via the "Game" button — deliberately clears all
+// current deckbuilding progress (the person is warned and confirms before this is
+// ever called; see the btnChangeGame handler below).
+function applyGameChange(game){
+  if(game.folderId === state.currentGameFolderId) return; // reselected the same game — nothing to do
+  state.currentGameFolderId = game.folderId;
+  state.currentGameLabel = game.label;
+  state.authorizedSets = game.sets;
+  resetGameSpecificState();
+  loadData(false);
+  fetchHelpArticles().catch(()=>{}); // warm the cache for the newly-selected game's own help content
+}
+
+function renderGameSelectList(onPick){
+  const el = document.getElementById('gameSelectList');
+  el.innerHTML = state.games.map(g=>
+    `<div class="row-item" data-game="${escapeHtml(g.folderId)}">
+       <span>${escapeHtml(g.label)}</span>
+       <span style="font-size:12px;color:var(--text-soft);">${g.sets.length} set${g.sets.length!==1?'s':''}</span>
+     </div>`
+  ).join('');
+  el.querySelectorAll('[data-game]').forEach(row=>{
+    row.addEventListener('click', ()=>{
+      document.getElementById('gameSelectModal').classList.add('hidden');
+      onPick(state.games.find(g=>g.folderId===row.dataset.game));
+    });
+  });
+}
+function openGameSelectModal(onPick){
+  renderGameSelectList(onPick);
+  document.getElementById('gameSelectModal').classList.remove('hidden');
+}
+document.getElementById('btnChangeGame').addEventListener('click', ()=>{
+  if(state.games.length<2){ toast('Only one game is available to your account.'); return; }
+  if(!confirm('Change game? This clears your current deckbuilding progress — unsaved changes will be lost (anything you already Saved stays saved, per-game).')) return;
+  openGameSelectModal(applyGameChange);
+});
+/* =========================================================================
    SIGN-IN — Google Identity Services gates the whole app. Nothing loads until
    the server has verified an ID token and told us which sets that account may see.
    ========================================================================= */
@@ -1781,106 +1883,19 @@ async function onGoogleSignIn(response){
     }
     state.idToken = response.credential;
     state.userEmail = who.email;
-    state.games = who.games;
     localStorage.setItem(LS_LAST_EMAIL_KEY, who.email);
     document.getElementById('signinAccountLine').textContent = who.email;
     document.getElementById('signinAccountLine').title = who.email + ' — click to sign out';
-    document.getElementById('btnChangeGame').style.display = who.games.length>1 ? 'inline-flex' : 'none';
     setSigninStatus('');
     setSigninChecking(false);
 
-    if(who.games.length===1){
-      selectGame(who.games[0]);
-    } else {
-      // selectGame() (called when the user picks from the modal below) hides the
-      // sign-in gate itself, but that's too late here: with more than one game, the
-      // gate has to come down FIRST so the game-select modal — which sits at a lower
-      // z-index than the gate — is actually visible and clickable, rather than being
-      // fully rendered but invisibly stuck underneath the still-showing gate (exactly
-      // what "gets stuck checking access" looked like: the modal was there the whole
-      // time, just hidden behind the gate that never went away).
-      hideSigninGate();
-      // More than one game available — ask every time, rather than silently
-      // remembering the last choice, so switching is never surprising.
-      openGameSelectModal(selectGame);
-    }
+    startWithGames(who.games);
   }catch(e){
     setSigninStatus('');
     setSigninChecking(false);
     setSigninError('Sign-in failed: ' + e.message);
   }
 }
-
-// First-ever game pick after sign-in: just loads it, nothing to reset yet.
-function selectGame(game){
-  state.currentGameFolderId = game.folderId;
-  state.currentGameLabel = game.label;
-  state.authorizedSets = game.sets;
-  hideSigninGate();
-  // #app stays display:none (see its CSS) until a game is actually chosen, so nothing
-  // game-flavored — tabs, deck-setup slots, branding — is visible behind the
-  // game-select modal or the sign-in gate before this point.
-  document.getElementById('app').classList.add('game-active');
-  loadData(false);
-  fetchHelpArticles().catch(()=>{}); // warm the cache early so opening Help later feels instant
-}
-
-// Resets every piece of state that's specific to a particular game's card pool —
-// used when switching games mid-session so the new game starts from a clean slate,
-// exactly as if it had just been signed into fresh.
-function resetGameSpecificState(){
-  state.cards = []; state.byId = new Map(); state.headers = []; state.hasImages = false; state.fieldDefs = [];
-  state.game = defaultGame();
-  freshDeckState();
-  state.selection = new Set();
-  state.lastClickIndex = null;
-  state.visibleCardsOrder = [];
-  state.flippedCards = new Set();
-  state.genericBacks = {};
-  state.genericBackUrl = '';
-  state.pcio = {found:false};
-  state.precons = {canEdit:false, decks:[], boards:[]};
-  applyPreconUI();
-  applyPcioUI(); // reset all three playingcards.io-flavored UI bits until the new game's loadData() re-evaluates them
-}
-
-// Switching games mid-session, via the "Game" button — deliberately clears all
-// current deckbuilding progress (the person is warned and confirms before this is
-// ever called; see the btnChangeGame handler below).
-function applyGameChange(game){
-  if(game.folderId === state.currentGameFolderId) return; // reselected the same game — nothing to do
-  state.currentGameFolderId = game.folderId;
-  state.currentGameLabel = game.label;
-  state.authorizedSets = game.sets;
-  resetGameSpecificState();
-  loadData(false);
-  fetchHelpArticles().catch(()=>{}); // warm the cache for the newly-selected game's own help content
-}
-
-function renderGameSelectList(onPick){
-  const el = document.getElementById('gameSelectList');
-  el.innerHTML = state.games.map(g=>
-    `<div class="row-item" data-game="${escapeHtml(g.folderId)}">
-       <span>${escapeHtml(g.label)}</span>
-       <span style="font-size:12px;color:var(--text-soft);">${g.sets.length} set${g.sets.length!==1?'s':''}</span>
-     </div>`
-  ).join('');
-  el.querySelectorAll('[data-game]').forEach(row=>{
-    row.addEventListener('click', ()=>{
-      document.getElementById('gameSelectModal').classList.add('hidden');
-      onPick(state.games.find(g=>g.folderId===row.dataset.game));
-    });
-  });
-}
-function openGameSelectModal(onPick){
-  renderGameSelectList(onPick);
-  document.getElementById('gameSelectModal').classList.remove('hidden');
-}
-document.getElementById('btnChangeGame').addEventListener('click', ()=>{
-  if(state.games.length<2){ toast('Only one game is available to your account.'); return; }
-  if(!confirm('Change game? This clears your current deckbuilding progress — unsaved changes will be lost (anything you already Saved stays saved, per-game).')) return;
-  openGameSelectModal(applyGameChange);
-});
 
 function signOut(){
   state.idToken = '';
@@ -1905,8 +1920,8 @@ document.getElementById('signinAccountLine').addEventListener('click', ()=>{
 /* =========================================================================
    HELP
    ========================================================================= */
-// Help content is per-GAME now (a "Help" Google Sheet living in the game's own main
-// folder — see findHelpSheetFile in Code.gs), not one shared tab in Set 1's sheet, so
+// Help content is per-GAME now (a "Help" document that comes with the game
+// — see cardSource.loadHelp), not one shared tab in Set 1's sheet, so
 // the cached promise is keyed to whichever game folder it was fetched for; switching
 // games (resetGameSpecificState) clears it so the next Help open re-fetches for the
 // newly-selected game instead of showing the previous game's stale articles.
@@ -1992,6 +2007,10 @@ function renderSetFilterGroup(){
     });
   });
 }
+/* =========================================================================
+   CARD SETS LIST AND ACCESS REQUESTS (private) — the read-only "Sets" window and
+   the request-access form for the Google/Drive-shared sets. Moved here unchanged.
+   ========================================================================= */
 // Read-only: which sets you can see is decided entirely by the server, from live
 // Drive folder-sharing permissions on your signed-in Google account. There is
 // nothing to import, connect, or forget here anymore — ask whoever administers
@@ -4439,7 +4458,7 @@ async function savePreconDeck(fileId){
     document.getElementById('deckNameInput').value = name;
   }
   const deck = deckJsonData(new Date().toISOString());
-  const ids = [deck.leaderId, deck.bonusCardId, deck.extraCardId, ...(deck.schemeIds||[]), ...Object.keys(deck.deckCards||{})].filter(Boolean);
+  const ids = [...deckCodec().referencedIds(deck), ...Object.keys(deck.deckCards||{})].filter(Boolean);
   if(!ids.length){ toast('This deck is empty.'); return; }
   const gone = [...new Set(ids)].filter(id=> !state.byId.has(id));
   if(gone.length && !confirm(`This deck still has ${gone.length} card${gone.length>1?'s':''} that no longer exist${gone.length>1?'':'s'}. Save it anyway?`)) return;
@@ -4472,7 +4491,7 @@ document.getElementById('btnSendToRoom').addEventListener('click', ()=>{
   const boards = state.precons.boards || [];
   const name = document.getElementById('deckNameInput').value.trim() || 'Untitled deck';
   const deck = deckJsonData(new Date().toISOString());
-  const n = (deck.leaderId?1:0) + (deck.bonusCardId?1:0) + (deck.extraCardId?1:0) + (deck.schemeIds||[]).length
+  const n = deckCodec().referencedIds(deck).filter(Boolean).length
     + Object.values(deck.deckCards||{}).reduce((a,b)=>a+Number(b||0),0);
   const body = document.getElementById('sendRoomBody');
   body.innerHTML = `
@@ -4592,10 +4611,9 @@ initCardScale();
 initVisitTracking();
 document.documentElement.style.setProperty('--hover-preview-width', HOVER_PREVIEW_WIDTH+'px');
 document.documentElement.style.setProperty('--hover-preview-landscape-width', HOVER_PREVIEW_LANDSCAPE_WIDTH+'px');
-// The app itself stays inert until sign-in succeeds — no card data, no sets, nothing
-// is fetched until the server has verified an ID token and told us what that account
-// may see. initGoogleSignIn() renders the button; onGoogleSignIn() is what calls loadData().
-initGoogleSignIn();
+// The app itself stays inert until the start screen hands it a game to open — see
+// cardSource.start and startWithGames().
+cardSource.start();
 // No early warm-up call here anymore: help content is per-game now, and which game
 // this account will end up viewing isn't known until sign-in resolves — see the
 // warm-up call in selectGame() instead, once state.currentGameFolderId is set.
