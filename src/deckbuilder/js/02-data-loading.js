@@ -53,7 +53,7 @@ function mergeCardSets(setCardLists){
   // A card that's the same id in more than one set (e.g. reprinted/shared into a
   // later set) should stay visible under ANY of its sets' filters, not just whichever
   // set's copy happened to win as the displayed row above — see cardMatchesFilters
-  // and generateSealedDecks's bySet(), both of which check the full list here rather
+  // and generateSagaDeck's bySet(), both of which check the full list here rather
   // than just the single primary _setName.
   byId.forEach((card, id)=>{ card._setNames = [...setNamesById.get(id)]; });
   return [...byId.values()];
