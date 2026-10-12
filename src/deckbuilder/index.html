@@ -101,6 +101,7 @@
       <div class="tab" data-type="overlord">Overlord</div>
       <div class="tab" data-type="champion">Champion</div>
     </div>
+    <div class="btn" id="btnUnwrapBooster" title="Open a booster pack and add its cards to your Overlord and Champion decks — you can open as many as you like">Unwrap a Booster</div>
 <!--PRIVATE-END-->
     <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
     <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
@@ -287,6 +288,16 @@
 
 
 <!--PRIVATE-BEGIN-->
+  <!-- Booster results -->
+  <div class="modal-overlay hidden" id="boosterModal">
+    <div class="modal-box" style="width:min(460px,92vw);">
+      <div class="modal-header"><h2>Your Booster</h2><div class="btn btn-icon" data-close="boosterModal">✕</div></div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--text-soft);margin-top:0;">These cards were added to your decks.</p>
+        <div id="boosterResultList"></div>
+      </div>
+    </div>
+  </div>
   <!-- Sealed deck: choose which set -->
   <div class="modal-overlay hidden" id="sealedSetModal">
     <div class="modal-box" style="width:min(420px,92vw);">

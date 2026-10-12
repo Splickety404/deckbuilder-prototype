@@ -68,6 +68,9 @@ function renderDeckRulesChecklist(){
   const overCopyIds = [...curDeck().deckCards.entries()].filter(([,n])=>n>3).map(([id])=>id);
   rules.push([overCopyIds.length===0, overCopyIds.length===0 ? 'No card exceeds 3 copies' : `${overCopyIds.length} card(s) have more than 3 copies`]);
 
+  const extraLeaders = [...curDeck().deckCards.entries()].filter(([id])=>{ const c=state.byId.get(id); return c && c.type===leaderTypeName(state.deckType); }).reduce((n,[,q])=>n+q, 0);
+  if(extraLeaders>0) rules.push([false, `${extraLeaders} extra ${isOverlord?'Overlord':'Champion'} card${extraLeaders>1?'s':''} in the deck list (from boosters) — over the limit of 1; remove any time`]);
+
   if(isOverlord){
     const schemeCount = curDeck().schemeIds.length;
     rules.push([schemeCount===SCHEME_DECK_SIZE, `${schemeCount} / ${SCHEME_DECK_SIZE} schemes` + (schemeCount===SCHEME_DECK_SIZE?' — exact':'')]);

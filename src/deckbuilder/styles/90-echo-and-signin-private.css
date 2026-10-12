@@ -43,6 +43,7 @@
    entirely rather than leaving them visible-but-inert. */
 body.generic-mode #deckTypeTabs,
 body.generic-mode #btnSealedDeck,
+body.generic-mode #btnUnwrapBooster,
 body.generic-mode #overlordModeToggle,
 body.generic-mode #deckSetupPanel,
 body.generic-mode #btnClearIllegal,
