@@ -130,7 +130,7 @@ async function loadData(silent){
     state.byId = new Map(rows.map(r=>[r.id, r]));
     applyModeUI();
     applyPcioUI();
-    computeAndCacheAspects();
+    state.game.afterCardsLoaded();
     computeFieldDefs();
     renderAll();
     // Card text is in and the grid is already rendered and usable — don't make the

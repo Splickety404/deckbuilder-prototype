@@ -874,9 +874,8 @@ const LABEL_OVERRIDES = {
   'skill-check-type':'Skill Check Type','bonus-icons-scripted':'Bonus Icons',
 };
 
-const ASPECT_COLORS = { 'Corruption':'#6b3fa0','Wrath':'#a03f3f','Deceit':'#3f8f7a' };
 function colorForAspect(a){
-  if(ASPECT_COLORS[a]) return ASPECT_COLORS[a];
+  if(state.game.aspectColors[a]) return state.game.aspectColors[a];
   let h=0; for(const c of (a||'')) h=(h*31+c.charCodeAt(0))>>>0;
   return `hsl(${h%360},45%,45%)`;
 }
@@ -1224,6 +1223,8 @@ state.userEmail = ''; // signed-in user's email, from the server's whoami respon
      deckKeys, filterKeys, defaultDeckType, slotExtras()   the deck slots / filter buckets a game has,
                          which slot is open first, and the extra fields a deck holds
      filterKey()         which filter bucket the current view uses
+     isTypeEligible(card) / isLegal(card)   hard "may it go in the deck" rule / softer legality
+     aspectColors, afterCardsLoaded()       optional colors for named attributes / post-load hook
      id, structured      structured = leaders / aspects / schemes / two deck tabs
                          (Echo); false = one free-form deck, any card
      multiValueSplit     how "Fire/Water"-style fields split into values
@@ -1276,6 +1277,10 @@ const GenericGame = {
   filterKeys: ['generic'],      // one set of filters
   defaultDeckType: 'generic',
   slotExtras(){ return {}; },   // fields a deck holds beyond name / cards / order
+  isTypeEligible(card){ return true; },  // may this card go in the deck being edited?
+  isLegal(card){ return true; },         // is it legal there (a stricter, soft check)?
+  aspectColors: {},                      // optional fixed colors for named card attributes
+  afterCardsLoaded(){},                  // runs once a set's cards have been processed
   filterKey(){ return activeDeckKey(); },
   multiValueSplit: /[/,]/,
   commaSplits: true,
@@ -1347,6 +1352,8 @@ function activeIsSchemeMode(){ return state.game.structured && state.deckType===
 const EchoGame = {
   id: 'echo',
   structured: true,
+  aspectColors: { 'Corruption':'#6b3fa0','Wrath':'#a03f3f','Deceit':'#3f8f7a' },
+  afterCardsLoaded(){ computeAndCacheAspects(); },
   deckKeys: ['overlord', 'champion', 'generic'],
   filterKeys: ['overlord', 'champion', 'scheme', 'generic'],
   defaultDeckType: 'overlord',
@@ -1552,7 +1559,7 @@ async function loadData(silent){
     state.byId = new Map(rows.map(r=>[r.id, r]));
     applyModeUI();
     applyPcioUI();
-    computeAndCacheAspects();
+    state.game.afterCardsLoaded();
     computeFieldDefs();
     renderAll();
     // Card text is in and the grid is already rendered and usable — don't make the
@@ -2013,31 +2020,6 @@ document.getElementById('btnSubmitRequestAccess').addEventListener('click', asyn
   }
 });
 
-/* Neutral cards are identified by their aspect value itself (e.g. "OLNeutral"/"CHNeutral"
-   in the live data) rather than by process-of-elimination against leader cards. */
-function isNeutral(card){ return /neutral/i.test(card.aspect||''); }
-
-let _realAspects = {overlord:new Set(), champion:new Set()};
-function computeAndCacheAspects(){
-  _realAspects.overlord = new Set(state.cards.filter(c=>c.type.startsWith('O - ') && c.aspect && !isNeutral(c)).map(c=>c.aspect));
-  _realAspects.champion = new Set(state.cards.filter(c=>c.type.startsWith('C - ') && c.aspect && !isNeutral(c)).map(c=>c.aspect));
-}
-function leaderTypeName(deckType){ return deckType==='overlord' ? 'O - Overlord' : 'C - Champion'; }
-function prefixFor(deckType){ return deckType==='overlord' ? 'O - ' : 'C - '; }
-function bonusCardTypeName(deckType){ return deckType==='overlord' ? 'O - Domination' : 'C - Quest'; }
-function extraCardTypeName(deckType){ return deckType==='overlord' ? 'O - Stronghold' : 'C - Resistance'; }
-const EXTRA_CARD_PLACEHOLDER_NAME = { overlord:'Stronghold', champion:'Resistance' };
-const HORIZONTAL_TYPES = new Set(['O - Domination','C - Quest','O - Stronghold','C - Resistance']);
-
-// Real O - Stronghold / C - Resistance cards, once any exist, are always preferred over
-// the Z - Custom placeholder standing in for them today — checked fresh each load, no
-// manual switch-over needed.
-function extraCardPool(deckType){
-  const real = state.cards.filter(c=>c.type===extraCardTypeName(deckType));
-  if(real.length) return real;
-  const placeholderName = EXTRA_CARD_PLACEHOLDER_NAME[deckType];
-  return state.cards.filter(c=>c.type==='Z - Custom' && c.name===placeholderName);
-}
 
 /* =========================================================================
    SEALED DECK GENERATOR
@@ -2342,10 +2324,6 @@ function isStatPresent(card, key){
 /* =========================================================================
    DECK LEGALITY
    ========================================================================= */
-function getLeader(){ return curDeck().leaderId ? state.byId.get(curDeck().leaderId) : null; }
-function getBonusCard(){ return curDeck().bonusCardId ? state.byId.get(curDeck().bonusCardId) : null; }
-function getExtraCard(){ return curDeck().extraCardId ? state.byId.get(curDeck().extraCardId) : null; }
-
 // True if this card has been edited (per its last-updated stamp) since this deck was
 // exported or imported — the baseline for the yellow "changed since" warning.
 function cardChangedSinceExport(card){
@@ -2374,14 +2352,74 @@ function getRemovedCardInfo(id){
   }).catch(()=>{ removedCardCache.set(id, 'not-found'); renderAll(); });
   return 'loading';
 }
+// Which cards may go in the deck being edited — a hard rule, decided by the game. A free-form
+// game allows every card; a structured game filters by card type (see the game definition).
+function isTypeEligible(card){
+  if(!card) return false;
+  return state.game.isTypeEligible(card);
+}
+
+// Full legality for the deck being edited. This single function backs both what's addable and
+// what gets flagged as illegal in an existing deck.
+function isLegalForCurrentPool(card){ return state.game.isLegal(card); }
+
+function deckTotalCount(){ let n=0; for(const v of curDeck().deckCards.values()) n+=v; return n; }
+
+/* =========================================================================
+   POOL — visibility-based (no leader = unrestricted type-eligible pool; leader chosen =
+   pool narrows to legal aspects immediately, rather than graying out illegal cards).
+   ========================================================================= */
+// Aspect-illegal cards stay in the pool (grayed out, sorted last, still fully
+// examinable and addable) rather than being hidden — only TYPE eligibility is a hard
+// filter here. isLegalForCurrentPool (type + aspect) still drives what counts as
+// "illegal" for graying/sorting/the red highlight/the Remove-illegal-cards button.
+function poolForCurrentMode(){
+  return state.cards.filter(isTypeEligible);
+}
+
+/* =========================================================================
+   ECHO — CARD TYPES, LEADERS AND LEGALITY (private). Which card types belong to
+   the Overlord and Champion decks, the leader / Domination / Stronghold cards a
+   deck points at, and the aspect rules that decide whether a card is legal for a
+   leader. Hooked in through EchoGame.isTypeEligible / EchoGame.isLegal (see the
+   game definition in 01b/01c); moved here unchanged. Free-form games have no
+   such rules: every card is eligible and legal.
+   ========================================================================= */
+function getLeader(){ return curDeck().leaderId ? state.byId.get(curDeck().leaderId) : null; }
+function getBonusCard(){ return curDeck().bonusCardId ? state.byId.get(curDeck().bonusCardId) : null; }
+function getExtraCard(){ return curDeck().extraCardId ? state.byId.get(curDeck().extraCardId) : null; }
+
+
+/* Neutral cards are identified by their aspect value itself (e.g. "OLNeutral"/"CHNeutral"
+   in the live data) rather than by process-of-elimination against leader cards. */
+function isNeutral(card){ return /neutral/i.test(card.aspect||''); }
+
+let _realAspects = {overlord:new Set(), champion:new Set()};
+function computeAndCacheAspects(){
+  _realAspects.overlord = new Set(state.cards.filter(c=>c.type.startsWith('O - ') && c.aspect && !isNeutral(c)).map(c=>c.aspect));
+  _realAspects.champion = new Set(state.cards.filter(c=>c.type.startsWith('C - ') && c.aspect && !isNeutral(c)).map(c=>c.aspect));
+}
+function leaderTypeName(deckType){ return deckType==='overlord' ? 'O - Overlord' : 'C - Champion'; }
+function prefixFor(deckType){ return deckType==='overlord' ? 'O - ' : 'C - '; }
+function bonusCardTypeName(deckType){ return deckType==='overlord' ? 'O - Domination' : 'C - Quest'; }
+function extraCardTypeName(deckType){ return deckType==='overlord' ? 'O - Stronghold' : 'C - Resistance'; }
+const EXTRA_CARD_PLACEHOLDER_NAME = { overlord:'Stronghold', champion:'Resistance' };
+const HORIZONTAL_TYPES = new Set(['O - Domination','C - Quest','O - Stronghold','C - Resistance']);
+
+// Real O - Stronghold / C - Resistance cards, once any exist, are always preferred over
+// the Z - Custom placeholder standing in for them today — checked fresh each load, no
+// manual switch-over needed.
+function extraCardPool(deckType){
+  const real = state.cards.filter(c=>c.type===extraCardTypeName(deckType));
+  if(real.length) return real;
+  const placeholderName = EXTRA_CARD_PLACEHOLDER_NAME[deckType];
+  return state.cards.filter(c=>c.type==='Z - Custom' && c.name===placeholderName);
+}
+
 // Type membership for whichever pool is currently active — this is a hard rule with
 // no leader dependency at all (a Champion card can never go in an Overlord deck,
 // leader chosen or not).
-function isTypeEligible(card){
-  if(!card) return false;
-  // Generic mode has no leaders/schemes/dominations/strongholds to exclude and no
-  // Overlord-vs-Champion pool split — every card is eligible for the single deck.
-  if(!state.game.structured) return true;
+EchoGame.isTypeEligible = function(card){
   if(activeIsSchemeMode()) return card.type==='O - Scheme';
   const prefix = prefixFor(state.deckType);
   if(!card.type.startsWith(prefix)) return false;
@@ -2391,7 +2429,7 @@ function isTypeEligible(card){
   if(card.type===extraCardTypeName(state.deckType)) return false;
   if(card.type==='Z - Custom') return false; // the placeholder is only ever picked via the dedicated slot, never the general pool
   return true;
-}
+};
 
 // Aspect/loyalty eligibility — identical rule for the 50-card deck and the 5-scheme
 // deck (confirmed): neutral always legal; loyal cards only match the leader's own
@@ -2411,26 +2449,11 @@ function isAspectLegal(card){
 // aspect to check against yet — then tightens to also require aspect legality once a
 // leader is picked. This single function backs both what's addable and what gets
 // flagged as illegal in an existing deck.
-function isLegalForCurrentPool(card){
+EchoGame.isLegal = function(card){
   if(!isTypeEligible(card)) return false;
   if(!getLeader()) return true;
   return isAspectLegal(card);
-}
-
-function deckTotalCount(){ let n=0; for(const v of curDeck().deckCards.values()) n+=v; return n; }
-
-/* =========================================================================
-   POOL — visibility-based (no leader = unrestricted type-eligible pool; leader chosen =
-   pool narrows to legal aspects immediately, rather than graying out illegal cards).
-   ========================================================================= */
-// Aspect-illegal cards stay in the pool (grayed out, sorted last, still fully
-// examinable and addable) rather than being hidden — only TYPE eligibility is a hard
-// filter here. isLegalForCurrentPool (type + aspect) still drives what counts as
-// "illegal" for graying/sorting/the red highlight/the Remove-illegal-cards button.
-function poolForCurrentMode(){
-  return state.cards.filter(isTypeEligible);
-}
-
+};
 /* =========================================================================
    FILTERS
    ========================================================================= */
@@ -4016,6 +4039,7 @@ GenericGame.deckKeys = EchoGame.deckKeys;
 GenericGame.filterKeys = EchoGame.filterKeys;
 GenericGame.defaultDeckType = EchoGame.defaultDeckType;
 GenericGame.slotExtras = EchoGame.slotExtras;
+GenericGame.aspectColors = EchoGame.aspectColors; // the live site tints every game's fallback card faces with these
 /* =========================================================================
    EXPORT
    ========================================================================= */

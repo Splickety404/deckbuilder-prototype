@@ -27,9 +27,8 @@ const LABEL_OVERRIDES = {
   'skill-check-type':'Skill Check Type','bonus-icons-scripted':'Bonus Icons',
 };
 
-const ASPECT_COLORS = { 'Corruption':'#6b3fa0','Wrath':'#a03f3f','Deceit':'#3f8f7a' };
 function colorForAspect(a){
-  if(ASPECT_COLORS[a]) return ASPECT_COLORS[a];
+  if(state.game.aspectColors[a]) return state.game.aspectColors[a];
   let h=0; for(const c of (a||'')) h=(h*31+c.charCodeAt(0))>>>0;
   return `hsl(${h%360},45%,45%)`;
 }

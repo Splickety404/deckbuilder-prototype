@@ -12,6 +12,8 @@ function activeIsSchemeMode(){ return state.game.structured && state.deckType===
 const EchoGame = {
   id: 'echo',
   structured: true,
+  aspectColors: { 'Corruption':'#6b3fa0','Wrath':'#a03f3f','Deceit':'#3f8f7a' },
+  afterCardsLoaded(){ computeAndCacheAspects(); },
   deckKeys: ['overlord', 'champion', 'generic'],
   filterKeys: ['overlord', 'champion', 'scheme', 'generic'],
   defaultDeckType: 'overlord',

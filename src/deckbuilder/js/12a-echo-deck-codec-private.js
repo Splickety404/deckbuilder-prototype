@@ -129,3 +129,4 @@ GenericGame.deckKeys = EchoGame.deckKeys;
 GenericGame.filterKeys = EchoGame.filterKeys;
 GenericGame.defaultDeckType = EchoGame.defaultDeckType;
 GenericGame.slotExtras = EchoGame.slotExtras;
+GenericGame.aspectColors = EchoGame.aspectColors; // the live site tints every game's fallback card faces with these

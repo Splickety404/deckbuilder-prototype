@@ -57,10 +57,6 @@ function isStatPresent(card, key){
 /* =========================================================================
    DECK LEGALITY
    ========================================================================= */
-function getLeader(){ return curDeck().leaderId ? state.byId.get(curDeck().leaderId) : null; }
-function getBonusCard(){ return curDeck().bonusCardId ? state.byId.get(curDeck().bonusCardId) : null; }
-function getExtraCard(){ return curDeck().extraCardId ? state.byId.get(curDeck().extraCardId) : null; }
-
 // True if this card has been edited (per its last-updated stamp) since this deck was
 // exported or imported — the baseline for the yellow "changed since" warning.
 function cardChangedSinceExport(card){
@@ -89,48 +85,16 @@ function getRemovedCardInfo(id){
   }).catch(()=>{ removedCardCache.set(id, 'not-found'); renderAll(); });
   return 'loading';
 }
-// Type membership for whichever pool is currently active — this is a hard rule with
-// no leader dependency at all (a Champion card can never go in an Overlord deck,
-// leader chosen or not).
+// Which cards may go in the deck being edited — a hard rule, decided by the game. A free-form
+// game allows every card; a structured game filters by card type (see the game definition).
 function isTypeEligible(card){
   if(!card) return false;
-  // Generic mode has no leaders/schemes/dominations/strongholds to exclude and no
-  // Overlord-vs-Champion pool split — every card is eligible for the single deck.
-  if(!state.game.structured) return true;
-  if(activeIsSchemeMode()) return card.type==='O - Scheme';
-  const prefix = prefixFor(state.deckType);
-  if(!card.type.startsWith(prefix)) return false;
-  if(card.type===leaderTypeName(state.deckType)) return false;
-  if(card.type===prefix+'Scheme') return false;
-  if(card.type===bonusCardTypeName(state.deckType)) return false;
-  if(card.type===extraCardTypeName(state.deckType)) return false;
-  if(card.type==='Z - Custom') return false; // the placeholder is only ever picked via the dedicated slot, never the general pool
-  return true;
+  return state.game.isTypeEligible(card);
 }
 
-// Aspect/loyalty eligibility — identical rule for the 50-card deck and the 5-scheme
-// deck (confirmed): neutral always legal; loyal cards only match the leader's own
-// aspect; everything else needs leader's aspect OR the chosen Domination/Quest Aspect.
-// Meaningless without a leader chosen yet, so callers should only consult this once
-// getLeader() is non-null.
-function isAspectLegal(card){
-  const leader = getLeader();
-  if(!leader) return false;
-  if(isNeutral(card)) return true;
-  if(card.loyalty==='Loyal') return card.aspect===leader.aspect;
-  return card.aspect===leader.aspect || (curDeck().bonusAspect && card.aspect===curDeck().bonusAspect);
-}
-
-// Full legality for whichever pool is active. Deliberately permissive before a leader
-// is chosen — type membership is the only hard rule at that point, since there's no
-// aspect to check against yet — then tightens to also require aspect legality once a
-// leader is picked. This single function backs both what's addable and what gets
-// flagged as illegal in an existing deck.
-function isLegalForCurrentPool(card){
-  if(!isTypeEligible(card)) return false;
-  if(!getLeader()) return true;
-  return isAspectLegal(card);
-}
+// Full legality for the deck being edited. This single function backs both what's addable and
+// what gets flagged as illegal in an existing deck.
+function isLegalForCurrentPool(card){ return state.game.isLegal(card); }
 
 function deckTotalCount(){ let n=0; for(const v of curDeck().deckCards.values()) n+=v; return n; }
 

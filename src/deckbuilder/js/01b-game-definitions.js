@@ -6,6 +6,8 @@
      deckKeys, filterKeys, defaultDeckType, slotExtras()   the deck slots / filter buckets a game has,
                          which slot is open first, and the extra fields a deck holds
      filterKey()         which filter bucket the current view uses
+     isTypeEligible(card) / isLegal(card)   hard "may it go in the deck" rule / softer legality
+     aspectColors, afterCardsLoaded()       optional colors for named attributes / post-load hook
      id, structured      structured = leaders / aspects / schemes / two deck tabs
                          (Echo); false = one free-form deck, any card
      multiValueSplit     how "Fire/Water"-style fields split into values
@@ -58,6 +60,10 @@ const GenericGame = {
   filterKeys: ['generic'],      // one set of filters
   defaultDeckType: 'generic',
   slotExtras(){ return {}; },   // fields a deck holds beyond name / cards / order
+  isTypeEligible(card){ return true; },  // may this card go in the deck being edited?
+  isLegal(card){ return true; },         // is it legal there (a stricter, soft check)?
+  aspectColors: {},                      // optional fixed colors for named card attributes
+  afterCardsLoaded(){},                  // runs once a set's cards have been processed
   filterKey(){ return activeDeckKey(); },
   multiValueSplit: /[/,]/,
   commaSplits: true,
