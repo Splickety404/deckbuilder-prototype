@@ -30,12 +30,15 @@ const checkOnly = process.argv.includes('--check');
 const publicBuild = process.argv.includes('--public');
 const reportOnly = process.argv.includes('--report');
 
-// Words that must never appear in the public build. Matched case-insensitively against
+// Words that must never appear in the public build. (Ordinary card-game words such as
+// "leader" or "aspect" are fine — only a specific game's names and private services are listed.) Matched case-insensitively against
 // every file that would ship, so each hit points at code still to be separated out.
 const LEAK_PATTERNS = [
-  /overlord/i, /champion/i, /stronghold/i, /resistance/i, /domination/i, /scheme/i, /\baspects?\b/i,
-  /\bleaders?\b/i, /\bquest\b/i, /echo of omens/i, /hellbreak/i, /'[OCZQ] - /,
-  /google/i, /script\.google/i, /\bably\b/i, /\bdrive\b/i, /idtoken/i,
+  // a specific game's own names and card-type codes
+  /overlord/i, /champion/i, /stronghold/i, /resistance/i, /domination/i, /scheme/i,
+  /echo of omens/i, /hellbreak/i, /'[OCZQ] - /,
+  // private services and sign-in plumbing
+  /google/i, /\bably\b/i, /\bdrive\b/i, /idtoken/i,
 ];
 
 function filesIn(dir, ext){

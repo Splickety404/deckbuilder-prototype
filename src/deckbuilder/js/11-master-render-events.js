@@ -2,7 +2,7 @@
    MASTER RENDER
    ========================================================================= */
 function renderAll(){
-  renderTabs();
+  state.game.renderTabs();
   renderDeckControls();
   renderSortOptions();
   renderFilters();

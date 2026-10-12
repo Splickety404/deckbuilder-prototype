@@ -10,7 +10,10 @@
      keepRow(row)        is this spreadsheet row a real card?
      tagCard(card)       sets the card's derived flags (double-sided, rotation…)
      copyLimit(card)     most copies the deck panel treats as legal
-     deckCountText(n, isScheme)  -> {text, bad} for the deck-size label
+     deckSummary()       -> {title, text, bad}: the deck panel's title and size label
+     listCount(id) / removeOne(id)   how many of a card the active list holds / remove one
+     illegalHint         tooltip for a card that isn't legal for the deck
+     renderTabs() / renderDeckControlsExtras() / renderViewStats()   extra panel UI (optional)
      backUrl(card)       the card back an export should use
      matches(rawSets)    (optional) true if this definition owns the loaded sets
    ========================================================================= */
@@ -35,10 +38,19 @@ const GenericGame = {
     r._isHorizontal = (r._rotate===90 || r._rotate===270);
   },
   copyLimit(card){ return Infinity; }, // generic mode restricts card counts for no reason at all
-  deckCountText(count){
+  deckSummary(){
     // Generic mode doesn't restrict card counts for any reason — just show the total.
-    return { text: `${count} card${count!==1?'s':''}`, bad: false };
+    const n = deckTotalCount();
+    return { title: 'Your Deck', text: `${n} card${n!==1?'s':''}`, bad: false };
   },
+  // Which cards the deck panel and library tiles count / remove: the one deck.
+  listCount(id){ return curDeck().deckCards.get(id)||0; },
+  removeOne(id){ removeOneCopy(id); },
+  illegalHint: 'Not legal for this deck.',
+  // Optional extras a structured game draws around the deck panel — none for a plain card pool.
+  renderTabs(){},
+  renderDeckControlsExtras(){},
+  renderViewStats(){},
   backUrl(card){
     // One shared back ("back.png"/"back.pdf" etc, uploaded alongside the set's other
     // card art) for every non-double-sided card, regardless of type.

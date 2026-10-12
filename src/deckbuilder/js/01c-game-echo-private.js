@@ -41,10 +41,16 @@ const EchoGame = {
     r._rotate = r._isHorizontal ? 90 : 0; // Echo mode always rotates its horizontal cards the same way it always has
   },
   copyLimit(card){ return (card && card._isScheme) ? 1 : MAX_COPIES; }, // schemes: documented 1-copy max
-  deckCountText(count, isScheme){
+  deckSummary(){
+    const isScheme = activeIsSchemeMode();
+    const count = isScheme ? curDeck().schemeIds.length : deckTotalCount();
     const limit = isScheme ? SCHEME_DECK_SIZE : DECK_LIMIT;
-    return { text: `${count} / ${limit}`, bad: count>limit };
+    return { title: isScheme ? 'Scheme Deck' : 'Your Deck', text: `${count} / ${limit}`, bad: count>limit };
   },
+  listCount(id){ return activeIsSchemeMode() ? curDeck().schemeIds.filter(x=>x===id).length : (curDeck().deckCards.get(id)||0); },
+  removeOne(id){ activeIsSchemeMode() ? removeScheme(id) : removeOneCopy(id); },
+  illegalHint: 'Not legal for this deck — wrong aspect for your leader/domination aspect.',
+  renderViewStats(){ renderCurrentViewStats(); },
   backUrl(card){
     if(card.type === 'O - Scheme') return state.genericBacks.schemeBackUrl || '';
     if(card.type.startsWith('O -')) return state.genericBacks.overlordBackUrl || '';
