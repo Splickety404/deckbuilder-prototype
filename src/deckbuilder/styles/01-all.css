@@ -1,0 +1,491 @@
+:root{
+  --bg:#f4f5f7;
+  --surface:#ffffff;
+  --surface-2:#eceef2;
+  --border:#dfe2e8;
+  --text:#171a21;
+  --text-soft:#6b7280;
+  --accent:#4f46e5;
+  --accent-contrast:#ffffff;
+  --accent-soft:#eceafd;
+  --danger:#dc2626;
+  --danger-bg:#fde8e8;
+  --ok:#16a34a;
+  --radius:10px;
+  --radius-sm:6px;
+  --shadow:0 1px 2px rgba(20,20,30,.06), 0 2px 8px rgba(20,20,30,.06);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+html[data-theme="dark"]{
+  --bg:#14161b;
+  --surface:#1c1f26;
+  --surface-2:#242830;
+  --border:#333844;
+  --text:#e7e9ee;
+  --text-soft:#9aa1ae;
+  --accent:#8385f5;
+  --accent-contrast:#12131a;
+  --accent-soft:#292a4a;
+  --danger:#f87171;
+  --danger-bg:#3a1a1a;
+  --ok:#4ade80;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 2px 10px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;}
+body{
+  background:var(--bg);
+  font-family:var(--font);
+  color:var(--text);
+  font-size:14px;
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:6px;}
+
+.card-surface{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
+
+.btn{
+  font-family:var(--font);
+  font-weight:600;
+  font-size:13px;
+  padding:8px 13px;
+  cursor:pointer;
+  color:var(--text);
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  user-select:none;
+  line-height:1.3;
+  transition:background .12s, border-color .12s;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.btn:hover{background:var(--surface-2);}
+.btn:active{transform:translateY(1px);}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.btn-accent{color:var(--accent-contrast);background:var(--accent);border-color:var(--accent);}
+.btn-accent:hover{filter:brightness(1.08);}
+.btn-icon{padding:8px;width:34px;justify-content:center;}
+.btn-sm{padding:3px 8px;font-size:12px;}
+
+h1,h2,h3{font-family:var(--font);margin:0;}
+label{font-size:12px;color:var(--text-soft);font-weight:500;}
+select, input[type=text], input[type=number]{
+  font-family:var(--font);
+  font-size:13px;
+  padding:6px 8px;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface);
+  color:var(--text);
+}
+select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent);}
+
+/* Hidden by default rather than only relying on #signin-gate's z-index to cover it:
+   once there's more than one game, the sign-in gate has to come down BEFORE the game
+   is picked (see hideSigninGate() in the multi-game branch of onGoogleSignIn) so the
+   "Choose a Game" modal beneath it is actually visible/clickable — and with the gate
+   gone, #app would otherwise show through underneath in its default Echo-flavored
+   state (Overlord/Champion tabs, leader/domination/stronghold slots, "ECHO OF OMENS"
+   branding) despite no game having been chosen yet. #app.game-active is added the
+   moment a game is actually selected (see selectGame()), never before. */
+#app{display:none;flex-direction:column;height:100vh;}
+#app.game-active{display:flex;}
+#loading-overlay{
+  position:fixed;inset:0;z-index:250;
+  display:none;align-items:center;justify-content:center;flex-direction:column;gap:18px;
+  background:var(--bg);
+}
+#loading-overlay.active{display:flex;}
+.loading-spinner{
+  width:64px;height:64px;border-radius:50%;
+  border:6px solid var(--border);border-top-color:var(--accent);
+  animation:eoo-spin 0.9s linear infinite;
+}
+.loading-text{font-size:16px;font-weight:600;color:var(--text-soft);}
+@keyframes eoo-spin{ to{ transform:rotate(360deg); } }
+
+/* ---------- Sign-in gate ---------- */
+/* Blocks the whole app until Google sign-in succeeds AND the signed-in
+   email has been granted access to at least one card set (see whoAmI in
+   the Apps Script). Sits above everything, including #loading-overlay,
+   and is never dismissible by clicking outside or pressing Escape — this
+   isn't a modal, it's the front door. */
+#signin-gate{
+  position:fixed;inset:0;z-index:300;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);
+}
+#signin-gate.hidden{display:none;}
+#signin-gate .signin-box{
+  width:min(360px,90vw);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:16px;
+}
+#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
+#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
+#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
+#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
+/* The request-access form can be opened from the sign-in gate (signed in, but no
+   sets), so it has to sit above the gate rather than at the normal modal layer. */
+#requestAccessModal{z-index:350;}
+.signin-spinner{
+  width:26px;height:26px;border-radius:50%;
+  border:3px solid var(--border);border-top-color:var(--accent);
+  animation:eoo-spin 0.9s linear infinite;
+  margin:2px auto 0;
+}
+#signinAccountLine{font-size:12px;color:var(--text-soft);cursor:pointer;white-space:nowrap;}
+#signinAccountLine:hover{color:var(--text);text-decoration:underline;}
+
+/* ---------- Top bar ---------- */
+#topbar{
+  display:flex;align-items:center;gap:6px;
+  padding:8px 12px;
+  border-bottom:1px solid var(--border);
+  background:var(--surface);
+  flex-wrap:wrap;
+}
+#topbar h1{font-size:16px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;margin-right:6px;}
+.tab-group{display:flex;gap:2px;background:var(--surface-2);padding:3px;border-radius:var(--radius-sm);}
+.tab{font-size:12px;font-weight:600;padding:6px 12px;cursor:pointer;border-radius:5px;color:var(--text-soft);}
+.tab.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow);}
+/* The status and email take whatever room is left on the row (cut short with
+   "…", full text on hover) rather than pushing the header onto a second line. */
+#sync-status{font-size:12px;color:var(--text-soft);margin-left:auto;white-space:nowrap;text-align:right;flex:2 1 70px;max-width:240px;overflow:hidden;text-overflow:ellipsis;}
+#topbar #signinAccountLine{flex:1 1 90px;max-width:200px;overflow:hidden;text-overflow:ellipsis;}
+#deck-file-bar{position:sticky;top:-12px;z-index:3;margin:-12px -12px 0;padding:12px 12px 10px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:6px;}
+#deckNameInput{width:100%;box-sizing:border-box;}
+.deck-file-buttons{display:flex;gap:5px;flex-wrap:wrap;}
+.deck-file-buttons .btn{flex:1 1 auto;justify-content:center;}
+
+/* ---------- Main layout: deck (left) | library (middle) | filters (right) ---------- */
+#main-layout{flex:1;display:flex;min-height:0;}
+
+/* ---------- Deck panel (left) ---------- */
+#deck-panel{
+  width:300px;flex:none;overflow-y:auto;
+  padding:12px;border-right:1px solid var(--border);
+  background:var(--surface);
+  display:flex;flex-direction:column;gap:10px;
+}
+#deck-controls{display:flex;flex-direction:column;gap:8px;padding:10px;background:var(--surface-2);border-radius:var(--radius);}
+.mode-toggle{display:flex;gap:2px;background:var(--surface);padding:3px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+.mode-toggle .tab{flex:1;text-align:center;}
+.leader-chip{display:flex;align-items:center;gap:8px;padding:6px;cursor:pointer;border-radius:var(--radius-sm);}
+.leader-chip:hover{background:var(--surface);}
+.leader-chip img{width:36px;height:50px;object-fit:cover;border-radius:4px;border:1px solid var(--border);}
+.leader-chip .landscape-frame{width:50px;flex:none;border-radius:4px;border:1px solid var(--border);overflow:hidden;}
+.leader-chip .placeholder{font-size:12px;color:var(--text-soft);}
+.leader-chip span:not(.placeholder):not(.chip-remove){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.leader-chip .chip-remove{margin-left:auto;flex:none;padding:3px 7px;border-radius:5px;font-size:12px;color:var(--text-soft);}
+.changed-badge{
+  flex:none;cursor:pointer;font-size:13px;padding:2px 5px;border-radius:5px;
+  background:#fef3c7;color:#92400e;border:1px solid #fbbf24;
+}
+html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-color:#92720a;}
+.leader-chip .changed-badge{margin-left:auto;}
+.deck-stack .changed-badge{margin-left:6px;}
+.removed-badge{
+  flex:none;cursor:pointer;font-size:12px;font-weight:600;padding:2px 6px;border-radius:5px;
+  background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger);white-space:nowrap;
+}
+.leader-chip .removed-badge + span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.deck-stack .removed-badge{margin-left:6px;}
+.leader-chip .chip-remove:hover{background:var(--danger-bg);color:var(--danger);}
+#aspectRow{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+#aspectRow select{flex:1;}
+#deckCountLabel{font-weight:700;font-size:13px;}
+#deckCountLabel.bad{color:var(--danger);}
+#deckHeaderLine{display:flex;align-items:center;justify-content:space-between;}
+#deckHeaderLine h3{font-size:13px;}
+
+#deckRulesChecklist{font-size:12px;margin:8px 0;display:flex;flex-direction:column;gap:3px;}
+#deckRulesChecklist .rule-ok{color:var(--ok);}
+#deckRulesChecklist .rule-warn{color:var(--danger);}
+#deckStatsPanel, #viewStatsPanel, #deckSetupPanel, #deckRulesPanel{margin:8px 0;font-size:12px;}
+#filters-panel #viewStatsPanel{margin:0 0 10px;}
+#deckStatsPanel summary, #viewStatsPanel summary, #deckSetupPanel summary, #deckRulesPanel summary{cursor:pointer;font-weight:600;color:var(--text-soft);padding:4px 2px;border-radius:var(--radius-sm);}
+#deckStatsPanel summary:hover, #viewStatsPanel summary:hover, #deckSetupPanel summary:hover, #deckRulesPanel summary:hover{background:var(--surface-2);}
+#deckStatsBody, #viewStatsBody{padding:6px 2px 2px 2px;}
+.stat-empty-msg{color:var(--text-soft);font-size:12px;padding:4px 0;}
+.stat-summary{font-size:12px;color:var(--text-soft);margin-bottom:8px;}
+.stat-summary b{color:var(--text);}
+.stat-group{margin-bottom:12px;}
+.stat-group:last-child{margin-bottom:0;}
+.stat-group-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-soft);margin-bottom:5px;}
+.stat-empty{font-size:12px;color:var(--text-soft);}
+.stat-bar-row{display:flex;align-items:center;gap:7px;margin-bottom:3px;font-size:11.5px;}
+.stat-bar-label{width:84px;flex:none;text-align:right;color:var(--text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.stat-bar-track{flex:1;height:13px;background:var(--surface-2);border-radius:3px;overflow:hidden;}
+.stat-bar-fill{height:100%;background:var(--accent);border-radius:3px;min-width:2px;}
+.stat-bar-value{width:26px;flex:none;text-align:left;font-weight:600;color:var(--text);}
+#deck-drop-zone{
+  position:relative; /* containing block for the absolutely-positioned .reorder-indicator */
+  /* Grows with the deck rather than scrolling on its own — the whole left
+     panel (#deck-panel) is the one scrolling area. */
+  min-height:120px;padding:6px;flex:1 0 auto;
+  display:flex;flex-direction:column;gap:5px;
+  border:1px dashed var(--border);border-radius:var(--radius);
+}
+#deck-drop-zone.dragover{background:var(--accent-soft);border-color:var(--accent);}
+#importDropZone.dragover{background:var(--accent-soft);border-color:var(--accent);color:var(--text);}
+.deck-stack{
+  position:relative;
+  display:flex;align-items:center;gap:8px;padding:5px;cursor:grab;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);
+}
+.deck-stack.over-limit{border-color:var(--danger);background:var(--danger-bg);}
+.deck-stack.dragover-row{background:var(--accent-soft);border-color:var(--accent);}
+/* position:absolute (rather than being inserted into #deck-drop-zone's own flex flow
+   as a sibling of the rows) is load-bearing, and pointer-events:none still matters too
+   — together they're what stop the flicker:
+   Originally the indicator was a real flex child, inserted directly between two row
+   elements. That shifts every row below it down by the indicator's own height (plus
+   the zone's flex `gap`) the instant it appears. If the mouse was hovering near a row
+   boundary, that shift moves the row out from under a stationary cursor — landing the
+   cursor over the zone's own background instead (the fresh gap left behind) — which
+   fires the zone-level dragover handler, which relocates the indicator to the end of
+   the list. That pulls the indicator (and the layout shift) away, so the row springs
+   back under the cursor, re-firing the ROW's dragover handler, re-inserting the
+   indicator right back where it started — and repeats every animation frame. Taking
+   the indicator out of the flex flow entirely (position:absolute against
+   #deck-drop-zone, positioned via top in JS instead of DOM order) means showing or
+   moving it never changes any row's position, so the element under a stationary
+   cursor never changes underneath it — nothing left to oscillate. pointer-events:none
+   is kept as a second layer of protection: even positioned this way the indicator
+   could otherwise still steal the dragover event if it ever ends up rendered exactly
+   under the cursor, and it has no drag listener of its own to handle that. */
+.reorder-indicator{position:absolute;left:6px;right:6px;height:3px;background:var(--accent);border-radius:2px;pointer-events:none;display:none;}
+.deck-stack img{width:28px;height:39px;object-fit:cover;border-radius:3px;flex:none;}
+.deck-stack.scheme-row img{width:auto;height:28px;aspect-ratio:5/7;object-fit:cover;transform:rotate(-90deg);}
+.deck-stack .dsname{flex:1;font-size:12.5px;line-height:1.2;}
+.deck-stack .dscount{font-weight:700;font-size:12px;color:var(--accent);}
+.deck-stack .dscount.over{color:var(--danger);}
+.deck-stack .stepper{display:flex;gap:2px;}
+.deck-stack .drop-indicator{position:absolute;left:4px;right:4px;height:2px;background:var(--accent);}
+.deck-stack .drop-indicator.top{top:-3px;}
+.deck-stack .drop-indicator.bottom{bottom:-3px;}
+#deck-empty-hint{font-size:12.5px;color:var(--text-soft);text-align:center;padding:20px 6px;}
+#deck-legend{font-size:11px;color:var(--text-soft);line-height:1.4;}
+
+/* ---------- Library (middle) ---------- */
+#library-wrap{flex:1;overflow-y:auto;padding:14px;min-width:0;position:relative;}
+#btnScrollTop{
+  position:sticky;float:right;bottom:16px;right:16px;
+  opacity:0;pointer-events:none;transition:opacity .15s;
+  box-shadow:var(--shadow);z-index:5;
+}
+#btnScrollTop.visible{opacity:1;pointer-events:auto;}
+#library-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;}
+#library-count{font-size:12.5px;color:var(--text-soft);}
+#sortSelect{width:auto;}
+#library-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(var(--card-min-width, 170px),1fr));
+  gap:14px;
+}
+.card-tile{
+  position:relative;cursor:grab;
+  border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);overflow:hidden;
+  transition:box-shadow .12s, transform .12s;
+  user-select:none;
+}
+.card-tile:hover{box-shadow:var(--shadow);transform:translateY(-2px);}
+.card-tile.selected{outline:2px solid var(--accent);outline-offset:-2px;}
+.card-tile img{width:100%;display:block;aspect-ratio:5/7;object-fit:cover;background:var(--surface-2);}
+/* Scheme card art is authored on the same portrait-cut physical card as everything else,
+   with its content printed sideways — so the frame itself must be landscape-shaped (not
+   the whole tile rotated, which was the previous bug: rotating a box swaps its visual
+   orientation, so rotating a landscape box produced a portrait-looking tile). The frame
+   stays upright and landscape; only the image inside is rotated to face the right way. */
+.landscape-frame{position:relative;overflow:hidden;aspect-ratio:7/5;background:var(--surface-2);}
+.landscape-frame img.rotate-90-fill{
+  position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%) rotate(-90deg);
+  display:block;background:none;max-width:none;
+}
+/* Generic-mode "rotate" column support: 270° is 90° mirrored (opposite spin direction),
+   and 180° needs no landscape frame at all — the card stays portrait-shaped, just
+   upside down — so it's a plain transform on the normal <img>, not a frame variant. */
+.landscape-frame img.rotate-270-fill{
+  position:absolute;top:50%;left:50%;
+  transform:translate(-50%,-50%) rotate(90deg);
+  display:block;background:none;max-width:none;
+}
+.card-tile img.rotate-180-fill{transform:rotate(180deg);}
+.card-tile.scheme-card .fallback-face{aspect-ratio:7/5;}
+.card-tile.scheme-card{grid-column:span 2;width:calc(var(--card-min-width, 170px) * 1.647);max-width:calc(var(--card-min-width, 170px) * 1.647);justify-self:start;} /* rotated 90°/270° — wants roughly a portrait card's height as its width, not the full 2-column stretch. Fixed width (not just max-width) matters: without it, an un-stretched tile shrinks/grows to fit its own name text, which is why different scheme cards were rendering at different sizes. Scales with the card-size setting via the same ratio (280/170) established when this was first tuned, so schemes stay visually consistent with normal cards at any size. */
+.card-tile.illegal{opacity:.42;filter:grayscale(75%);}
+.card-tile.illegal:hover{opacity:.7;}
+.card-tile .fallback-face{
+  aspect-ratio:5/7;padding:8px;display:flex;flex-direction:column;gap:4px;
+  font-size:11.5px;overflow:hidden;
+}
+.card-tile .fallback-face .fname{font-weight:700;font-size:12px;line-height:1.25;}
+.card-tile .fallback-face .ftype{font-size:11px;color:var(--text-soft);}
+.card-tile .fallback-face .fability{font-size:11px;flex:1;overflow:hidden;}
+.card-tile .count-badge{
+  position:absolute;top:5px;right:5px;
+  background:var(--accent);color:var(--accent-contrast);
+  font-weight:700;font-size:11px;
+  padding:2px 6px;border-radius:20px;
+}
+.card-tile .updated-dot{
+  position:absolute;bottom:5px;right:5px;z-index:1;
+  background:var(--ok);color:#fff;
+  font-weight:700;font-size:9.5px;letter-spacing:.03em;text-transform:uppercase;
+  padding:2px 6px;border-radius:20px;
+  box-shadow:var(--shadow);
+}
+.diff-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;}
+.diff-table th{text-align:left;font-size:11px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.03em;padding:4px 8px;border-bottom:1px solid var(--border);}
+.diff-table td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;}
+.diff-table td.diff-old{color:var(--danger);text-decoration:line-through;text-decoration-color:var(--danger);}
+.diff-table td.diff-new{color:var(--ok);font-weight:600;}
+.diff-art-row{display:flex;gap:14px;margin-bottom:6px;}
+.diff-art-row > div{flex:1;text-align:center;}
+.diff-art-row img{width:100%;max-width:180px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+.diff-art-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--text-soft);margin-bottom:4px;}
+.diff-art-empty{width:100%;max-width:180px;aspect-ratio:5/7;margin:0 auto;background:var(--surface-2);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text-soft);}
+#helpArticleList{flex:none;width:210px;border-right:1px solid var(--border);overflow-y:auto;padding:10px 0;}
+.help-article-title{padding:8px 14px;cursor:pointer;font-size:13px;border-left:3px solid transparent;}
+.help-article-title:hover{background:var(--surface-2);}
+.help-article-title.active{border-left-color:var(--accent);background:var(--accent-soft);font-weight:600;}
+#helpArticleContent{flex:1;overflow-y:auto;padding:16px 20px;font-size:13.5px;line-height:1.65;}
+#helpArticleContent h3{margin:0 0 10px 0;font-size:16px;}
+.card-tile .name-bar{
+  font-size:11.5px;font-weight:600;padding:5px 6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.tile-actions{position:absolute;top:5px;left:5px;display:flex;gap:4px;opacity:0;transition:opacity .1s;}
+.card-tile:hover .tile-actions{opacity:1;}
+.tile-btn{
+  width:22px;height:22px;border-radius:50%;
+  background:rgba(255,255,255,.92);color:#111;border:1px solid rgba(0,0,0,.15);
+  display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;
+  cursor:pointer;line-height:1;
+}
+.tile-btn:hover{background:#fff;}
+.deck-stack .tile-actions{position:static;opacity:1;margin-left:auto;}
+.deck-stack .stepper .tile-btn{width:20px;height:20px;font-size:12px;}
+
+/* ---------- Filters (right) ---------- */
+#filters-panel{
+  width:250px;flex:none;overflow-y:auto;
+  padding:12px;border-left:1px solid var(--border);
+  background:var(--surface);
+}
+#filters-panel h3{font-size:12px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;}
+.filter-group{margin-bottom:12px;}
+.filter-group summary{font-size:12px;font-weight:600;cursor:pointer;padding:4px 0;list-style:none;}
+.filter-group summary::-webkit-details-marker{display:none;}
+.filter-group summary::before{content:'▸ ';color:var(--text-soft);font-size:10px;}
+.filter-group[open] summary::before{content:'▾ ';}
+.filter-chip-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
+.filter-chip{
+  font-size:12px;padding:4px 9px;cursor:pointer;border-radius:20px;
+  background:var(--surface-2);border:1px solid var(--border);
+}
+.filter-chip.on{background:var(--accent);color:var(--accent-contrast);border-color:var(--accent);}
+.range-row{display:flex;align-items:center;gap:5px;margin-top:5px;}
+.range-row input{width:56px;}
+#searchBox{width:100%;margin-bottom:10px;}
+.toggle-row{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:7px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface);cursor:pointer;font-size:12.5px;}
+.toggle-row:hover{background:var(--surface-2);}
+.toggle-row input{flex:none;cursor:pointer;}
+
+/* ---------- Modals ---------- */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(15,17,22,.55);
+  display:flex;align-items:center;justify-content:center;
+  z-index:50;
+}
+.modal-overlay.hidden{display:none;}
+.modal-box{
+  width:min(760px,92vw);max-height:86vh;
+  display:flex;flex-direction:column;
+  background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);
+  border:1px solid var(--border);
+}
+.modal-header{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:12px 14px;border-bottom:1px solid var(--border);
+}
+.modal-header h2{font-size:14px;}
+.modal-body{padding:14px;overflow-y:auto;}
+.leader-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;}
+.leader-pick-tile{cursor:pointer;text-align:center;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);}
+.leader-pick-tile:hover{box-shadow:var(--shadow);}
+.leader-pick-tile img{width:100%;aspect-ratio:5/7;object-fit:cover;display:block;}
+.leader-pick-tile .lname{font-size:12px;padding:5px;}
+#preview-modal .modal-body{display:flex;gap:16px;padding:16px;flex-wrap:wrap;align-items:flex-start;}
+#preview-img-frame{width:330px;flex:none;align-self:flex-start;border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;}
+#preview-img-frame.scheme{aspect-ratio:7/5;position:relative;}
+#preview-img-frame.scheme270{aspect-ratio:7/5;position:relative;}
+#preview-img{width:100%;display:block;}
+#preview-img-frame.scheme #preview-img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-90deg);max-width:none;}
+#preview-img-frame.scheme270 #preview-img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(90deg);max-width:none;}
+#preview-img.rotate-180-fill{transform:rotate(180deg);}
+#preview-text{flex:1;min-width:220px;font-size:13px;line-height:1.5;}
+#preview-text dt{font-weight:700;font-size:11px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.03em;margin-top:8px;}
+#preview-text dd{margin:2px 0 0 0;}
+.export-option{padding:12px;margin-bottom:10px;cursor:pointer;border-radius:var(--radius);}
+.export-option h3{font-size:13px;margin-bottom:4px;}
+.export-option p{font-size:12.5px;margin:0;color:var(--text-soft);}
+#export-progress{font-size:13px;padding:8px;display:none;}
+#preconList .row-item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+#loadTabs{margin-bottom:10px;}
+#loadTabs .tab{flex:1;text-align:center;}
+.load-tab-count{font-weight:400;color:var(--text-soft);}
+.load-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-soft);margin:4px 0 6px;}
+.precon-status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-soft);padding:6px 2px 8px;}
+.precon-status .mini-spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);animation:eoo-spin 0.9s linear infinite;flex:none;}
+.send-room-choice{display:flex;gap:8px;align-items:flex-start;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:8px;cursor:pointer;}
+.send-room-choice.on{border-color:var(--accent);background:var(--accent-soft);}
+.send-room-choice input[type=radio]{margin-top:2px;}
+.send-room-choice .src-sub{margin-top:6px;display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--text-soft);}
+.send-room-choice select, .send-room-choice input[type=text]{flex:1;min-width:0;}
+.precon-warn{font-size:12px;color:var(--danger);font-weight:600;}
+#loadModalBody .row-item{display:flex;justify-content:space-between;align-items:center;padding:8px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+#setsList .row-item, #sealedSetList .row-item, #gameSelectList .row-item{display:flex;justify-content:space-between;align-items:center;padding:9px 10px;margin-bottom:6px;border-radius:var(--radius-sm);border:1px solid var(--border);}
+#sealedSetList .row-item, #gameSelectList .row-item{cursor:pointer;}
+#sealedSetList .row-item:hover, #gameSelectList .row-item:hover{background:var(--surface-2);}
+#importFileInput{display:none;}
+
+/* ---------- Hover preview ---------- */
+#hover-preview{
+  position:fixed;z-index:80;pointer-events:none;
+  width:var(--hover-preview-width, 260px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:8px;display:none;
+}
+#hover-preview.scheme,#hover-preview.scheme270{width:var(--hover-preview-scheme-width, 364px);} /* rotated card — width should roughly match a normal preview's HEIGHT for comparable prominence */
+#hover-preview img{width:100%;border-radius:6px;display:block;}
+#hover-preview .hp-frame.scheme{position:relative;overflow:hidden;aspect-ratio:7/5;border-radius:6px;}
+#hover-preview .hp-frame.scheme270{position:relative;overflow:hidden;aspect-ratio:7/5;border-radius:6px;}
+#hover-preview .hp-frame.scheme img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-90deg);border-radius:0;max-width:none;}
+#hover-preview .hp-frame.scheme270 img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(90deg);border-radius:0;max-width:none;}
+#hoverPreviewImg.rotate-180-fill{transform:rotate(180deg);}
+#hover-preview .hp-name{font-size:12px;font-weight:700;margin-top:6px;}
+
+/* ---------- Generic-mode UI (game-agnostic decks: no leaders/aspects/schemes/stats/
+   sealed-deck-generation) — hides the Echo-of-Omens-specific deckbuilding controls
+   entirely rather than leaving them visible-but-inert. */
+body.generic-mode #deckTypeTabs,
+body.generic-mode #btnSealedDecks,
+body.generic-mode #overlordModeToggle,
+body.generic-mode #deckSetupPanel,
+body.generic-mode #btnClearIllegal,
+body.generic-mode #deckRulesPanel,
+body.generic-mode #deckStatsPanel,
+body.generic-mode #viewStatsPanel{ display:none !important; }
+
+#toast{
+  position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+  background:var(--text);color:var(--bg);
+  padding:10px 16px;font-size:13px;z-index:400; /* above #signin-gate, so the access-request confirmation shows there too */
+  border-radius:var(--radius-sm);display:none;
+  max-width:70vw;box-shadow:var(--shadow);
+}

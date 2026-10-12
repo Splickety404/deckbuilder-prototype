@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Echo of Omens — Deckbuilder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- Google Identity Services — the sign-in gate below is what card access
+     is actually restricted by; see the ACCESS section further down. -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<!--STYLES-->
+</head>
+<body>
+
+<div id="signin-gate">
+  <div class="signin-box">
+    <h1>DECKBUILDER PROTOTYPE</h1>
+    <p>Sign in with the Google account you were given access with.</p>
+    <div id="googleSignInButton"></div>
+    <div class="signin-spinner" id="signinSpinner" style="display:none;"></div>
+    <div class="signin-status" id="signinStatus"></div>
+    <div class="signin-error" id="signinError"></div>
+    <div class="btn" id="btnSigninRequestAccess" style="display:none;">Request access…</div>
+  </div>
+</div>
+
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Loading card data…</div>
+</div>
+
+<!-- The request-access modal and #toast live outside #app for the same reason as
+     #gameSelectModal below: they're also used from the sign-in gate (signed in, but
+     no sets), before #app is ever shown. -->
+<div id="toast"></div>
+
+<!-- Request access to a set — Game/Set are plain text (not a dropdown of known
+     sets) so this form never reveals which games/sets actually exist to someone
+     who doesn't already have access to at least one. -->
+<div class="modal-overlay hidden" id="requestAccessModal">
+  <div class="modal-box" style="width:min(440px,92vw);">
+    <div class="modal-header"><h2>Request set access</h2><div class="btn btn-icon" data-close="requestAccessModal">✕</div></div>
+    <div class="modal-body">
+      <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">This sends a request to whoever administers the card sets. They'll follow up once your account has been given access.</p>
+      <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Game</label>
+      <input type="text" id="requestAccessGame" placeholder="Which game" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+      <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Set</label>
+      <input type="text" id="requestAccessSet" placeholder="Which set" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+      <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Your Gmail address</label>
+      <input type="text" id="requestAccessEmail" placeholder="you@gmail.com" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+      <label style="display:block;font-size:12.5px;color:var(--text-soft);margin-bottom:4px;">Note (optional)</label>
+      <textarea id="requestAccessNote" rows="3" placeholder="Anything else worth mentioning" style="width:100%;box-sizing:border-box;resize:vertical;margin-bottom:12px;font-family:var(--font);"></textarea>
+      <p id="requestAccessError" style="color:var(--danger);font-size:12.5px;min-height:1.2em;margin:0 0 8px;"></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <div class="btn" data-close="requestAccessModal">Cancel</div>
+        <div class="btn btn-accent" id="btnSubmitRequestAccess">Send request</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Game selection — shown at sign-in when an account can see more than one game,
+     and reopened on demand via the "Game" button to switch games later. This has to
+     live OUTSIDE #app, as a sibling of #signin-gate/#loading-overlay: #app itself is
+     display:none until a game is actually chosen (see its CSS), and a modal nested
+     inside a display:none ancestor never renders no matter what its own display is
+     set to — which is exactly what made this modal invisible (a completely blank
+     screen, with no way to pick a game) the first time #app got hidden by default. -->
+<div class="modal-overlay hidden" id="gameSelectModal">
+  <div class="modal-box" style="width:min(420px,92vw);">
+    <div class="modal-header"><h2>Choose a Game</h2><div class="btn btn-icon" data-close="gameSelectModal">✕</div></div>
+    <div class="modal-body">
+      <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">Your account has access to more than one game. Pick which one to work on — you can switch later from the "Game" button.</p>
+      <div id="gameSelectList"></div>
+    </div>
+  </div>
+</div>
+
+<div id="app">
+
+  <header id="topbar">
+    <h1 id="topbarTitle">DECKBUILDER PROTOTYPE</h1>
+    <div class="tab-group" id="deckTypeTabs">
+      <div class="tab" data-type="overlord">Overlord</div>
+      <div class="tab" data-type="champion">Champion</div>
+    </div>
+    <div class="btn" id="btnSealedDecks" title="Randomly build BOTH the Overlord and Champion decks (plus the scheme deck) from a single shared card pool, following the sealed-deck rules">Get Sealed Decks</div>
+    <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
+    <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
+    <div class="btn btn-sm" id="btnManageSets" title="Which card sets you have access to">Sets</div>
+    <div class="btn btn-sm" id="btnChangeGame" title="Switch to a different game" style="display:none;">Game ▾</div>
+    <div class="btn btn-icon" id="btnHelp" title="Help">❔</div>
+    <label id="cardScaleControl" title="Card size" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-soft);">
+      <input type="range" id="cardScaleSlider" min="120" max="280" step="10" style="width:80px;">
+    </label>
+    <div class="btn btn-icon" id="btnThemeToggle" title="Toggle light/dark">🌓</div>
+    <div id="sync-status">loading card data…</div>
+    <div class="btn btn-sm" id="btnResync" title="Resync — re-fetch the latest card data">↻</div>
+    <div id="signinAccountLine" title="Click to sign out"></div>
+  </header>
+
+  <div id="main-layout">
+
+    <aside id="deck-panel">
+      <!-- Controls for the deck being edited (Overlord or Champion), pinned to the top of this column -->
+      <div id="deck-file-bar">
+        <input type="text" id="deckNameInput" placeholder="Deck name...">
+        <div class="deck-file-buttons">
+          <div class="btn btn-sm" id="btnNewDeck">New</div>
+          <div class="btn btn-sm" id="btnSaveDeck">Save</div>
+          <div class="btn btn-sm" id="btnLoadDeck">Load ▾</div>
+          <div class="btn btn-sm" id="btnPrecon" style="display:none;" title="Share this deck with every player as a preconstructed deck">Precon ▾</div>
+          <div class="btn btn-sm btn-accent" id="btnExport">Export ▾</div>
+          <div class="btn btn-sm btn-accent" id="btnSendToRoom" style="display:none;" title="Play this deck in the game room">Send to room ↗</div>
+        </div>
+      </div>
+      <div id="deck-controls">
+        <div class="mode-toggle" id="overlordModeToggle">
+          <div class="tab" data-mode="main">Main Deck (50)</div>
+          <div class="tab" data-mode="scheme">Scheme Deck (5)</div>
+        </div>
+        <details id="deckSetupPanel" open>
+          <summary>Deck Setup</summary>
+          <div id="deck-leader-slot" class="leader-chip">
+            <span class="placeholder">Click to choose a leader</span>
+          </div>
+          <div id="deck-bonus-slot" class="leader-chip">
+            <span class="placeholder" id="bonusSlotPlaceholder">Click to choose a Domination card</span>
+          </div>
+          <div id="deck-extra-slot" class="leader-chip">
+            <span class="placeholder" id="extraSlotPlaceholder">Click to choose a Stronghold</span>
+          </div>
+          <div id="aspectRow">
+            <label id="aspectLabel">Domination Aspect</label>
+            <span id="aspectValue" style="font-size:13px;color:var(--text-soft);">—</span>
+          </div>
+        </details>
+        <div id="deckHeaderLine">
+          <h3 id="deckPanelTitle">Your Deck</h3>
+          <span id="deckCountLabel">0 / 50</span>
+        </div>
+        <div class="btn btn-sm" id="btnClearIllegal" style="display:none;">Remove illegal cards</div>
+        <details id="deckRulesPanel">
+          <summary>Rules Check</summary>
+          <div id="deckRulesChecklist"></div>
+        </details>
+        <details id="deckStatsPanel">
+          <summary>Deck Stats</summary>
+          <div id="deckStatsBody"></div>
+        </details>
+      </div>
+
+      <div id="deck-drop-zone">
+        <div id="deck-empty-hint">Drag cards here, or use the + button on a card.</div>
+      </div>
+      <div id="deck-legend">Drag rows to reorder — export follows this order. Shift-click a stack to remove it entirely.</div>
+    </aside>
+
+    <section id="library-wrap">
+      <div id="library-toolbar">
+        <div id="library-count"></div>
+        <label>Sort by <select id="sortSelect"></select></label>
+      </div>
+      <div id="library-grid"></div>
+      <div class="btn btn-icon" id="btnScrollTop" title="Scroll to top">↑</div>
+    </section>
+
+    <aside id="filters-panel">
+      <details id="viewStatsPanel">
+        <summary>Current View Stats</summary>
+        <div id="viewStatsBody"></div>
+      </details>
+      <h3>Filters</h3>
+      <label id="deckViewToggle" class="toggle-row">
+        <input type="checkbox" id="deckViewCheckbox">
+        <span>Deck View — only show cards currently in this deck</span>
+      </label>
+      <div id="setFilterGroup" style="display:none;"></div>
+      <input type="text" id="searchBox" placeholder="Search name / ability...">
+      <div id="filterGroups"></div>
+      <div class="btn btn-sm" id="btnClearFilters" style="width:100%;justify-content:center;margin-top:6px;">Clear Filters</div>
+    </aside>
+
+  </div>
+
+  <!-- Leader picker modal -->
+  <div class="modal-overlay hidden" id="cardPickerModal">
+    <div class="modal-box">
+      <div class="modal-header"><h2 id="cardPickerTitle">Choose a card</h2><div class="btn btn-icon" data-close="cardPickerModal">✕</div></div>
+      <div class="modal-body"><div class="leader-grid" id="cardPickerGrid"></div></div>
+    </div>
+  </div>
+
+  <!-- Card preview modal -->
+  <div class="modal-overlay hidden" id="preview-modal">
+    <div class="modal-box">
+      <div class="modal-header"><h2>Card detail</h2><div class="btn btn-icon" data-close="preview-modal">✕</div></div>
+      <div class="modal-body">
+        <div id="preview-img-frame"><img id="preview-img" src=""></div>
+        <div style="flex:1;min-width:220px;">
+          <div class="btn btn-sm" id="btnFlipCard" style="margin-bottom:10px;display:none;">Show Back</div>
+          <dl id="preview-text"></dl>
+          <div id="previewLastUpdated" style="font-size:12px;color:var(--text-soft);margin-top:10px;"></div>
+          <div class="btn btn-sm" id="btnViewHistory" style="margin-top:6px;display:none;">Version History</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Version history list -->
+  <div class="modal-overlay hidden" id="historyModal">
+    <div class="modal-box" style="width:min(440px,92vw);">
+      <div class="modal-header"><h2>Version History</h2><div class="btn btn-icon" data-close="historyModal">✕</div></div>
+      <div class="modal-body" id="historyModalBody"></div>
+    </div>
+  </div>
+
+  <!-- Diff view: a past version vs. today -->
+  <div class="modal-overlay hidden" id="diffModal">
+    <div class="modal-box">
+      <div class="modal-header"><h2 id="diffModalTitle">Comparing versions</h2><div class="btn btn-icon" data-close="diffModal">✕</div></div>
+      <div class="modal-body" id="diffModalBody"></div>
+    </div>
+  </div>
+
+  <!-- Help modal -->
+  <div class="modal-overlay hidden" id="helpModal">
+    <div class="modal-box" style="width:min(820px,94vw);">
+      <div class="modal-header"><h2>Help</h2><div class="btn btn-icon" data-close="helpModal">✕</div></div>
+      <div class="modal-body" style="display:flex;gap:0;min-height:340px;max-height:70vh;padding:0;">
+        <div id="helpArticleList"></div>
+        <div id="helpArticleContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage card sets -->
+  <div class="modal-overlay hidden" id="setsModal">
+    <div class="modal-box" style="width:min(480px,92vw);">
+      <div class="modal-header"><h2>Card Sets</h2><div class="btn btn-icon" data-close="setsModal">✕</div></div>
+      <div class="modal-body">
+        <p style="font-size:12.5px;color:var(--text-soft);margin-top:0;">The sets below are the ones your signed-in Google account currently has access to. This list is entirely server-controlled — to get access to another set, ask whoever administers the sets to share its Drive folder with your account.</p>
+        <div id="setsList"></div>
+        <div class="btn" id="btnRequestAccess" style="width:100%;justify-content:center;margin-top:12px;">Request access to another set…</div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Sealed deck: choose which set -->
+  <div class="modal-overlay hidden" id="sealedSetModal">
+    <div class="modal-box" style="width:min(420px,92vw);">
+      <div class="modal-header"><h2>Choose a Set</h2><div class="btn btn-icon" data-close="sealedSetModal">✕</div></div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--text-soft);margin-top:0;">All cards in the sealed deck will be drawn from this set only.</p>
+        <div id="sealedSetList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load deck modal -->
+  <div class="modal-overlay hidden" id="loadModal">
+    <div class="modal-box" style="width:min(440px,92vw);">
+      <div class="modal-header"><h2>Load / import deck</h2><div class="btn btn-icon" data-close="loadModal">✕</div></div>
+      <div class="modal-body">
+        <div class="tab-group" id="loadTabs" style="display:none;">
+          <div class="tab" data-loadtab="precon">Preconstructed <span class="load-tab-count" id="nPreconTab"></span></div>
+          <div class="tab" data-loadtab="mine">Your decks <span class="load-tab-count" id="nMineTab"></span></div>
+        </div>
+        <div id="loadPanePrecon" style="display:none;">
+          <div id="preconStatus" class="precon-status" style="display:none;"></div>
+          <div id="preconList"></div>
+        </div>
+        <div id="loadPaneMine">
+          <div id="importDropZone" style="width:100%;box-sizing:border-box;border:2px dashed var(--border);border-radius:var(--radius-sm);padding:14px 10px;text-align:center;margin-bottom:10px;color:var(--text-soft);transition:background .1s,border-color .1s;">
+            Drag &amp; drop a .txt or .json deck file here, or
+            <div class="btn" id="btnImportFile" style="justify-content:center;margin-top:8px;">Choose a file…</div>
+          </div>
+          <input type="file" id="importFileInput" accept=".txt,.json">
+          <div id="loadModalBody"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Send deck to room: start a new room on one of the game's boards, or join one -->
+  <div class="modal-overlay hidden" id="sendRoomModal">
+    <div class="modal-box" style="width:min(420px,92vw);">
+      <div class="modal-header"><h2>Send deck to room</h2><div class="btn btn-icon" data-close="sendRoomModal">✕</div></div>
+      <div class="modal-body" id="sendRoomBody"></div>
+    </div>
+  </div>
+
+  <!-- Preconstructed deck: add / update (game-folder editors only) -->
+  <div class="modal-overlay hidden" id="preconModal">
+    <div class="modal-box" style="width:min(440px,92vw);">
+      <div class="modal-header"><h2>Preconstructed deck</h2><div class="btn btn-icon" data-close="preconModal">✕</div></div>
+      <div class="modal-body" id="preconModalBody"></div>
+    </div>
+  </div>
+
+  <!-- Export: prompts for a deck name first if the deck doesn't have one yet.
+       "Export without a name" still proceeds straight to the export modal below. -->
+  <div class="modal-overlay hidden" id="exportNameModal">
+    <div class="modal-box" style="width:min(420px,92vw);">
+      <div class="modal-header"><h2>Name this deck?</h2><div class="btn btn-icon" data-close="exportNameModal">✕</div></div>
+      <div class="modal-body">
+        <p style="margin-top:0;color:var(--text-soft);">This deck doesn't have a name yet. Give it one now, or export without one.</p>
+        <input type="text" id="exportNameInput" placeholder="Deck name..." style="width:100%;box-sizing:border-box;margin-bottom:12px;">
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <div class="btn" id="btnExportWithoutName">Export without a name</div>
+          <div class="btn btn-accent" id="btnExportSaveName">Save name &amp; continue</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export modal -->
+  <div class="modal-overlay hidden" id="exportModal">
+    <div class="modal-box" style="width:min(540px,92vw);">
+      <div class="modal-header"><h2>Export deck</h2><div class="btn btn-icon" data-close="exportModal">✕</div></div>
+      <div class="modal-body">
+        <div class="export-option card-surface" id="optExportPdf">
+          <h3>🖨️ Print &amp; Play PDF (3×3, Letter)</h3>
+          <p>Overlord export order: leader, then your 5 schemes, then your 50-card deck (in your reordered sequence). Double-sided cards print front then back. Scheme cards print at their native angle, same physical size as every other card — rotate the printed card by hand to read it.</p>
+          <p id="pdfPageEstimate" style="font-weight:600;"></p>
+        </div>
+        <div class="export-option card-surface" id="optExportCsv">
+          <h3>🃏 playingcards.io CSV</h3>
+          <p>Columns: name, front, back — one row per physical copy, in deck order. For an Overlord deck this downloads two files: the 50-card deck (leader first) and the 5-card scheme deck, separately.</p>
+        </div>
+        <div class="export-option card-surface" id="optExportTxt">
+          <h3>📋 Plain-text decklist</h3>
+          <p>Human-readable list you can paste into Discord/chat to share with friends.</p>
+        </div>
+        <div class="export-option card-surface" id="optExportClipboard">
+          <h3>📎 Copy to clipboard</h3>
+          <p>Same plain-text decklist, copied instantly — no file, no timestamp change.</p>
+        </div>
+        <div class="export-option card-surface" id="optExportJson">
+          <h3>💾 JSON decklist</h3>
+          <p>Exact, lossless — re-import this to restore the deck perfectly, including card order.</p>
+        </div>
+        <div id="export-progress" class="card-surface"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="hover-preview"><div class="hp-frame" id="hoverPreviewFrame"><img id="hoverPreviewImg" src=""></div><div class="hp-name" id="hoverPreviewName"></div></div>
+</div>
+
+<!--SCRIPTS-->
+</body>
+</html>
