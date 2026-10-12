@@ -1569,9 +1569,9 @@ function postRoomEvent(type, payload){
   if(!isConnected()) return; // playing solo — nothing to sync yet
   const envelope = { ...payload, _origin: state.clientId, _playerName: state.playerName, _playerId: state.playerId };
   // Live transport: instant, this is what everyone actually sees moves through.
-  if(roomChannel){
-    try{ roomChannel.publish(type, envelope); }
-    catch(e){ console.error('Ably publish failed', e); toast('Live sync hiccup — that action may not have reached others.'); }
+  if(transport){
+    try{ transport.send(type, envelope); }
+    catch(e){ console.error('Live sync publish failed', e); toast('Live sync hiccup — that action may not have reached others.'); }
   }
   // Durable, permanent record only — never on the critical path for gameplay.
   // REQUEST_STATE/STATE_SNAPSHOT are internal plumbing (how a new joiner
@@ -7978,27 +7978,75 @@ const ABLY_API_KEY = 'TTVNbQ.lz-fZA:mzHxpkBNnMo7qMtP3xs8uqEB4yye8np0lqtaS00fSM0'
 // game among friends.
 function ablyConfigured(){ return !!ABLY_API_KEY; }
 
-let ablyClient = null;
-let roomChannel = null;
 var presenceCursors = new Map(); // playerId -> DOM element in #boardWorld. `var` (hoisted) because renderBoard, defined earlier, reads it
 let presenceLastSent = 0;
 const PRESENCE_SEND_MS = 150; // ~6-7 updates/sec — smooth, and easier on the free tier's message quota now that this channel also carries every game action
 let presenceHolding = false;
 let presenceHeldLabel = null;
 
-function ensureAbly(){
-  if(!ablyConfigured()) return false;
-  if(ablyClient) return true;
-  try{
-    if(!window.Ably) return false; // SDK <script> tag didn't load (offline, blocked, etc.)
-    ablyClient = new Ably.Realtime({ key: ABLY_API_KEY, clientId: state.playerId });
-    ablyClient.connection.on((stateChange)=>{
-      const s = stateChange.current;
-      setConnStatus(s==='connected', s==='connected' ? null : s);
-    });
-    return true;
-  }catch(err){ console.warn('Live sync disabled — Ably init failed:', err); return false; }
-}
+/* ---- SyncTransport — how this page talks to the other players --------------
+   The rest of the room only ever talks to `transport` (below), never to Ably
+   directly, so the way players are connected can be swapped without touching
+   game logic. A transport is any object with:
+     open(code, handlers) -> true if it started, false if it can't run here
+        handlers = { onEvent(msg), onPresence(members), onStatus(ok, detail) }
+        msg      = { name, data }              (one game event)
+        members  = [{ clientId, data }, …]     (everyone currently here)
+     send(type, envelope)    publish one game event to everyone
+     updatePresence(data)    publish this player's cursor / holding state
+     leaveNow()              say goodbye immediately (tab closing)
+     close()                 stop everything
+   AblyTransport below is the original behavior, moved here unchanged. ------- */
+const AblyTransport = (()=>{
+  let client = null;
+  let channel = null;
+  let handlers = null;
+  function ensureClient(){
+    if(!ablyConfigured()) return false;
+    if(client) return true;
+    try{
+      if(!window.Ably) return false; // SDK <script> tag didn't load (offline, blocked, etc.)
+      client = new Ably.Realtime({ key: ABLY_API_KEY, clientId: state.playerId });
+      client.connection.on((stateChange)=>{
+        const s = stateChange.current;
+        if(handlers) handlers.onStatus(s==='connected', s==='connected' ? null : s);
+      });
+      return true;
+    }catch(err){ console.warn('Live sync disabled — Ably init failed:', err); return false; }
+  }
+  // Presence events (enter/update/leave) only tell us SOMETHING changed, not
+  // the full picture — re-fetching the whole member list each time is cheap
+  // at card-game scale and keeps rendering dead simple.
+  function refreshMembers(){
+    if(!channel) return;
+    channel.presence.get((err, members)=>{ if(!err && handlers) handlers.onPresence(members); });
+  }
+  function onMessage(msg){ if(handlers) handlers.onEvent(msg); }
+  return {
+    open(code, h){
+      if(!ensureClient()) return false;
+      handlers = h;
+      channel = client.channels.get(`room:${code}`);
+      channel.subscribe(onMessage);
+      channel.presence.subscribe(refreshMembers);
+      channel.presence.enter({ name: state.playerName, x:0, y:0, holding:false, heldLabel:null });
+      return true;
+    },
+    send(type, envelope){ channel.publish(type, envelope); },
+    updatePresence(data){ channel.presence.update(data); },
+    leaveNow(){ if(channel) channel.presence.leave(); },
+    close(){
+      if(channel){
+        channel.unsubscribe(onMessage);
+        channel.presence.unsubscribe(refreshMembers);
+        channel.presence.leave();
+      }
+      channel = null;
+      handlers = null;
+    },
+  };
+})();
+let transport = null; // the active SyncTransport while connected to a room, else null
 // Deterministic per-player color, derived purely from the id — every viewer
 // lands on the same color for the same player with nothing to sync.
 function presenceColorFor(id){
@@ -8038,41 +8086,33 @@ function renderPresenceMembers(members){
   // automatically even if they close the tab without warning.
   presenceCursors.forEach((el, pid)=>{ if(!seen.has(pid)){ el.remove(); presenceCursors.delete(pid); } });
 }
-// Presence events (enter/update/leave) only tell us SOMETHING changed, not
-// the full picture — re-fetching the whole member list each time is cheap
-// at card-game scale and keeps rendering dead simple.
-function refreshPresenceMembers(){
-  if(!roomChannel) return;
-  roomChannel.presence.get((err, members)=>{ if(!err) renderPresenceMembers(members); });
-}
-// Sets up the one Ably channel for this session — both the live game-event
+// Sets up the sync transport for this session — both the live game-event
 // bus (handleIncomingRoomEvent, defined in the SYNC ENGINE section above)
-// and presence (cursors) ride this same channel/connection.
+// and presence (cursors) ride the same connection.
 function initRoomChannel(){
-  if(!ensureAbly()) return false;
-  roomChannel = ablyClient.channels.get(`room:${state.sessionCode}`);
-  roomChannel.subscribe(handleIncomingRoomEvent);
-  roomChannel.presence.subscribe(refreshPresenceMembers);
-  roomChannel.presence.enter({ name: state.playerName, x:0, y:0, holding:false, heldLabel:null });
+  const t = AblyTransport;
+  const ok = t.open(state.sessionCode, {
+    onEvent: handleIncomingRoomEvent,
+    onPresence: renderPresenceMembers,
+    onStatus: setConnStatus,
+  });
+  if(!ok) return false;
+  transport = t;
   return true;
 }
 function teardownRoomChannel(){
-  if(roomChannel){
-    roomChannel.unsubscribe(handleIncomingRoomEvent);
-    roomChannel.presence.unsubscribe(refreshPresenceMembers);
-    roomChannel.presence.leave();
-  }
-  roomChannel = null;
+  if(transport) transport.close();
+  transport = null;
   presenceCursors.forEach(el=>el.remove());
   presenceCursors.clear();
 }
 function sendPresence(clientX, clientY, forceNow){
-  if(!roomChannel) return;
+  if(!transport) return;
   const now = Date.now();
   if(!forceNow && now - presenceLastSent < PRESENCE_SEND_MS) return;
   presenceLastSent = now;
   const w = clientToWorld(clientX, clientY);
-  roomChannel.presence.update({ name: state.playerName, x: Math.round(w.x), y: Math.round(w.y), holding: presenceHolding, heldLabel: presenceHeldLabel });
+  transport.updatePresence({ name: state.playerName, x: Math.round(w.x), y: Math.round(w.y), holding: presenceHolding, heldLabel: presenceHeldLabel });
 }
 window.addEventListener('mousemove', (e)=>{ sendPresence(e.clientX, e.clientY); });
 // A generic "is this player currently holding/dragging something" signal —
@@ -8095,7 +8135,7 @@ document.addEventListener('mouseup', (e)=>{
   presenceHeldLabel = null;
   sendPresence(e.clientX, e.clientY, true);
 }, true);
-window.addEventListener('beforeunload', ()=>{ if(roomChannel) roomChannel.presence.leave(); });
+window.addEventListener('beforeunload', ()=>{ if(transport) transport.leaveNow(); });
 
 /* =========================================================================
    CONNECTING A ROOM — open it up to others once you're happy with your local

@@ -29,9 +29,9 @@ function postRoomEvent(type, payload){
   if(!isConnected()) return; // playing solo — nothing to sync yet
   const envelope = { ...payload, _origin: state.clientId, _playerName: state.playerName, _playerId: state.playerId };
   // Live transport: instant, this is what everyone actually sees moves through.
-  if(roomChannel){
-    try{ roomChannel.publish(type, envelope); }
-    catch(e){ console.error('Ably publish failed', e); toast('Live sync hiccup — that action may not have reached others.'); }
+  if(transport){
+    try{ transport.send(type, envelope); }
+    catch(e){ console.error('Live sync publish failed', e); toast('Live sync hiccup — that action may not have reached others.'); }
   }
   // Durable, permanent record only — never on the critical path for gameplay.
   // REQUEST_STATE/STATE_SNAPSHOT are internal plumbing (how a new joiner
