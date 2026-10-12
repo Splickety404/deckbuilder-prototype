@@ -77,11 +77,52 @@ function applyModeUI(){
   document.title = gameName + ' — Deckbuilder';
 }
 
+// Turns raw per-set rows into the live card list and shows it. Used for the saved copy
+// (shown instantly on a return visit) and again for the fresh server copy.
+function showLoadedCards(rawSetResults){
+  state.game = pickGame(rawSetResults);
+
+  // Every card's own _sheetId (see processRawRows) has to be the actual
+  // sheet id (s.sheetId), NOT the set's folder id (s.folderId) — this was
+  // passing folderId here, which is fine for everything the deckbuilder itself
+  // does (folderId already uniquely identifies a set internally), but meant
+  // every deck exported to JSON carried a bogus "sheetId" the game room app
+  // could never actually look up, failing with "Unknown sheet" on import.
+  const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.sheetId, state.game));
+  const rows = mergeCardSets(setCardLists);
+
+  state.cards = rows;
+  state.byId = new Map(rows.map(r=>[r.id, r]));
+  applyModeUI();
+  applyPcioUI();
+  state.game.afterCardsLoaded();
+  computeFieldDefs();
+  renderAll();
+}
+
 async function loadData(silent){
+  if(typeof perfMark==='function') perfMark('loading card data');
   if(!silent) setSyncStatus('loading card data…');
-  showLoadingOverlay();
+  // A return visit shows the saved copy right away (see 01d-load-cache-private.js) and
+  // refreshes it below. A manual resync (silent) always goes to the server.
+  const saved = (!silent && typeof cardCacheLoadSets==='function') ? cardCacheLoadSets(state.authorizedSets) : null;
+  let savedJson = null;
+  if(saved){
+    savedJson = JSON.stringify(saved.map(s=>s.rows));
+    const firstWithRows = saved.find(s=>s.rows.length);
+    if(!state.headers.length && firstWithRows){
+      state.headers = Object.keys(firstWithRows.rows[0]);
+      state.hasImages = state.headers.includes('front-image-url');
+    }
+    showLoadedCards(saved);
+    setSyncStatus('showing saved cards — checking for updates…');
+    if(typeof perfMark==='function') perfMark('saved cards shown');
+  } else {
+    showLoadingOverlay();
+  }
   try{
     const rawSetResults = []; // [{rows, setName, folderId, sheetId}]
+    let anySetFailed = false;
 
     // Fetched concurrently rather than one set at a time — each fast=true fetch is
     // now just a Sheets read, independent of every other set, so there's no reason
@@ -90,9 +131,11 @@ async function loadData(silent){
     const fastResults = await Promise.allSettled(
       state.authorizedSets.map(entry => cardSource.loadSet(entry.folderId, true))
     );
+    if(typeof perfMark==='function') perfMark('card data fetched from server');
     fastResults.forEach((res, i)=>{
       const entry = state.authorizedSets[i];
       if(res.status==='rejected'){
+        anySetFailed = true;
         console.error('Could not load set '+entry.folderId+':', res.reason);
         toast(`Could not load set "${entry.label}": ${res.reason.message}`);
         return;
@@ -106,34 +149,22 @@ async function loadData(silent){
         rows: result.rows,
         setName: result.setName || entry.label,
         folderId: entry.folderId,
-        sheetId: result.sheetId, // the set's actual data-sheet id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.gs indexes by sheet id, never folder id)
+        sheetId: result.sheetId, // the set's actual data-sheet id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.
       });
     });
 
-    state.game = pickGame(rawSetResults);
-
-    // Every card's own _sheetId (see processRawRows) has to be the actual
-    // sheet id (s.sheetId), NOT the set's folder id (s.folderId) — this was
-    // passing folderId here, which is fine for everything the deckbuilder itself
-    // does (folderId already uniquely identifies a set internally), but meant
-    // every deck exported to JSON carried a bogus "sheetId" the game room app
-    // could never actually look up, failing with "Unknown sheet" on import.
-    const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.sheetId, state.game));
-    const rows = mergeCardSets(setCardLists);
-
-    state.cards = rows;
-    state.byId = new Map(rows.map(r=>[r.id, r]));
-    applyModeUI();
-    applyPcioUI();
-    state.game.afterCardsLoaded();
-    computeFieldDefs();
-    renderAll();
+    // Keep what's already showing if a set failed to refresh (the saved copy beats a gap), or if
+    // nothing changed since it was saved (avoids a pointless redraw).
+    const keepSavedView = saved && (anySetFailed || JSON.stringify(rawSetResults.map(s=>s.rows))===savedJson);
+    if(!anySetFailed && typeof cardCacheSaveSets==='function') cardCacheSaveSets(rawSetResults);
+    if(!keepSavedView) showLoadedCards(rawSetResults);
     // Card text is in and the grid is already rendered and usable — don't make the
     // user wait on art, or on the game-level assets (card backs/.pcio board), either.
     // hideLoadingOverlay() happens here; both background passes below pop their own
     // results in once they finish (see syncAllSetImages/applySetImages and
     // loadGameAssetsInBackground/applyPcioUI).
     hideLoadingOverlay();
+    if(typeof perfMark==='function') perfMark('cards up to date');
     if(state.hasImages && rawSetResults.length){
       setSyncStatus('synced ' + syncTime() + ' — loading art…');
       syncAllSetImages(rawSetResults);
@@ -145,7 +176,7 @@ async function loadData(silent){
   }catch(err){
     console.error(err);
     setSyncStatus('sync failed — check your connection ('+err.message+')');
-    toast('Could not load card data: '+err.message);
+    if(!saved) toast('Could not load card data: '+err.message);
     hideLoadingOverlay();
   }
 }
@@ -164,7 +195,10 @@ function syncAllSetImages(rawSetResults){
       toast(`Could not load art for "${s.setName}": ${e.message}`);
     }
     pending--;
-    if(pending<=0) setSyncStatus('synced ' + syncTime());
+    if(pending<=0){
+      setSyncStatus('synced ' + syncTime());
+      if(typeof perfMark==='function'){ perfMark('art synced'); perfReport(); }
+    }
   });
 }
 

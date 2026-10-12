@@ -15,6 +15,7 @@ function setSigninError(s){ document.getElementById('signinError').textContent =
 function initGoogleSignIn(attempt){
   attempt = attempt || 0;
   if(attempt === 0){
+    warmBackend();
     const remembered = localStorage.getItem(LS_LAST_EMAIL_KEY);
     if(remembered) setSigninStatus(`Last signed in as ${remembered}`);
   }
@@ -29,7 +30,9 @@ function initGoogleSignIn(attempt){
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
     callback: onGoogleSignIn,
+    auto_select: true, // a returning, already-consented person is signed straight in, no One Tap click
   });
+  perfMark('sign-in ready');
   google.accounts.id.renderButton(document.getElementById('googleSignInButton'), {
     theme: 'outline', size: 'large', text: 'signin_with', width: 280,
   });
@@ -53,13 +56,77 @@ async function fetchWhoAmIWithRetry(idToken){
   }
 }
 
+// An ungated do-nothing request, sent as soon as the page loads, so the Apps Script server
+// is already awake (no cold start) by the time the person finishes signing in.
+function warmBackend(){
+  try{ fetch(WEBAPP_URL + '?ping=1&_=' + Date.now(), { mode:'no-cors' }).catch(()=>{}); }catch(e){}
+}
+
+// After the saved-cards fast path below: confirms with the server (in the background) that this
+// account still has access, and refreshes the saved list of games/sets. Anything the server says
+// that differs from what we assumed wins.
+async function confirmAccessInBackground(credential, assumedGames){
+  try{
+    const who = await fetchWhoAmIWithRetry(credential);
+    perfMark('access confirmed by server');
+    if(!who.games || !who.games.length){
+      cardCacheClear();
+      signOut();
+      setSigninError(`Signed in as ${who.email}, but that account doesn't have access to any card sets yet.`);
+      noAccessEmail = who.email;
+      showSigninRequestAccess(true);
+      return;
+    }
+    state.userEmail = who.email;
+    document.getElementById('signinAccountLine').textContent = who.email;
+    cardCacheSaveGames(who.email, who.games);
+    state.games = who.games;
+    initFeedbackAdmin();
+    const fresh = who.games.find(g=>g.folderId===state.currentGameFolderId);
+    if(!fresh){
+      toast('Your game access changed — please sign in again.');
+      cardCacheClear();
+      signOut();
+      return;
+    }
+    const sameSets = JSON.stringify(fresh.sets.map(s=>s.folderId)) === JSON.stringify(state.authorizedSets.map(s=>s.folderId));
+    if(!sameSets){
+      state.authorizedSets = fresh.sets;
+      toast('Your set access changed — refreshing cards.');
+      loadData(true);
+    }
+  }catch(e){
+    console.error('Background access check failed:', e);
+    toast('Could not confirm your access with the server yet — showing saved cards. ' + e.message);
+  }
+}
+
 async function onGoogleSignIn(response){
+  perfMark('Google sign-in credential received');
   setSigninError('');
   showSigninRequestAccess(false);
   setSigninStatus('Checking your access…');
   setSigninChecking(true);
   try{
+    // Return visit: this browser already holds this account's saved game/set list. Start
+    // from it now and let the server confirm in the background (see confirmAccessInBackground).
+    const guessedEmail = emailFromCredential(response.credential);
+    const savedGames = cardCacheLoadGames(guessedEmail);
+    if(savedGames){
+      state.idToken = response.credential;
+      state.userEmail = guessedEmail;
+      localStorage.setItem(LS_LAST_EMAIL_KEY, guessedEmail);
+      document.getElementById('signinAccountLine').textContent = guessedEmail;
+      document.getElementById('signinAccountLine').title = guessedEmail + ' — click to sign out';
+      setSigninStatus('');
+      setSigninChecking(false);
+      perfMark('using saved access list');
+      startWithGames(savedGames);
+      confirmAccessInBackground(response.credential, savedGames);
+      return;
+    }
     const who = await fetchWhoAmIWithRetry(response.credential);
+    perfMark('access check finished');
     if(!who.games || !who.games.length){
       setSigninStatus('');
       setSigninChecking(false);
@@ -76,6 +143,7 @@ async function onGoogleSignIn(response){
     setSigninStatus('');
     setSigninChecking(false);
 
+    cardCacheSaveGames(who.email, who.games);
     startWithGames(who.games);
     initFeedbackAdmin();
   }catch(e){
@@ -87,6 +155,7 @@ async function onGoogleSignIn(response){
 
 function signOut(){
   initFeedbackAdmin(true);
+  cardCacheClear();
   state.idToken = '';
   state.userEmail = '';
   state.games = [];

@@ -908,6 +908,22 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
 
 <script>
 /* =========================================================================
+   LOAD TIMING (private). perfMark('step') notes how long after the page started
+   each start-up step finished — open the browser console to read it. Purely
+   diagnostic: it changes nothing about how the app loads.
+   ========================================================================= */
+window.__loadTimings = [];
+function perfMark(label){
+  const t = Math.round(performance.now());
+  window.__loadTimings.push({ step: label, ms: t });
+  console.info(`[load] ${label} — ${t} ms after page start`);
+}
+function perfReport(){
+  let prev = 0;
+  console.table(window.__loadTimings.map(m=>{ const row = { step: m.step, 'at (ms)': m.ms, 'step took (ms)': m.ms - prev }; prev = m.ms; return row; }));
+}
+perfMark('page script started');
+/* =========================================================================
    CONFIG
    ========================================================================= */
 const LS_DECKS_KEY = 'eoo_deckbuilder_saved_decks_v2';
@@ -1550,6 +1566,72 @@ gameDefinitions.push(EchoGame);
 state.game = defaultGame(); // Echo is registered first, so it is the default
 state.deckType = state.game.defaultDeckType; freshDeckState();
 /* =========================================================================
+   SAVED CARDS (private). After a successful load the browser keeps a copy of
+   the signed-in person's game/set list and each set's card rows, so a return
+   visit can show cards straight away while the server re-checks everything in
+   the background (see loadData / onGoogleSignIn). It is only a speed-up:
+   - it is stored per account email and only ever shown to that same account's
+     sign-in, and the server is still asked on every visit — a failed access
+     check wipes it;
+   - signing out wipes it;
+   - any storage problem (private mode, full quota) just means no speed-up.
+   ========================================================================= */
+const LS_CARD_CACHE_KEY = 'eoo_saved_cards_v1';
+const CARD_CACHE_MAX_AGE_MS = 30*24*60*60*1000;
+
+function cardCacheRead(email){
+  try{
+    const raw = localStorage.getItem(LS_CARD_CACHE_KEY);
+    if(!raw) return null;
+    const blob = JSON.parse(raw);
+    if(!blob || blob.email!==email || !blob.games || Date.now()-blob.savedAt > CARD_CACHE_MAX_AGE_MS) return null;
+    return blob;
+  }catch(e){ return null; }
+}
+function cardCacheWrite(blob){
+  try{ blob.savedAt = Date.now(); localStorage.setItem(LS_CARD_CACHE_KEY, JSON.stringify(blob)); }
+  catch(e){ try{ localStorage.removeItem(LS_CARD_CACHE_KEY); }catch(e2){} } // too big / blocked: no speed-up, no harm
+}
+function cardCacheClear(){ try{ localStorage.removeItem(LS_CARD_CACHE_KEY); }catch(e){} }
+
+// The email inside a Google sign-in credential. Used ONLY to find this person's own saved copy in
+// their own browser — never to decide what they may see (the server still does that).
+function emailFromCredential(credential){
+  try{
+    const payload = JSON.parse(atob(credential.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    return String(payload.email||'').toLowerCase() || null;
+  }catch(e){ return null; }
+}
+
+function cardCacheLoadGames(email){
+  const blob = email ? cardCacheRead(email) : null;
+  return blob ? blob.games : null;
+}
+function cardCacheSaveGames(email, games){
+  const blob = cardCacheRead(email) || { email, games:[], sets:{} };
+  blob.email = email; blob.games = games;
+  cardCacheWrite(blob);
+}
+// Saved rows for every one of these sets, as fresh copies — or null unless ALL of them are saved.
+function cardCacheLoadSets(authorizedSets){
+  const blob = state.userEmail ? cardCacheRead(state.userEmail) : null;
+  if(!blob || !authorizedSets.length) return null;
+  const out = [];
+  for(const entry of authorizedSets){
+    const s = blob.sets && blob.sets[entry.folderId];
+    if(!s) return null;
+    out.push({ rows: JSON.parse(JSON.stringify(s.rows)), setName: s.setName, folderId: entry.folderId, sheetId: s.sheetId });
+  }
+  return out;
+}
+function cardCacheSaveSets(rawSetResults){
+  if(!state.userEmail) return;
+  const blob = cardCacheRead(state.userEmail) || { email: state.userEmail, games: state.games||[], sets:{} };
+  blob.sets = blob.sets || {};
+  rawSetResults.forEach(s=>{ blob.sets[s.folderId] = { rows: s.rows, setName: s.setName, sheetId: s.sheetId }; });
+  cardCacheWrite(blob);
+}
+/* =========================================================================
    DATA LOADING
    ========================================================================= */
 // Filters + tags a raw set of sheet rows into real card objects, exactly the same way
@@ -1628,11 +1710,52 @@ function applyModeUI(){
   document.title = gameName + ' — Deckbuilder';
 }
 
+// Turns raw per-set rows into the live card list and shows it. Used for the saved copy
+// (shown instantly on a return visit) and again for the fresh server copy.
+function showLoadedCards(rawSetResults){
+  state.game = pickGame(rawSetResults);
+
+  // Every card's own _sheetId (see processRawRows) has to be the actual
+  // sheet id (s.sheetId), NOT the set's folder id (s.folderId) — this was
+  // passing folderId here, which is fine for everything the deckbuilder itself
+  // does (folderId already uniquely identifies a set internally), but meant
+  // every deck exported to JSON carried a bogus "sheetId" the game room app
+  // could never actually look up, failing with "Unknown sheet" on import.
+  const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.sheetId, state.game));
+  const rows = mergeCardSets(setCardLists);
+
+  state.cards = rows;
+  state.byId = new Map(rows.map(r=>[r.id, r]));
+  applyModeUI();
+  applyPcioUI();
+  state.game.afterCardsLoaded();
+  computeFieldDefs();
+  renderAll();
+}
+
 async function loadData(silent){
+  if(typeof perfMark==='function') perfMark('loading card data');
   if(!silent) setSyncStatus('loading card data…');
-  showLoadingOverlay();
+  // A return visit shows the saved copy right away (see 01d-load-cache-private.js) and
+  // refreshes it below. A manual resync (silent) always goes to the server.
+  const saved = (!silent && typeof cardCacheLoadSets==='function') ? cardCacheLoadSets(state.authorizedSets) : null;
+  let savedJson = null;
+  if(saved){
+    savedJson = JSON.stringify(saved.map(s=>s.rows));
+    const firstWithRows = saved.find(s=>s.rows.length);
+    if(!state.headers.length && firstWithRows){
+      state.headers = Object.keys(firstWithRows.rows[0]);
+      state.hasImages = state.headers.includes('front-image-url');
+    }
+    showLoadedCards(saved);
+    setSyncStatus('showing saved cards — checking for updates…');
+    if(typeof perfMark==='function') perfMark('saved cards shown');
+  } else {
+    showLoadingOverlay();
+  }
   try{
     const rawSetResults = []; // [{rows, setName, folderId, sheetId}]
+    let anySetFailed = false;
 
     // Fetched concurrently rather than one set at a time — each fast=true fetch is
     // now just a Sheets read, independent of every other set, so there's no reason
@@ -1641,9 +1764,11 @@ async function loadData(silent){
     const fastResults = await Promise.allSettled(
       state.authorizedSets.map(entry => cardSource.loadSet(entry.folderId, true))
     );
+    if(typeof perfMark==='function') perfMark('card data fetched from server');
     fastResults.forEach((res, i)=>{
       const entry = state.authorizedSets[i];
       if(res.status==='rejected'){
+        anySetFailed = true;
         console.error('Could not load set '+entry.folderId+':', res.reason);
         toast(`Could not load set "${entry.label}": ${res.reason.message}`);
         return;
@@ -1657,34 +1782,22 @@ async function loadData(silent){
         rows: result.rows,
         setName: result.setName || entry.label,
         folderId: entry.folderId,
-        sheetId: result.sheetId, // the set's actual data-sheet id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.gs indexes by sheet id, never folder id)
+        sheetId: result.sheetId, // the set's actual data-sheet id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.
       });
     });
 
-    state.game = pickGame(rawSetResults);
-
-    // Every card's own _sheetId (see processRawRows) has to be the actual
-    // sheet id (s.sheetId), NOT the set's folder id (s.folderId) — this was
-    // passing folderId here, which is fine for everything the deckbuilder itself
-    // does (folderId already uniquely identifies a set internally), but meant
-    // every deck exported to JSON carried a bogus "sheetId" the game room app
-    // could never actually look up, failing with "Unknown sheet" on import.
-    const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.sheetId, state.game));
-    const rows = mergeCardSets(setCardLists);
-
-    state.cards = rows;
-    state.byId = new Map(rows.map(r=>[r.id, r]));
-    applyModeUI();
-    applyPcioUI();
-    state.game.afterCardsLoaded();
-    computeFieldDefs();
-    renderAll();
+    // Keep what's already showing if a set failed to refresh (the saved copy beats a gap), or if
+    // nothing changed since it was saved (avoids a pointless redraw).
+    const keepSavedView = saved && (anySetFailed || JSON.stringify(rawSetResults.map(s=>s.rows))===savedJson);
+    if(!anySetFailed && typeof cardCacheSaveSets==='function') cardCacheSaveSets(rawSetResults);
+    if(!keepSavedView) showLoadedCards(rawSetResults);
     // Card text is in and the grid is already rendered and usable — don't make the
     // user wait on art, or on the game-level assets (card backs/.pcio board), either.
     // hideLoadingOverlay() happens here; both background passes below pop their own
     // results in once they finish (see syncAllSetImages/applySetImages and
     // loadGameAssetsInBackground/applyPcioUI).
     hideLoadingOverlay();
+    if(typeof perfMark==='function') perfMark('cards up to date');
     if(state.hasImages && rawSetResults.length){
       setSyncStatus('synced ' + syncTime() + ' — loading art…');
       syncAllSetImages(rawSetResults);
@@ -1696,7 +1809,7 @@ async function loadData(silent){
   }catch(err){
     console.error(err);
     setSyncStatus('sync failed — check your connection ('+err.message+')');
-    toast('Could not load card data: '+err.message);
+    if(!saved) toast('Could not load card data: '+err.message);
     hideLoadingOverlay();
   }
 }
@@ -1715,7 +1828,10 @@ function syncAllSetImages(rawSetResults){
       toast(`Could not load art for "${s.setName}": ${e.message}`);
     }
     pending--;
-    if(pending<=0) setSyncStatus('synced ' + syncTime());
+    if(pending<=0){
+      setSyncStatus('synced ' + syncTime());
+      if(typeof perfMark==='function'){ perfMark('art synced'); perfReport(); }
+    }
   });
 }
 
@@ -1884,6 +2000,7 @@ function setSigninError(s){ document.getElementById('signinError').textContent =
 function initGoogleSignIn(attempt){
   attempt = attempt || 0;
   if(attempt === 0){
+    warmBackend();
     const remembered = localStorage.getItem(LS_LAST_EMAIL_KEY);
     if(remembered) setSigninStatus(`Last signed in as ${remembered}`);
   }
@@ -1898,7 +2015,9 @@ function initGoogleSignIn(attempt){
   google.accounts.id.initialize({
     client_id: GOOGLE_CLIENT_ID,
     callback: onGoogleSignIn,
+    auto_select: true, // a returning, already-consented person is signed straight in, no One Tap click
   });
+  perfMark('sign-in ready');
   google.accounts.id.renderButton(document.getElementById('googleSignInButton'), {
     theme: 'outline', size: 'large', text: 'signin_with', width: 280,
   });
@@ -1922,13 +2041,77 @@ async function fetchWhoAmIWithRetry(idToken){
   }
 }
 
+// An ungated do-nothing request, sent as soon as the page loads, so the Apps Script server
+// is already awake (no cold start) by the time the person finishes signing in.
+function warmBackend(){
+  try{ fetch(WEBAPP_URL + '?ping=1&_=' + Date.now(), { mode:'no-cors' }).catch(()=>{}); }catch(e){}
+}
+
+// After the saved-cards fast path below: confirms with the server (in the background) that this
+// account still has access, and refreshes the saved list of games/sets. Anything the server says
+// that differs from what we assumed wins.
+async function confirmAccessInBackground(credential, assumedGames){
+  try{
+    const who = await fetchWhoAmIWithRetry(credential);
+    perfMark('access confirmed by server');
+    if(!who.games || !who.games.length){
+      cardCacheClear();
+      signOut();
+      setSigninError(`Signed in as ${who.email}, but that account doesn't have access to any card sets yet.`);
+      noAccessEmail = who.email;
+      showSigninRequestAccess(true);
+      return;
+    }
+    state.userEmail = who.email;
+    document.getElementById('signinAccountLine').textContent = who.email;
+    cardCacheSaveGames(who.email, who.games);
+    state.games = who.games;
+    initFeedbackAdmin();
+    const fresh = who.games.find(g=>g.folderId===state.currentGameFolderId);
+    if(!fresh){
+      toast('Your game access changed — please sign in again.');
+      cardCacheClear();
+      signOut();
+      return;
+    }
+    const sameSets = JSON.stringify(fresh.sets.map(s=>s.folderId)) === JSON.stringify(state.authorizedSets.map(s=>s.folderId));
+    if(!sameSets){
+      state.authorizedSets = fresh.sets;
+      toast('Your set access changed — refreshing cards.');
+      loadData(true);
+    }
+  }catch(e){
+    console.error('Background access check failed:', e);
+    toast('Could not confirm your access with the server yet — showing saved cards. ' + e.message);
+  }
+}
+
 async function onGoogleSignIn(response){
+  perfMark('Google sign-in credential received');
   setSigninError('');
   showSigninRequestAccess(false);
   setSigninStatus('Checking your access…');
   setSigninChecking(true);
   try{
+    // Return visit: this browser already holds this account's saved game/set list. Start
+    // from it now and let the server confirm in the background (see confirmAccessInBackground).
+    const guessedEmail = emailFromCredential(response.credential);
+    const savedGames = cardCacheLoadGames(guessedEmail);
+    if(savedGames){
+      state.idToken = response.credential;
+      state.userEmail = guessedEmail;
+      localStorage.setItem(LS_LAST_EMAIL_KEY, guessedEmail);
+      document.getElementById('signinAccountLine').textContent = guessedEmail;
+      document.getElementById('signinAccountLine').title = guessedEmail + ' — click to sign out';
+      setSigninStatus('');
+      setSigninChecking(false);
+      perfMark('using saved access list');
+      startWithGames(savedGames);
+      confirmAccessInBackground(response.credential, savedGames);
+      return;
+    }
     const who = await fetchWhoAmIWithRetry(response.credential);
+    perfMark('access check finished');
     if(!who.games || !who.games.length){
       setSigninStatus('');
       setSigninChecking(false);
@@ -1945,6 +2128,7 @@ async function onGoogleSignIn(response){
     setSigninStatus('');
     setSigninChecking(false);
 
+    cardCacheSaveGames(who.email, who.games);
     startWithGames(who.games);
     initFeedbackAdmin();
   }catch(e){
@@ -1956,6 +2140,7 @@ async function onGoogleSignIn(response){
 
 function signOut(){
   initFeedbackAdmin(true);
+  cardCacheClear();
   state.idToken = '';
   state.userEmail = '';
   state.games = [];

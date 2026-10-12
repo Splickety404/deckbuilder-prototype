@@ -37,7 +37,14 @@ const HISTORY_SHEET_NAME = 'CardHistory';
 // How long whoAmI's result is cached per email (see whoAmI below) — short enough that
 // a newly-shared set still shows up reasonably promptly, long enough to absorb a page
 // reload or a retried sign-in without redoing the full Drive scan.
-const WHOAMI_CACHE_SECONDS = 180;
+const WHOAMI_CACHE_SECONDS = 600;
+// How long a "this email may open this set folder" YES is remembered (see emailCanAccessFolder).
+// Only grants are cached, never denials. Removing someone's Drive access therefore takes up
+// to this long to bite for requests that were already being allowed.
+const ACCESS_CACHE_SECONDS = 300;
+// If a set's art-folder scan + pending-updates pass already ran this recently, syncSetImages
+// skips repeating it and just returns what the sheet already holds (see syncSetImages).
+const ART_SCAN_GATE_SECONDS = 120;
 
 // Card art files can be PDFs, PNGs, or JPEGs interchangeably — Drive's own
 // image-serving URL (https://lh3.googleusercontent.com/d/<fileId>) renders
@@ -145,6 +152,16 @@ const KNOWN_GAMES = [
 // once the real cause is found.
 function verifyIdToken(idToken) {
   if (!idToken) return { email: null, reason: 'no idToken was sent to the server at all' };
+  // Every request used to pay a round trip to Google's tokeninfo endpoint. A token that
+  // verified once stays valid until its own "exp", so the verified email is remembered
+  // (under a digest of the token, never the token itself) until just before that.
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'tok:' + Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, idToken));
+  try {
+    const hit = cache.get(cacheKey);
+    if (hit) return { email: hit, reason: null };
+  } catch (cacheErr) { /* cache trouble is never fatal — just verify the slow way */ }
   try {
     const resp = UrlFetchApp.fetch(
       'https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken),
@@ -160,7 +177,12 @@ function verifyIdToken(idToken) {
     if (String(claims.email_verified) !== 'true') {
       return { email: null, reason: 'email_verified was "' + claims.email_verified + '" for ' + claims.email };
     }
-    return { email: String(claims.email).toLowerCase(), reason: null };
+    const email = String(claims.email).toLowerCase();
+    try {
+      const ttl = Math.min(Number(claims.exp) - Math.floor(Date.now() / 1000) - 30, 21600);
+      if (ttl > 0) cache.put(cacheKey, email, ttl);
+    } catch (cacheErr) { /* skip the speedup this time */ }
+    return { email: email, reason: null };
   } catch (err) {
     return { email: null, reason: 'verifyIdToken threw: ' + (err && err.message || err) };
   }
@@ -227,10 +249,16 @@ function getSetsForGame(game) {
 // naturally rather than cached as a false denial.
 function emailCanAccessFolder(email, folderId) {
   const ATTEMPTS = 3;
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'acc:' + Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, email + '|' + folderId));
+  try { if (cache.get(cacheKey)) return true; } catch (cacheErr) { /* fall through to the real check */ }
   let lastErr;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     try {
-      return emailCanAccessFolder_once(email, folderId);
+      const ok = emailCanAccessFolder_once(email, folderId);
+      if (ok) { try { cache.put(cacheKey, '1', ACCESS_CACHE_SECONDS); } catch (cacheErr) { /* skip */ } }
+      return ok;
     } catch (err) {
       lastErr = err;
       if (attempt < ATTEMPTS) Utilities.sleep(250 * attempt);
@@ -627,16 +655,27 @@ function syncSetImages(folderId, idToken, callback) {
     const sheet = ss.getSheetByName('Sheet1');
     if (!sheet) throw new Error('The sheet in that folder has no "Sheet1" tab.');
 
-    const artFolder = findCardArtFolder(folder);
-    if (artFolder) {
-      syncImageLinksForSheet(sheet, artFolder.getId());
-    }
+    // The art scan and the pending-updates pass are the slow, write-heavy part. If either
+    // already ran for this set within ART_SCAN_GATE_SECONDS (another visitor, or this one
+    // reloading), skip repeating them — the sheet already holds their results. The only
+    // cost: a freshly staged Pending Update can take up to that long to be applied.
+    const gateCache = CacheService.getScriptCache();
+    const gateKey = 'artscan:' + folderId;
+    let recentlyScanned = false;
+    try { recentlyScanned = !!gateCache.get(gateKey); } catch (gateErr) { /* scan as usual */ }
+    if (!recentlyScanned) {
+      const artFolder = findCardArtFolder(folder);
+      if (artFolder) {
+        syncImageLinksForSheet(sheet, artFolder.getId());
+      }
 
-    // Runs automatically here, once per set, every time the deckbuilder loads that
-    // set — applies whatever's staged in that set's own "Pending Updates" tab (if
-    // any) to Sheet1, with no function to run by hand. See
-    // applyPendingUpdatesForSheet()'s own comment for the full explanation.
-    applyPendingUpdatesForSheet(ss, sheet);
+      // Runs automatically here, once per set, every time the deckbuilder loads that
+      // set — applies whatever's staged in that set's own "Pending Updates" tab (if
+      // any) to Sheet1, with no function to run by hand. See
+      // applyPendingUpdatesForSheet()'s own comment for the full explanation.
+      applyPendingUpdatesForSheet(ss, sheet);
+      try { gateCache.put(gateKey, '1', ART_SCAN_GATE_SECONDS); } catch (gateErr) { /* skip */ }
+    }
 
     const data = sheet.getDataRange().getValues();
     const headers = data[0];
@@ -1097,6 +1136,11 @@ function getOrCreateHistorySheet(currentHeaders, ss) {
 //                                        Set 1 data dump; it no longer is)
 // ---------------------------------------------------------------------
 function doGet(e) {
+  if (e.parameter.ping) {
+    // Ungated, does nothing: the page calls this as soon as it loads so the server is
+    // already awake by the time the person finishes signing in.
+    return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+  }
   if (e.parameter.cardHistory) {
     return getCardHistory(e.parameter.cardHistory, e.parameter.idToken, e.parameter.callback, e.parameter.sheetId);
   }
