@@ -62,7 +62,8 @@ const AblyTransport = (()=>{
   // at card-game scale and keeps rendering dead simple.
   function refreshMembers(){
     if(!channel) return;
-    channel.presence.get((err, members)=>{ if(!err && handlers) handlers.onPresence(members); });
+    // Ably's v2 SDK returns a promise here (the old (err, members) callback form is rejected).
+    channel.presence.get().then(members=>{ if(handlers) handlers.onPresence(members); }).catch(()=>{});
   }
   function onMessage(msg){ if(handlers) handlers.onEvent(msg); }
   return {
