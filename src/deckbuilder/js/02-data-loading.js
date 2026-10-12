@@ -4,29 +4,8 @@
 // Filters + tags a raw set of sheet rows into real card objects, exactly the same way
 // regardless of which set they came from — reused for Set 1's own feed and for every
 // additionally imported set, so behavior stays identical either way.
-function processRawRows(rawRows, setName, sheetId, isEchoMode){
-  const rows = rawRows.filter(r=>{
-    if(!isEchoMode){
-      // Generic mode has no fixed type-prefix convention to filter rows by — the only
-      // required column for ANY game is "id", so that's the only hard requirement.
-      return String(r.id||'').trim() !== '';
-    }
-    const t = (r.type||'').trim();
-    if(!t) return false;
-    // "C - Quest" cards are now used for the Champion's Quest-card slot — no longer
-    // excluded. "Q - Quest" is kept excluded defensively in case that convention is
-    // ever used for something unrelated.
-    if(t.startsWith('Q - ')) return false;
-    if(t.startsWith('Z - ')){
-      // Z - Custom is still junk/reference-card clutter in general, EXCEPT the two
-      // named placeholders standing in for the not-yet-created O - Stronghold /
-      // C - Resistance cards. The moment real cards of those types exist, the pool
-      // logic below prefers them automatically and these placeholders stop mattering.
-      const isPlaceholder = t==='Z - Custom' && (r.name==='Resistance' || r.name==='Stronghold');
-      if(!isPlaceholder) return false;
-    }
-    return true;
-  });
+function processRawRows(rawRows, setName, sheetId, game){
+  const rows = rawRows.filter(r=> game.keepRow(r));
 
   rows.forEach(r=>{
     // Kept unconditional (not Echo-only): everything downstream assumes these three
@@ -40,26 +19,7 @@ function processRawRows(rawRows, setName, sheetId, isEchoMode){
     noteSmallImage(r._front, r['front-image-sm-url']);
     noteSmallImage(r._back, r['back-image-sm-url']);
 
-    if(isEchoMode){
-      r._doubleSided = String(r.is_double_sided).trim().toUpperCase()==='TRUE';
-      r._isScheme = r.type==='O - Scheme';
-      // These 4 are physically the same portrait-cut card as everything else, with
-      // content printed sideways — same treatment as schemes: rotated on screen for
-      // readability, printed at their native orientation (exports never rotate at all,
-      // so nothing extra is needed there).
-      r._isHorizontal = r._isScheme || HORIZONTAL_TYPES.has(r.type) ||
-        (r.type==='Z - Custom' && Object.values(EXTRA_CARD_PLACEHOLDER_NAME).includes(r.name)); // the Stronghold/Resistance placeholders are horizontal too
-      r._rotate = r._isHorizontal ? 90 : 0; // Echo mode always rotates its horizontal cards the same way it always has
-    } else {
-      // Generic mode: a required "is-double-sided" column (TRUE/FALSE) and a required
-      // "rotate" column (0/90/180/270, defaulting to 0) — the data-driven equivalent
-      // of Echo's hardcoded scheme/domination/stronghold rotation rules.
-      r._doubleSided = String(r['is-double-sided']).trim().toUpperCase()==='TRUE';
-      const rot = parseInt(r.rotate, 10);
-      r._rotate = [90,180,270].includes(rot) ? rot : 0;
-      r._isScheme = false;
-      r._isHorizontal = (r._rotate===90 || r._rotate===270);
-    }
+    game.tagCard(r);
     r._setName = setName;
     r._sheetId = sheetId; // carried into deck exports so the game room app can resolve cards without any sheet id hardcoded in its own source
   });
@@ -110,12 +70,9 @@ function mergeCardSets(setCardLists){
 // cards — an "O - Overlord" type value — the full Echo deckbuilder loads (leaders,
 // aspects, scheme decks, sealed decks, stats...); otherwise every set is treated as a
 // generic, game-agnostic card pool.
-function detectEchoMode(rawSetResults){
-  return rawSetResults.some(s => s.rows.some(r => String(r.type||'').trim() === 'O - Overlord'));
-}
 
 function applyModeUI(){
-  document.body.classList.toggle('generic-mode', !state.isEchoMode);
+  document.body.classList.toggle('generic-mode', !state.game.structured);
   const titleEl = document.getElementById('topbarTitle');
   // The current GAME's own live folder name drives branding for both modes now —
   // simpler and more accurate than a hardcoded "ECHO OF OMENS" string, and it stays
@@ -158,7 +115,7 @@ async function loadData(silent){
       });
     });
 
-    state.isEchoMode = detectEchoMode(rawSetResults);
+    state.game = pickGame(rawSetResults);
 
     // Every card's own _sheetId (see processRawRows) has to be the actual Google
     // Sheet file id (s.sheetId), NOT the set's folder id (s.folderId) — this was
@@ -166,7 +123,7 @@ async function loadData(silent){
     // does (folderId already uniquely identifies a set internally), but meant
     // every deck exported to JSON carried a bogus "sheetId" the game room app
     // could never actually look up, failing with "Unknown sheet" on import.
-    const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.sheetId, state.isEchoMode));
+    const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.sheetId, state.game));
     const rows = mergeCardSets(setCardLists);
 
     state.cards = rows;

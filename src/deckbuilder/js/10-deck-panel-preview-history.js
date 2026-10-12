@@ -38,7 +38,7 @@ function buildDeckRow(id, card, {qty, showStepper}){
   // Schemes: documented 1-copy max (Echo only). Generic mode restricts card counts for
   // no reason at all, so there's effectively no limit. Either way this only ever
   // flags visually — it has never actually blocked adding more copies.
-  const copyLimit = (card && card._isScheme) ? 1 : (state.isEchoMode ? MAX_COPIES : Infinity);
+  const copyLimit = state.game.copyLimit(card);
   const overLimit = showStepper && qty>copyLimit;
   const illegal = !card || !isLegalForCurrentPool(card);
   if(overLimit || illegal) row.classList.add('over-limit');

@@ -79,15 +79,14 @@ const state = {
   authorizedSets: [], // [{folderId, label}] — the CURRENT game's sets this signed-in user may see (a slice of games[i].sets)
   cardScale: CARD_SCALE_DEFAULT, // grid tile min-width in px — user-adjustable, persisted per-browser
   deckType: 'overlord',          // 'overlord' | 'champion' — which deck you're currently viewing (Echo mode only)
-  // Whether the currently-loaded card pool is presented the way Echo of Omens presents
-  // cards (detected once per load — see detectEchoMode()) or is a generic third-party
-  // game's card set. Defaults true so nothing flashes into "generic" styling before the
-  // first load completes; the real value is known by the time anything renders it.
-  isEchoMode: true,
+  // Which game definition the currently-loaded card pool uses (detected once per load —
+  // see pickGame()). Starts as defaultGame() so nothing flashes into the wrong styling
+  // before the first load completes.
+  game: null, // the active GAME DEFINITION (see 01b) — set to defaultGame() right after the definitions load, then to pickGame() on each load
   // Overlord and Champion are built entirely independently — separate leader, aspect,
   // scheme deck, main deck, and name — so switching tabs never loses or merges either.
   // 'generic' is a third, synthetic slot used instead of overlord/champion whenever
-  // isEchoMode is false — curDeck()/curFilters() below pick it automatically, so the
+  // the game isn't "structured" — curDeck()/curFilters() below pick it automatically, so the
   // ~130 call sites that already go through those two accessors work unmodified.
   decks: { overlord: freshDeckSlot(), champion: freshDeckSlot(), generic: freshDeckSlot() },
   // Kept separate from the deck slots above (not per-saved-deck) since filters are a
@@ -113,9 +112,9 @@ const state = {
 // Whichever key state.decks/state.filtersByType should currently be read/written
 // through — the central chokepoint that lets generic mode reuse all the Echo-era
 // deck-editing code without a single one of those call sites knowing the difference.
-function activeDeckKey(){ return state.isEchoMode ? state.deckType : 'generic'; }
+function activeDeckKey(){ return state.game.structured ? state.deckType : 'generic'; }
 function curDeck(){ return state.decks[activeDeckKey()]; }
-function activeIsSchemeMode(){ return state.isEchoMode && state.deckType==='overlord' && curDeck().overlordMode==='scheme'; }
+function activeIsSchemeMode(){ return state.game.structured && state.deckType==='overlord' && curDeck().overlordMode==='scheme'; }
 // Filters are a browsing preference tied to which TAB is showing, not which deck slot
 // is being edited — the Overlord main-deck view and its Scheme view browse the same
 // underlying deck slot (curDeck() stays 'overlord' either way, since schemeIds live on

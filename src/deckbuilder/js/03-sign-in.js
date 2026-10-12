@@ -119,7 +119,7 @@ function selectGame(game){
 // exactly as if it had just been signed into fresh.
 function resetGameSpecificState(){
   state.cards = []; state.byId = new Map(); state.headers = []; state.hasImages = false; state.fieldDefs = [];
-  state.isEchoMode = true;
+  state.game = defaultGame();
   state.decks = { overlord: freshDeckSlot(), champion: freshDeckSlot(), generic: freshDeckSlot() };
   state.filtersByType = {
     overlord: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},

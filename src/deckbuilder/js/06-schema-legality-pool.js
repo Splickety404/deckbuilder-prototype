@@ -21,7 +21,7 @@ function computeFieldDefs(){
       // Echo mode stays exactly as it always was — slash-separated only. Generic mode
       // additionally treats a comma as a separator, per the user's own convention for
       // third-party sheets (matches how the field gets SPLIT below in getFieldValues).
-      if(typeof v==='string' && (v.includes('/') || (!state.isEchoMode && v.includes(',')))) slashy++;
+      if(typeof v==='string' && (v.includes('/') || (state.game.commaSplits && v.includes(',')))) slashy++;
     });
     if(nonEmpty===0) return;
     let kind;
@@ -42,7 +42,7 @@ function computeFieldDefs(){
 function getFieldValues(c, fieldDef){
   const raw = c[fieldDef.key];
   if(raw===undefined||raw===null||raw==='') return [];
-  if(fieldDef.kind==='multi-split') return String(raw).split(state.isEchoMode ? '/' : /[/,]/).map(s=>s.trim()).filter(Boolean);
+  if(fieldDef.kind==='multi-split') return String(raw).split(state.game.multiValueSplit).map(s=>s.trim()).filter(Boolean);
   const v = String(raw).trim();
   return v ? [v] : [];
 }
@@ -96,7 +96,7 @@ function isTypeEligible(card){
   if(!card) return false;
   // Generic mode has no leaders/schemes/dominations/strongholds to exclude and no
   // Overlord-vs-Champion pool split — every card is eligible for the single deck.
-  if(!state.isEchoMode) return true;
+  if(!state.game.structured) return true;
   if(activeIsSchemeMode()) return card.type==='O - Scheme';
   const prefix = prefixFor(state.deckType);
   if(!card.type.startsWith(prefix)) return false;

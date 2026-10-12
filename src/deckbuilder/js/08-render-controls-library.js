@@ -41,15 +41,9 @@ function renderDeckControls(){
   document.getElementById('deckPanelTitle').textContent = isScheme ? 'Scheme Deck' : 'Your Deck';
   const count = isScheme ? curDeck().schemeIds.length : deckTotalCount();
   const cl = document.getElementById('deckCountLabel');
-  if(state.isEchoMode){
-    const limit = isScheme ? SCHEME_DECK_SIZE : DECK_LIMIT;
-    cl.textContent = `${count} / ${limit}`;
-    cl.className = count>limit ? 'bad' : '';
-  } else {
-    // Generic mode doesn't restrict card counts for any reason — just show the total.
-    cl.textContent = `${count} card${count!==1?'s':''}`;
-    cl.className = '';
-  }
+  const countInfo = state.game.deckCountText(count, isScheme);
+  cl.textContent = countInfo.text;
+  cl.className = countInfo.bad ? 'bad' : '';
 
   let illegalCount=0;
   if(isScheme){

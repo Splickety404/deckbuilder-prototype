@@ -183,13 +183,7 @@ function warnAboutMissingCards(){
 
 function backUrlForExport(card){
   if(card._doubleSided && card._back) return card._back;
-  // Generic mode: one shared back ("back.png"/"back.pdf" etc, uploaded alongside the
-  // set's other card art) for every non-double-sided card, regardless of type.
-  if(!state.isEchoMode) return state.genericBackUrl || '';
-  if(card.type === 'O - Scheme') return state.genericBacks.schemeBackUrl || '';
-  if(card.type.startsWith('O -')) return state.genericBacks.overlordBackUrl || '';
-  if(card.type.startsWith('C -')) return state.genericBacks.championBackUrl || '';
-  return '';
+  return state.game.backUrl(card);
 }
 // Strips the internal "#img-src"/"#pdf-src" marker fragment (see sizedUrl()) before
 // a URL leaves the app in an export — playingcards.io would ignore it harmlessly
@@ -214,7 +208,7 @@ function expandedDeckList(){
 
 document.getElementById('optExportCsv').addEventListener('click', ()=>{
   warnAboutMissingCards();
-  if(!state.isEchoMode){
+  if(!state.game.structured){
     // No leader/setup slots to prepend in generic mode — just the deck itself.
     downloadBlob(csvForCardList(expandedDeckList()), deckFileBase()+'_playingcardsio.csv', 'text/csv');
     return;
