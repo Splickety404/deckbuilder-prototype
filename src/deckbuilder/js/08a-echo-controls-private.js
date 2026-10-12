@@ -220,11 +220,12 @@ function renderPickChip(elId, card, placeholderText, selectedId, onRemove){
   const imgHtml = card ? cardImageHtml(card, '', 150) : '';
   const changed = card && cardChangedSinceExport(card);
   el.innerHTML = card
-    ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-remove" data-act="remove" title="Remove">✕</span>`
+    ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-feedback" data-act="feedback" title="Send feedback on this card">💬</span><span class="chip-remove" data-act="remove" title="Remove">✕</span>`
     : `<span class="placeholder">${escapeHtml(placeholderText)}</span>`;
   if(card && card._isHorizontal) layoutLandscapeFrame(el.querySelector('.landscape-frame'));
   if(card) wireHoverPreview(el, card);
   if(changed) el.querySelector('[data-act=changed]').addEventListener('click', (e)=>{ e.stopPropagation(); openHistoryModal(card); });
+  if(card) el.querySelector('[data-act=feedback]').addEventListener('click', (e)=>{ e.stopPropagation(); openCardFeedback(card); });
   if(card && onRemove){
     el.querySelector('[data-act=remove]').addEventListener('click', (e)=>{
       e.stopPropagation(); // don't also trigger the chip's own click-to-open-picker handler

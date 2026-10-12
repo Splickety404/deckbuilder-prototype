@@ -173,6 +173,8 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .leader-chip .removed-badge + span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .deck-stack .removed-badge{margin-left:6px;}
+.leader-chip .chip-feedback{margin-left:auto;flex:none;padding:3px 5px;border-radius:5px;font-size:12px;}
+.leader-chip .chip-feedback + .chip-remove{margin-left:0;}
 .leader-chip .chip-remove:hover{background:var(--danger-bg);color:var(--danger);}
 #aspectRow{display:flex;align-items:center;justify-content:space-between;gap:8px;}
 #aspectRow select{flex:1;}
@@ -705,6 +707,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
           <dl id="preview-text"></dl>
           <div id="previewLastUpdated" style="font-size:12px;color:var(--text-soft);margin-top:10px;"></div>
           <div class="btn btn-sm" id="btnViewHistory" style="margin-top:6px;display:none;">Version History</div>
+          <div class="btn btn-sm" id="btnCardFeedback" style="margin-top:6px;">💬 Send feedback</div>
         </div>
       </div>
     </div>
@@ -757,6 +760,23 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
       <div class="modal-body">
         <p style="font-size:13px;color:var(--text-soft);margin-top:0;">These cards were added to your decks.</p>
         <div id="boosterResultList"></div>
+      </div>
+    </div>
+  </div>
+  <!-- Card feedback -->
+  <div class="modal-overlay hidden" id="feedbackModal">
+    <div class="modal-box" style="width:min(460px,92vw);">
+      <div class="modal-header"><h2>Feedback: <span id="feedbackCardName"></span></h2><div class="btn btn-icon" data-close="feedbackModal">✕</div></div>
+      <div class="modal-body">
+        <textarea id="feedbackText" rows="6" maxlength="4000" placeholder="What do you think of this card?" style="width:100%;box-sizing:border-box;resize:vertical;margin-bottom:10px;font-family:inherit;"></textarea>
+        <label style="font-size:12.5px;color:var(--text-soft);">Discord handle (optional)</label>
+        <input type="text" id="feedbackDiscord" maxlength="64" placeholder="yourname" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+        <p style="font-size:12px;color:var(--text-soft);margin:0 0 8px;">Your account email (<span id="feedbackReplyEmail"></span>) is included so you can be contacted. Your Discord handle is saved in this browser for next time.</p>
+        <p id="feedbackError" style="color:var(--danger);font-size:12.5px;min-height:1.2em;margin:0 0 8px;"></p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <div class="btn" data-close="feedbackModal">Cancel</div>
+          <div class="btn btn-accent" id="btnSubmitFeedback">Send</div>
+        </div>
       </div>
     </div>
   </div>
@@ -2358,6 +2378,74 @@ document.getElementById('btnUnwrapBooster').addEventListener('click', ()=>{
   openSealedSetPicker((setName)=>{ boosterSetName = setName; openBooster(setName); });
 });
 /* =========================================================================
+   CARD FEEDBACK (private). A 💬 button on every card (library tile, deck row,
+   leader/Domination/Stronghold chips and pickers, card detail) opens a small
+   form; sending emails the notes — plus the signed-in user's email, and an
+   optional Discord handle — via the Apps Script backend (cardFeedback action
+   in Code.gs). The Discord handle is remembered in this browser and pre-filled.
+   ========================================================================= */
+const LS_FEEDBACK_DISCORD_KEY = 'eoo_feedback_discord';
+const FEEDBACK_MAX_LENGTH = 4000;
+let feedbackCard = null;
+
+function lsGet(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+
+function openCardFeedback(card){
+  if(!card) return;
+  feedbackCard = card;
+  document.getElementById('feedbackCardName').textContent = card.name;
+  document.getElementById('feedbackText').value = '';
+  document.getElementById('feedbackDiscord').value = lsGet(LS_FEEDBACK_DISCORD_KEY);
+  document.getElementById('feedbackReplyEmail').textContent = state.userEmail || '';
+  document.getElementById('feedbackError').textContent = '';
+  document.getElementById('feedbackModal').classList.remove('hidden');
+  document.getElementById('feedbackText').focus();
+}
+
+// Adds the 💬 button to a tile/row's action strip (a .tile-actions element).
+function addCardFeedbackButton(actionsEl, card){
+  if(!card) return;
+  const b = mkBtn('💬', ()=>openCardFeedback(card));
+  b.title = 'Send feedback on this card';
+  actionsEl.appendChild(b);
+}
+
+async function sendCardFeedbackToServer(payload){
+  const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ action:'cardFeedback', idToken: state.idToken, ...payload }) });
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  const j = await res.json();
+  if(!j.ok) throw new Error(j.error || 'Unknown error');
+  return j;
+}
+
+document.getElementById('btnSubmitFeedback').addEventListener('click', async ()=>{
+  const errEl = document.getElementById('feedbackError');
+  const text = document.getElementById('feedbackText').value.trim();
+  const discord = document.getElementById('feedbackDiscord').value.trim();
+  if(!text){ errEl.textContent = 'Please type your feedback first.'; return; }
+  if(text.length>FEEDBACK_MAX_LENGTH){ errEl.textContent = `That's a bit long — please keep it under ${FEEDBACK_MAX_LENGTH} characters.`; return; }
+  errEl.textContent = '';
+  const btn = document.getElementById('btnSubmitFeedback');
+  const originalText = btn.textContent;
+  btn.textContent = 'Sending…';
+  try{
+    const c = feedbackCard;
+    await sendCardFeedbackToServer({
+      cardId: c.id, cardName: c.name, cardType: c.type||'', cardSet: c._setName||'',
+      feedback: text, discord,
+    });
+    if(discord) lsSet(LS_FEEDBACK_DISCORD_KEY, discord);
+    document.getElementById('feedbackModal').classList.add('hidden');
+    toast('Thanks — your feedback on "' + c.name + '" was sent.');
+  }catch(err){
+    errEl.textContent = 'Could not send that: ' + err.message;
+  }finally{
+    btn.textContent = originalText;
+  }
+});
+/* =========================================================================
    DYNAMIC SCHEMA — filter/detail fields are derived from whatever columns the
    sheet actually has, so adding/removing a (non-structural) column just works.
    ========================================================================= */
@@ -2764,6 +2852,7 @@ function renderLibrary(){
     if(countIn>0) actions.appendChild(mkBtn('−', ()=>state.game.removeOne(c.id)));
     if(c._doubleSided && c._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(c.id); renderLibrary(); }));
     actions.appendChild(mkBtn('…', ()=>openPreview(c)));
+    if(typeof addCardFeedbackButton==='function') addCardFeedbackButton(actions, c);
     tile.appendChild(actions);
 
     tile.addEventListener('click', (e)=>onTileClick(e, c.id));
@@ -3007,11 +3096,12 @@ function renderPickChip(elId, card, placeholderText, selectedId, onRemove){
   const imgHtml = card ? cardImageHtml(card, '', 150) : '';
   const changed = card && cardChangedSinceExport(card);
   el.innerHTML = card
-    ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-remove" data-act="remove" title="Remove">✕</span>`
+    ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-feedback" data-act="feedback" title="Send feedback on this card">💬</span><span class="chip-remove" data-act="remove" title="Remove">✕</span>`
     : `<span class="placeholder">${escapeHtml(placeholderText)}</span>`;
   if(card && card._isHorizontal) layoutLandscapeFrame(el.querySelector('.landscape-frame'));
   if(card) wireHoverPreview(el, card);
   if(changed) el.querySelector('[data-act=changed]').addEventListener('click', (e)=>{ e.stopPropagation(); openHistoryModal(card); });
+  if(card) el.querySelector('[data-act=feedback]').addEventListener('click', (e)=>{ e.stopPropagation(); openCardFeedback(card); });
   if(card && onRemove){
     el.querySelector('[data-act=remove]').addEventListener('click', (e)=>{
       e.stopPropagation(); // don't also trigger the chip's own click-to-open-picker handler
@@ -3249,6 +3339,7 @@ function buildDeckRow(id, card, {qty, showStepper}){
   }
   if(card && card._doubleSided && card._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(id); renderDeckPanel(); }));
   actions.appendChild(mkBtn('…', ()=> card && openPreview(card)));
+  if(typeof addCardFeedbackButton==='function') addCardFeedbackButton(actions, card);
   actions.appendChild(mkBtn('×', ()=> removeAllCopies(id)));
   row.appendChild(actions);
 
@@ -3414,6 +3505,9 @@ function openPreview(c){
   const histBtn = document.getElementById('btnViewHistory');
   histBtn.style.display = lu ? 'inline-flex' : 'none'; // only cards that have ever been through an update have history
   histBtn.onclick = () => openHistoryModal(c);
+
+  const fbBtn = document.getElementById('btnCardFeedback');
+  if(fbBtn) fbBtn.onclick = () => openCardFeedback(c);
 
   document.getElementById('preview-modal').classList.remove('hidden');
   if(c._isHorizontal) layoutLandscapeFrame(frameEl); // must run after the modal is visible, or clientWidth reads 0
@@ -3683,6 +3777,7 @@ function openCardPickerModal({title, pool, currentId, onPick}){
       <div style="display:flex;justify-content:center;gap:4px;padding:0 6px 8px 6px;">
         ${(c._doubleSided && c._back) ? `<div class="btn btn-sm" data-act="flip">Flip</div>` : ''}
         <div class="btn btn-sm" data-act="detail">Details</div>
+        <div class="btn btn-sm" data-act="feedback" title="Send feedback on this card">💬</div>
       </div>
     </div>`;
   }).join('');
@@ -3691,6 +3786,10 @@ function openCardPickerModal({title, pool, currentId, onPick}){
     t.querySelector('[data-act=detail]').addEventListener('click', (e)=>{
       e.stopPropagation();
       openPreview(state.byId.get(id));
+    });
+    t.querySelector('[data-act=feedback]').addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      openCardFeedback(state.byId.get(id));
     });
     const flipBtn = t.querySelector('[data-act=flip]');
     if(flipBtn) flipBtn.addEventListener('click', (e)=>{

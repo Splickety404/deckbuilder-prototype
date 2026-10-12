@@ -41,6 +41,7 @@ function openCardPickerModal({title, pool, currentId, onPick}){
       <div style="display:flex;justify-content:center;gap:4px;padding:0 6px 8px 6px;">
         ${(c._doubleSided && c._back) ? `<div class="btn btn-sm" data-act="flip">Flip</div>` : ''}
         <div class="btn btn-sm" data-act="detail">Details</div>
+        <div class="btn btn-sm" data-act="feedback" title="Send feedback on this card">💬</div>
       </div>
     </div>`;
   }).join('');
@@ -49,6 +50,10 @@ function openCardPickerModal({title, pool, currentId, onPick}){
     t.querySelector('[data-act=detail]').addEventListener('click', (e)=>{
       e.stopPropagation();
       openPreview(state.byId.get(id));
+    });
+    t.querySelector('[data-act=feedback]').addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      openCardFeedback(state.byId.get(id));
     });
     const flipBtn = t.querySelector('[data-act=flip]');
     if(flipBtn) flipBtn.addEventListener('click', (e)=>{

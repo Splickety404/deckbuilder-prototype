@@ -159,6 +159,8 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .leader-chip .removed-badge + span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .deck-stack .removed-badge{margin-left:6px;}
+.leader-chip .chip-feedback{margin-left:auto;flex:none;padding:3px 5px;border-radius:5px;font-size:12px;}
+.leader-chip .chip-feedback + .chip-remove{margin-left:0;}
 .leader-chip .chip-remove:hover{background:var(--danger-bg);color:var(--danger);}
 #aspectRow{display:flex;align-items:center;justify-content:space-between;gap:8px;}
 #aspectRow select{flex:1;}

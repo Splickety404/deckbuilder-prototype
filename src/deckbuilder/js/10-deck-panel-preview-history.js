@@ -66,6 +66,7 @@ function buildDeckRow(id, card, {qty, showStepper}){
   }
   if(card && card._doubleSided && card._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(id); renderDeckPanel(); }));
   actions.appendChild(mkBtn('…', ()=> card && openPreview(card)));
+  if(typeof addCardFeedbackButton==='function') addCardFeedbackButton(actions, card);
   actions.appendChild(mkBtn('×', ()=> removeAllCopies(id)));
   row.appendChild(actions);
 
@@ -231,6 +232,9 @@ function openPreview(c){
   const histBtn = document.getElementById('btnViewHistory');
   histBtn.style.display = lu ? 'inline-flex' : 'none'; // only cards that have ever been through an update have history
   histBtn.onclick = () => openHistoryModal(c);
+
+  const fbBtn = document.getElementById('btnCardFeedback');
+  if(fbBtn) fbBtn.onclick = () => openCardFeedback(c);
 
   document.getElementById('preview-modal').classList.remove('hidden');
   if(c._isHorizontal) layoutLandscapeFrame(frameEl); // must run after the modal is visible, or clientWidth reads 0

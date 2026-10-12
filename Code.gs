@@ -1502,6 +1502,11 @@ function doPost(e) {
       result.ok = true;
       return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
     }
+    if (req.action === 'cardFeedback') {
+      result = sendCardFeedback(v.email, req);
+      result.ok = true;
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
     const target = cuResolveTarget(req.cardsFolderId, v.email);
     if (req.action === 'cuState') result = cuState(target);
     else if (req.action === 'cuUpload') result = cuUpload(target, req.files || []);
@@ -1512,6 +1517,36 @@ function doPost(e) {
     result = { ok: false, error: String((err && err.message) || err) };
   }
   return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// Card feedback from the deckbuilder's per-card 💬 button. The caller is already
+// signed in (doPost verified the idToken); their verified email is what gets added
+// to the message, never one the client typed. replyTo is set so replying goes
+// straight to them. The Discord handle is optional.
+function sendCardFeedback(email, req) {
+  const clip = function (v, n) { return String(v || '').trim().slice(0, n); };
+  const feedback = clip(req.feedback, 4000);
+  if (!feedback) throw new Error('Please type your feedback first.');
+  const cardName = clip(req.cardName, 120) || '(unknown card)';
+  MailApp.sendEmail({
+    to: 'smcbride@ghostgalaxy.com',
+    subject: 'Card feedback: ' + cardName,
+    body: [
+      'Card feedback from the deckbuilder.',
+      '',
+      'Card: ' + cardName,
+      'Type: ' + (clip(req.cardType, 60) || '(none)'),
+      'Set: ' + (clip(req.cardSet, 120) || '(none)'),
+      'Card id: ' + (clip(req.cardId, 80) || '(none)'),
+      'From: ' + email,
+      'Discord: ' + (clip(req.discord, 64) || '(not given)'),
+      '',
+      'Feedback:',
+      feedback,
+    ].join('\n'),
+    replyTo: email,
+  });
+  return {};
 }
 
 // The Cards folder must sit inside a set folder, inside one of KNOWN_GAMES'
