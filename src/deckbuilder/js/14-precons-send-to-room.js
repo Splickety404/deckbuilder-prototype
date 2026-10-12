@@ -18,6 +18,7 @@ async function loadPrecons(notify){
       const res = await cardSource.precons(gameId);
       if(gameId !== state.currentGameFolderId) return; // switched games meanwhile
       state.precons = { canEdit: !!res.canEdit, decks: res.decks || [], boards: res.boards || [] };
+      if(typeof preconCacheSave==='function') preconCacheSave(gameId, state.precons);
       preconsStatus = '';
       applyRoomUI();
       applyPreconUI();

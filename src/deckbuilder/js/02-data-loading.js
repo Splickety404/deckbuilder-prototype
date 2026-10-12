@@ -103,6 +103,18 @@ function showLoadedCards(rawSetResults){
 async function loadData(silent){
   if(typeof perfMark==='function') perfMark('loading card data');
   if(!silent) setSyncStatus('loading card data…');
+  // Don't wait for the cards: the room-boards / preconstructed-deck listing is a slow server
+  // call of its own, so start it now (in parallel), and meanwhile show the last-known result
+  // so "Send to room" is there from the first moment on a return visit.
+  if(state.currentGameFolderId){
+    const savedPrecons = (!silent && typeof preconCacheLoad==='function') ? preconCacheLoad(state.currentGameFolderId) : null;
+    if(savedPrecons && !state.precons.boards.length && !state.precons.decks.length){
+      state.precons = savedPrecons;
+      applyRoomUI();
+      applyPreconUI();
+    }
+    loadPrecons(true);
+  }
   // A return visit shows the saved copy right away (see 01d-load-cache-private.js) and
   // refreshes it below. A manual resync (silent) always goes to the server.
   const saved = (!silent && typeof cardCacheLoadSets==='function') ? cardCacheLoadSets(state.authorizedSets) : null;
@@ -169,7 +181,6 @@ async function loadData(silent){
     } else {
       setSyncStatus('synced ' + syncTime() + (state.hasImages?'':' — no art columns found yet'));
     }
-    if(state.currentGameFolderId) loadPrecons(true);
   }catch(err){
     console.error(err);
     setSyncStatus('sync failed — check your connection ('+err.message+')');

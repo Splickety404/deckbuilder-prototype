@@ -2005,26 +2005,43 @@ function getPrecons(gameFolderId, idToken, callback) {
     sets.forEach(s => { try { canSee[s.folderId] = emailCanAccessFolder(v.email, s.folderId); } catch (e) { canSee[s.folderId] = false; } });
     if (!sets.some(s => canSee[s.folderId])) throw new Error('You do not have access to this game.');
 
-    // Which set every card id is in.
-    const setOf = {};
-    sets.forEach(s => {
-      try {
-        const sheet = SpreadsheetApp.openById(s.sheetId).getSheetByName('Sheet1');
-        if (!sheet) return;
-        const data = sheet.getDataRange().getValues();
-        const idCol = data[0].indexOf('id');
-        if (idCol === -1) return;
-        data.slice(1).forEach(r => { const id = String(r[idCol] || '').trim(); if (id && !setOf[id]) setOf[id] = s.folderId; });
-      } catch (e) { /* an unreadable set contributes no ids */ }
-    });
+    // Which set every card id is in. Reading every set's whole sheet is the slow part, and it's
+    // the same for everyone, so it's remembered for a few minutes (a newly added card can take
+    // that long to stop counting as "removed" in the stale-deck check).
+    const cache = CacheService.getScriptCache();
+    const setOfKey = 'setof:' + gameFolderId;
+    let setOf = null;
+    try { const hit = cache.get(setOfKey); if (hit) setOf = JSON.parse(hit); } catch (e) { setOf = null; }
+    if (!setOf) {
+      setOf = {};
+      sets.forEach(s => {
+        try {
+          const sheet = SpreadsheetApp.openById(s.sheetId).getSheetByName('Sheet1');
+          if (!sheet) return;
+          const data = sheet.getDataRange().getValues();
+          const idCol = data[0].indexOf('id');
+          if (idCol === -1) return;
+          data.slice(1).forEach(r => { const id = String(r[idCol] || '').trim(); if (id && !setOf[id]) setOf[id] = s.folderId; });
+        } catch (e) { /* an unreadable set contributes no ids */ }
+      });
+      try { cache.put(setOfKey, JSON.stringify(setOf), 300); } catch (e) { /* too big to cache: just slower next time */ }
+    }
 
     const decks = [], boards = [];
     const it = DriveApp.getFolderById(gameFolderId).getFiles();
     while (it.hasNext()) {
       const f = it.next();
       if (!/\.json$/i.test(f.getName())) continue;
-      let d;
-      try { d = JSON.parse(f.getBlob().getDataAsString()); } catch (e) { continue; }
+      // A file's contents only change when its last-updated time does, so each parsed file is
+      // remembered under that pair (when small enough for the cache) instead of re-read from Drive.
+      let d = null;
+      const fileKey = 'pcf:' + f.getId() + ':' + f.getLastUpdated().getTime();
+      try { const hit = cache.get(fileKey); if (hit) d = JSON.parse(hit); } catch (e) { d = null; }
+      if (!d) {
+        let text;
+        try { text = f.getBlob().getDataAsString(); d = JSON.parse(text); } catch (e) { continue; }
+        try { if (text.length < 90000) cache.put(fileKey, text, 21600); } catch (e) { /* skip */ }
+      }
       if (d && !d.deckType && Array.isArray(d.pieces) && (Array.isArray(d.zones) || Array.isArray(d.tokens))) {
         const boardIds = [];
         d.pieces.forEach(p => (p.cardIds || []).forEach(id => boardIds.push(String(id))));

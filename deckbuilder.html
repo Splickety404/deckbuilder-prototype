@@ -1536,7 +1536,7 @@ function cardCacheWrite(blob){
   try{ blob.savedAt = Date.now(); localStorage.setItem(LS_CARD_CACHE_KEY, JSON.stringify(blob)); }
   catch(e){ try{ localStorage.removeItem(LS_CARD_CACHE_KEY); }catch(e2){} } // too big / blocked: no speed-up, no harm
 }
-function cardCacheClear(){ try{ localStorage.removeItem(LS_CARD_CACHE_KEY); }catch(e){} }
+function cardCacheClear(){ try{ localStorage.removeItem(LS_CARD_CACHE_KEY); localStorage.removeItem('eoo_saved_precons_v1'); }catch(e){} }
 
 // The email inside a Google sign-in credential. Used ONLY to find this person's own saved copy in
 // their own browser — never to decide what they may see (the server still does that).
@@ -1574,6 +1574,31 @@ function cardCacheSaveSets(rawSetResults){
   blob.sets = blob.sets || {};
   rawSetResults.forEach(s=>{ blob.sets[s.folderId] = { rows: s.rows, setName: s.setName, sheetId: s.sheetId }; });
   cardCacheWrite(blob);
+}
+
+// Saved preconstructed decks / room boards per game, so "Send to room" (and the Precon button)
+// can appear the moment a game opens, before the server's slower listing has come back.
+// Kept under its own key so it can never disturb the saved cards; skipped if unusually large.
+const LS_PRECON_CACHE_KEY = 'eoo_saved_precons_v1';
+function preconCacheLoad(gameId){
+  try{
+    const blob = JSON.parse(localStorage.getItem(LS_PRECON_CACHE_KEY)||'null');
+    if(!blob || blob.email!==state.userEmail || Date.now()-blob.savedAt > CARD_CACHE_MAX_AGE_MS) return null;
+    const p = blob.byGame && blob.byGame[gameId];
+    return p ? { canEdit: !!p.canEdit, decks: p.decks||[], boards: p.boards||[] } : null;
+  }catch(e){ return null; }
+}
+function preconCacheSave(gameId, precons){
+  if(!state.userEmail) return;
+  try{
+    let blob = JSON.parse(localStorage.getItem(LS_PRECON_CACHE_KEY)||'null');
+    if(!blob || blob.email!==state.userEmail) blob = { email: state.userEmail, byGame:{} };
+    blob.byGame[gameId] = precons;
+    blob.savedAt = Date.now();
+    const raw = JSON.stringify(blob);
+    if(raw.length > 1500000) return;
+    localStorage.setItem(LS_PRECON_CACHE_KEY, raw);
+  }catch(e){ try{ localStorage.removeItem(LS_PRECON_CACHE_KEY); }catch(e2){} }
 }
 /* =========================================================================
    DATA LOADING
@@ -1680,6 +1705,18 @@ function showLoadedCards(rawSetResults){
 async function loadData(silent){
   if(typeof perfMark==='function') perfMark('loading card data');
   if(!silent) setSyncStatus('loading card data…');
+  // Don't wait for the cards: the room-boards / preconstructed-deck listing is a slow server
+  // call of its own, so start it now (in parallel), and meanwhile show the last-known result
+  // so "Send to room" is there from the first moment on a return visit.
+  if(state.currentGameFolderId){
+    const savedPrecons = (!silent && typeof preconCacheLoad==='function') ? preconCacheLoad(state.currentGameFolderId) : null;
+    if(savedPrecons && !state.precons.boards.length && !state.precons.decks.length){
+      state.precons = savedPrecons;
+      applyRoomUI();
+      applyPreconUI();
+    }
+    loadPrecons(true);
+  }
   // A return visit shows the saved copy right away (see 01d-load-cache-private.js) and
   // refreshes it below. A manual resync (silent) always goes to the server.
   const saved = (!silent && typeof cardCacheLoadSets==='function') ? cardCacheLoadSets(state.authorizedSets) : null;
@@ -1746,7 +1783,6 @@ async function loadData(silent){
     } else {
       setSyncStatus('synced ' + syncTime() + (state.hasImages?'':' — no art columns found yet'));
     }
-    if(state.currentGameFolderId) loadPrecons(true);
   }catch(err){
     console.error(err);
     setSyncStatus('sync failed — check your connection ('+err.message+')');
@@ -4605,6 +4641,7 @@ async function loadPrecons(notify){
       const res = await cardSource.precons(gameId);
       if(gameId !== state.currentGameFolderId) return; // switched games meanwhile
       state.precons = { canEdit: !!res.canEdit, decks: res.decks || [], boards: res.boards || [] };
+      if(typeof preconCacheSave==='function') preconCacheSave(gameId, state.precons);
       preconsStatus = '';
       applyRoomUI();
       applyPreconUI();
