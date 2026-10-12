@@ -147,7 +147,7 @@ document.getElementById('deckViewCheckbox').addEventListener('change', (e)=>{
   renderAll();
 });
 document.getElementById('btnClearFilters').addEventListener('click', ()=>{
-  state.filtersByType[activeFilterKey()] = {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()};
+  state.filtersByType[activeFilterKey()] = freshFilters();
   document.getElementById('searchBox').value='';
   renderAll();
 });

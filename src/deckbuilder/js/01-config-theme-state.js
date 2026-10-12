@@ -1,18 +1,6 @@
 /* =========================================================================
    CONFIG
    ========================================================================= */
-// No Google Sheet id is hardcoded here. Which sets exist, and which of them this signed-in
-// user can see, is decided entirely by the server (Code.gs), based on live Google Drive
-// folder-sharing permissions — this file never maintains its own access list.
-// WEBAPP_URL is the deckbuilder's own Apps Script deployment — reusable infrastructure,
-// not a specific spreadsheet — so it is the only endpoint that may stay hardcoded.
-const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxuoxW84Mn4Grrq2T9_RCoCJO1ftMdBPJ2gNqcwW5T7wXNonNjZaKOcxgc3ZQAHanVpZQ/exec';
-// Google OAuth Client ID — not a secret, meant to sit in client-side code. Must match the
-// OAUTH_CLIENT_ID constant in Code.gs so the server accepts ID tokens minted for this app.
-const GOOGLE_CLIENT_ID = '1053912607552-pvrm9heedm4floaohv1olp5k5mdp95lq.apps.googleusercontent.com';
-const DECK_LIMIT = 50;
-const MAX_COPIES = 3;
-const SCHEME_DECK_SIZE = 5;
 const LS_DECKS_KEY = 'eoo_deckbuilder_saved_decks_v2';
 const LS_THEME_KEY = 'eoo_theme';
 const LS_LAST_VISIT_KEY = 'eoo_last_visit';
@@ -22,7 +10,7 @@ const CARD_SCALE_MIN = 120, CARD_SCALE_MAX = 280, CARD_SCALE_DEFAULT = 170;
 // tied to CARD_SCALE_MAX itself, not the current slider value, so it stays consistently
 // large-and-readable regardless of how small the user has the grid tiles set.
 const HOVER_PREVIEW_WIDTH = Math.round(CARD_SCALE_MAX * 1.2);
-const HOVER_PREVIEW_SCHEME_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 7/5); // rotated card — width should roughly match a normal preview's height
+const HOVER_PREVIEW_LANDSCAPE_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 7/5); // rotated card — width should roughly match a normal preview's height
 const HOVER_FETCH_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 1.3); // fetched a bit larger than display size for crispness
 
 // Structural fields the app's mechanics depend on — never treated as generic filters.
@@ -60,50 +48,48 @@ initTheme();
 /* =========================================================================
    STATE
    ========================================================================= */
+// The part of a deck every game has; a game adds whatever else its decks hold (see slotExtras
+// in the game definition).
 function freshDeckSlot(){
   return {
-    name:'', leaderId:null, deckCards:new Map(), deckOrder:[], schemeIds:[], overlordMode:'main',
-    bonusCardId:null,  // O - Domination (Overlord) / C - Quest (Champion) — its aspect drives bonusAspect below
-    extraCardId:null,  // O - Stronghold (Overlord) / C - Resistance (Champion), or the Z-Custom placeholder until real cards exist
-    bonusAspect:'',    // derived from bonusCardId's aspect whenever it's set — never chosen independently anymore
+    name:'', deckCards:new Map(), deckOrder:[],
     sourceExportedAt:null, // timestamp this deck was last exported (or the imported file's own stamp) — the "changed since" baseline
+    ...state.game.slotExtras(),
   };
+}
+function freshFilters(){ return {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()}; }
+// Starts every deck and every view's filters from scratch for the current game.
+function freshDeckState(){
+  state.decks = Object.fromEntries(state.game.deckKeys.map(k=>[k, freshDeckSlot()]));
+  state.filtersByType = Object.fromEntries(state.game.filterKeys.map(k=>[k, freshFilters()]));
 }
 const state = {
   cards: [], byId: new Map(), headers: [], hasImages: false, fieldDefs: [],
-  idToken: '', // Google ID token from Sign In With Google — sent with every data request so the server can check Drive permissions
-  userEmail: '', // signed-in user's email, from the server's whoami response (not decoded client-side)
   games: [], // [{folderId, label, sets:[{folderId,label}]}] — every game this signed-in user can see at least one set of, entirely server-decided
   currentGameFolderId: '', // which game's folder id is currently loaded — '' before a game is picked
   currentGameLabel: '', // that game's live folder name, for branding
   authorizedSets: [], // [{folderId, label}] — the CURRENT game's sets this signed-in user may see (a slice of games[i].sets)
   cardScale: CARD_SCALE_DEFAULT, // grid tile min-width in px — user-adjustable, persisted per-browser
-  deckType: 'overlord',          // 'overlord' | 'champion' — which deck you're currently viewing (Echo mode only)
+  deckType: 'generic',           // which of the game's deck slots you're viewing — a structured game has several (see deckKeys in the game definition)
   // Which game definition the currently-loaded card pool uses (detected once per load —
   // see pickGame()). Starts as defaultGame() so nothing flashes into the wrong styling
   // before the first load completes.
   game: null, // the active GAME DEFINITION (see 01b) — set to defaultGame() right after the definitions load, then to pickGame() on each load
-  // Overlord and Champion are built entirely independently — separate leader, aspect,
-  // scheme deck, main deck, and name — so switching tabs never loses or merges either.
-  // 'generic' is a third, synthetic slot used instead of overlord/champion whenever
-  // the game isn't "structured" — curDeck()/curFilters() below pick it automatically, so the
-  // ~130 call sites that already go through those two accessors work unmodified.
-  decks: { overlord: freshDeckSlot(), champion: freshDeckSlot(), generic: freshDeckSlot() },
-  // Kept separate from the deck slots above (not per-saved-deck) since filters are a
-  // browsing preference tied to which TAB you're on, not which deck you're editing —
-  // they should survive New/Save/Load, just never cross between Overlord and Champion.
-  filtersByType: {
-    overlord: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
-    champion: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
-    scheme: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
-    generic: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
-  },
+  // One slot per entry in the game's deckKeys — built independently, so switching between them
+  // never loses or merges either. A free-form game has just one ('generic'). curDeck()/curFilters()
+  // below pick the right one automatically, so the ~130 call sites that go through those two
+  // accessors never need to know which game is loaded. Filled in by freshDeckState().
+  decks: {},
+  // Kept separate from the deck slots (not per-saved-deck) since filters are a browsing
+  // preference tied to which view you're on, not which deck you're editing — they should
+  // survive New/Save/Load, just never cross between views. Keys come from the game's filterKeys.
+  filtersByType: {},
   openFilterGroups: new Set(['type','aspect','loyalty']),
   sortField: 'name',
   selection: new Set(),
   lastClickIndex: null,
   visibleCardsOrder: [],
-  genericBacks: { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' }, // Echo mode's own per-type card backs, for exports only
+  genericBacks: {}, // a structured game's own per-type card backs, for exports only
   genericBackUrl: '', // generic (non-Echo) mode's single shared "back.png"/"back.pdf" per game, for exports only
   pcio: {found:false}, // this game's .pcio board file, if it has one — see applyPcioUI()
   precons: {canEdit:false, decks:[], boards:[]}, // this game's preconstructed decks and room board layouts this person may see — see loadPrecons()
@@ -114,13 +100,8 @@ const state = {
 // deck-editing code without a single one of those call sites knowing the difference.
 function activeDeckKey(){ return state.game.structured ? state.deckType : 'generic'; }
 function curDeck(){ return state.decks[activeDeckKey()]; }
-function activeIsSchemeMode(){ return state.game.structured && state.deckType==='overlord' && curDeck().overlordMode==='scheme'; }
-// Filters are a browsing preference tied to which TAB is showing, not which deck slot
-// is being edited — the Overlord main-deck view and its Scheme view browse the same
-// underlying deck slot (curDeck() stays 'overlord' either way, since schemeIds live on
-// the overlord slot), but they're different card pools with different useful filters
-// (rarity/cost matter for the main deck, less so for a 5-card scheme pool), so they get
-// their own bucket here rather than sharing Overlord's.
-function activeFilterKey(){ return activeIsSchemeMode() ? 'scheme' : activeDeckKey(); }
+// Filters are a browsing preference tied to which view is showing, not which deck slot is
+// being edited — a game can give extra views of the same deck their own filter bucket.
+function activeFilterKey(){ return state.game.filterKey(); }
 function curFilters(){ return state.filtersByType[activeFilterKey()]; }
 

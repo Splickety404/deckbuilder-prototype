@@ -77,7 +77,7 @@ if(rememberedDeckType==='overlord' || rememberedDeckType==='champion') state.dec
 initCardScale();
 initVisitTracking();
 document.documentElement.style.setProperty('--hover-preview-width', HOVER_PREVIEW_WIDTH+'px');
-document.documentElement.style.setProperty('--hover-preview-scheme-width', HOVER_PREVIEW_SCHEME_WIDTH+'px');
+document.documentElement.style.setProperty('--hover-preview-scheme-width', HOVER_PREVIEW_LANDSCAPE_WIDTH+'px');
 // The app itself stays inert until sign-in succeeds — no card data, no sets, nothing
 // is fetched until the server has verified an ID token and told us what that account
 // may see. initGoogleSignIn() renders the button; onGoogleSignIn() is what calls loadData().

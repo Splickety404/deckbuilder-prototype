@@ -148,7 +148,7 @@ function showHoverPreview(el, card){
   if(!card._isHorizontal){ imgEl.style.width=''; imgEl.style.height=''; } // clear any stale sizing from a prior rotated preview
   document.getElementById('hoverPreviewName').textContent = card.name;
   const rect = el.getBoundingClientRect();
-  const boxWidth = card._isHorizontal ? HOVER_PREVIEW_SCHEME_WIDTH : HOVER_PREVIEW_WIDTH;
+  const boxWidth = card._isHorizontal ? HOVER_PREVIEW_LANDSCAPE_WIDTH : HOVER_PREVIEW_WIDTH;
   const boxHeight = (card._isHorizontal ? boxWidth*5/7 : boxWidth*7/5) + 40; // + ~name/padding overhead
   let left = rect.right + 12;
   if(left + boxWidth + 16 > window.innerWidth) left = rect.left - boxWidth - 16;

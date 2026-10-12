@@ -3,9 +3,32 @@
    aspects, schemes, a 3-copy limit and a 50-card deck. See GAME DEFINITIONS
    in 01b for what each member means. Everything here is the old Echo branch
    of the code, moved unchanged. Registered first, so it is also the default. */
+const DECK_LIMIT = 50;
+const MAX_COPIES = 3;
+const SCHEME_DECK_SIZE = 5;
+// True while the Overlord's Scheme tab is open (the deck panel is then editing the scheme list).
+function activeIsSchemeMode(){ return state.game.structured && state.deckType==='overlord' && curDeck().overlordMode==='scheme'; }
+
 const EchoGame = {
   id: 'echo',
   structured: true,
+  deckKeys: ['overlord', 'champion', 'generic'],
+  filterKeys: ['overlord', 'champion', 'scheme', 'generic'],
+  defaultDeckType: 'overlord',
+  // Overlord and Champion are built entirely independently — separate leader, aspect, scheme
+  // deck, main deck and name.
+  slotExtras(){
+    return {
+      leaderId:null, schemeIds:[], overlordMode:'main',
+      bonusCardId:null,  // O - Domination (Overlord) / C - Quest (Champion) — its aspect drives bonusAspect below
+      extraCardId:null,  // O - Stronghold (Overlord) / C - Resistance (Champion), or the Z-Custom placeholder until real cards exist
+      bonusAspect:'',    // derived from bonusCardId's aspect whenever it's set — never chosen independently anymore
+    };
+  },
+  // The Overlord main-deck view and its Scheme view browse the same deck slot (schemeIds live on
+  // the overlord slot), but they're different card pools with different useful filters, so the
+  // Scheme view gets its own bucket.
+  filterKey(){ return activeIsSchemeMode() ? 'scheme' : activeDeckKey(); },
   multiValueSplit: '/',
   commaSplits: false,
   matches(rawSetResults){
@@ -61,3 +84,4 @@ const EchoGame = {
 gameDefinitions.push(EchoGame);
 
 state.game = defaultGame(); // Echo is registered first, so it is the default
+state.deckType = state.game.defaultDeckType; freshDeckState();

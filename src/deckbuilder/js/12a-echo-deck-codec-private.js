@@ -123,4 +123,9 @@ const EchoDeckCodec = {
   referencedIds(d){ return [d.leaderId, d.bonusCardId, d.extraCardId, ...d.schemeIds]; },
 };
 EchoGame.deckCodec = EchoDeckCodec;
-GenericGame.deckCodec = EchoDeckCodec; // private build only: free-form games keep the live site's file shape
+// Private build only: free-form games keep the live site's deck shape (same slots, extras and files).
+GenericGame.deckCodec = EchoDeckCodec;
+GenericGame.deckKeys = EchoGame.deckKeys;
+GenericGame.filterKeys = EchoGame.filterKeys;
+GenericGame.defaultDeckType = EchoGame.defaultDeckType;
+GenericGame.slotExtras = EchoGame.slotExtras;

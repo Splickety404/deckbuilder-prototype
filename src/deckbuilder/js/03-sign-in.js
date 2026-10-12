@@ -120,18 +120,12 @@ function selectGame(game){
 function resetGameSpecificState(){
   state.cards = []; state.byId = new Map(); state.headers = []; state.hasImages = false; state.fieldDefs = [];
   state.game = defaultGame();
-  state.decks = { overlord: freshDeckSlot(), champion: freshDeckSlot(), generic: freshDeckSlot() };
-  state.filtersByType = {
-    overlord: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
-    champion: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
-    scheme: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
-    generic: {search:'', multi:{}, range:{}, deckViewOnly:false, hiddenSets:new Set()},
-  };
+  freshDeckState();
   state.selection = new Set();
   state.lastClickIndex = null;
   state.visibleCardsOrder = [];
   state.flippedCards = new Set();
-  state.genericBacks = { overlordBackUrl:'', schemeBackUrl:'', championBackUrl:'' };
+  state.genericBacks = {};
   state.genericBackUrl = '';
   state.pcio = {found:false};
   state.precons = {canEdit:false, decks:[], boards:[]};

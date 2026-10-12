@@ -3,6 +3,9 @@
    apply. Everything that used to be `if(state.isEchoMode)` is now a question
    asked of `state.game`, so a new kind of game is a new definition object
    rather than another branch scattered through the code. A definition has:
+     deckKeys, filterKeys, defaultDeckType, slotExtras()   the deck slots / filter buckets a game has,
+                         which slot is open first, and the extra fields a deck holds
+     filterKey()         which filter bucket the current view uses
      id, structured      structured = leaders / aspects / schemes / two deck tabs
                          (Echo); false = one free-form deck, any card
      multiValueSplit     how "Fire/Water"-style fields split into values
@@ -51,6 +54,11 @@ const GenericGame = {
   id: 'generic',
   structured: false,
   deckCodec: PlainDeckCodec,
+  deckKeys: ['generic'],        // one deck slot
+  filterKeys: ['generic'],      // one set of filters
+  defaultDeckType: 'generic',
+  slotExtras(){ return {}; },   // fields a deck holds beyond name / cards / order
+  filterKey(){ return activeDeckKey(); },
   multiValueSplit: /[/,]/,
   commaSplits: true,
   keepRow(r){
@@ -106,3 +114,4 @@ function pickGame(rawSetResults){
 function defaultGame(){ return gameDefinitions[0] || GenericGame; }
 
 state.game = defaultGame();
+state.deckType = state.game.defaultDeckType; freshDeckState();
