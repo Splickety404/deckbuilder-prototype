@@ -149,7 +149,7 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
 // A double-sided card (currently just leaders) keeps its own real back. Every other
 // card falls back to the shared generic back for its side — only relevant for
 // exports; nothing else in the app needs to show these generic backs at all.
-// Cards this deck references (leader, bonus, extra, schemes, deck) that no longer
+// Cards this deck references (leader, bonus, extra, side lists, deck) that no longer
 // exist in the live feed — used to warn before an export silently omits them.
 function missingReferencedCardIds(){
   const missing = [];
@@ -211,7 +211,7 @@ function buildDecklistTextLines(exportedAtIso){
   if(exportedAtIso) lines.push(`# Exported: ${exportedAtIso}`);
   lines.push(...deckCodec().textSetupLines(curDeck()));
   lines.push('');
-  lines.push(...deckCodec().textSchemeLines(curDeck()));
+  lines.push(...deckCodec().textSideListLines(curDeck()));
   lines.push('Deck:');
   curDeck().deckOrder.forEach(id=>{
     const n = curDeck().deckCards.get(id)||0; const c=state.byId.get(id);

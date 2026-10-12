@@ -273,7 +273,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
    under the cursor, and it has no drag listener of its own to handle that. */
 .reorder-indicator{position:absolute;left:6px;right:6px;height:3px;background:var(--accent);border-radius:2px;pointer-events:none;display:none;}
 .deck-stack img{width:28px;height:39px;object-fit:cover;border-radius:3px;flex:none;}
-.deck-stack.scheme-row img{width:auto;height:28px;aspect-ratio:5/7;object-fit:cover;transform:rotate(-90deg);}
+.deck-stack.landscape-row img{width:auto;height:28px;aspect-ratio:5/7;object-fit:cover;transform:rotate(-90deg);}
 .deck-stack .dsname{flex:1;font-size:12.5px;line-height:1.2;}
 .deck-stack .dscount{font-weight:700;font-size:12px;color:var(--accent);}
 .deck-stack .dscount.over{color:var(--danger);}
@@ -310,7 +310,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .card-tile:hover{box-shadow:var(--shadow);transform:translateY(-2px);}
 .card-tile.selected{outline:2px solid var(--accent);outline-offset:-2px;}
 .card-tile img{width:100%;display:block;aspect-ratio:5/7;object-fit:cover;background:var(--surface-2);}
-/* Scheme card art is authored on the same portrait-cut physical card as everything else,
+/* Sideways card art is authored on the same portrait-cut physical card as everything else,
    with its content printed sideways — so the frame itself must be landscape-shaped (not
    the whole tile rotated, which was the previous bug: rotating a box swaps its visual
    orientation, so rotating a landscape box produced a portrait-looking tile). The frame
@@ -330,8 +330,8 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
   display:block;background:none;max-width:none;
 }
 .card-tile img.rotate-180-fill{transform:rotate(180deg);}
-.card-tile.scheme-card .fallback-face{aspect-ratio:7/5;}
-.card-tile.scheme-card{grid-column:span 2;width:calc(var(--card-min-width, 170px) * 1.647);max-width:calc(var(--card-min-width, 170px) * 1.647);justify-self:start;} /* rotated 90°/270° — wants roughly a portrait card's height as its width, not the full 2-column stretch. Fixed width (not just max-width) matters: without it, an un-stretched tile shrinks/grows to fit its own name text, which is why different scheme cards were rendering at different sizes. Scales with the card-size setting via the same ratio (280/170) established when this was first tuned, so schemes stay visually consistent with normal cards at any size. */
+.card-tile.landscape-card .fallback-face{aspect-ratio:7/5;}
+.card-tile.landscape-card{grid-column:span 2;width:calc(var(--card-min-width, 170px) * 1.647);max-width:calc(var(--card-min-width, 170px) * 1.647);justify-self:start;} /* rotated 90°/270° — wants roughly a portrait card's height as its width, not the full 2-column stretch. Fixed width (not just max-width) matters: without it, an un-stretched tile shrinks/grows to fit its own name text, which is why different scheme cards were rendering at different sizes. Scales with the card-size setting via the same ratio (280/170) established when this was first tuned, so schemes stay visually consistent with normal cards at any size. */
 .card-tile.illegal{opacity:.42;filter:grayscale(75%);}
 .card-tile.illegal:hover{opacity:.7;}
 .card-tile .fallback-face{
@@ -437,11 +437,11 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .leader-pick-tile .lname{font-size:12px;padding:5px;}
 #preview-modal .modal-body{display:flex;gap:16px;padding:16px;flex-wrap:wrap;align-items:flex-start;}
 #preview-img-frame{width:330px;flex:none;align-self:flex-start;border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;}
-#preview-img-frame.scheme{aspect-ratio:7/5;position:relative;}
-#preview-img-frame.scheme270{aspect-ratio:7/5;position:relative;}
+#preview-img-frame.landscape{aspect-ratio:7/5;position:relative;}
+#preview-img-frame.landscape270{aspect-ratio:7/5;position:relative;}
 #preview-img{width:100%;display:block;}
-#preview-img-frame.scheme #preview-img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-90deg);max-width:none;}
-#preview-img-frame.scheme270 #preview-img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(90deg);max-width:none;}
+#preview-img-frame.landscape #preview-img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-90deg);max-width:none;}
+#preview-img-frame.landscape270 #preview-img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(90deg);max-width:none;}
 #preview-img.rotate-180-fill{transform:rotate(180deg);}
 #preview-text{flex:1;min-width:220px;font-size:13px;line-height:1.5;}
 #preview-text dt{font-weight:700;font-size:11px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.03em;margin-top:8px;}
@@ -475,16 +475,16 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
   width:var(--hover-preview-width, 260px);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
   box-shadow:var(--shadow);padding:8px;display:none;
 }
-#hover-preview.scheme,#hover-preview.scheme270{width:var(--hover-preview-scheme-width, 364px);} /* rotated card — width should roughly match a normal preview's HEIGHT for comparable prominence */
+#hover-preview.landscape,#hover-preview.landscape270{width:var(--hover-preview-landscape-width, 364px);} /* rotated card — width should roughly match a normal preview's HEIGHT for comparable prominence */
 #hover-preview img{width:100%;border-radius:6px;display:block;}
-#hover-preview .hp-frame.scheme{position:relative;overflow:hidden;aspect-ratio:7/5;border-radius:6px;}
-#hover-preview .hp-frame.scheme270{position:relative;overflow:hidden;aspect-ratio:7/5;border-radius:6px;}
-#hover-preview .hp-frame.scheme img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-90deg);border-radius:0;max-width:none;}
-#hover-preview .hp-frame.scheme270 img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(90deg);border-radius:0;max-width:none;}
+#hover-preview .hp-frame.landscape{position:relative;overflow:hidden;aspect-ratio:7/5;border-radius:6px;}
+#hover-preview .hp-frame.landscape270{position:relative;overflow:hidden;aspect-ratio:7/5;border-radius:6px;}
+#hover-preview .hp-frame.landscape img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-90deg);border-radius:0;max-width:none;}
+#hover-preview .hp-frame.landscape270 img{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(90deg);border-radius:0;max-width:none;}
 #hoverPreviewImg.rotate-180-fill{transform:rotate(180deg);}
 #hover-preview .hp-name{font-size:12px;font-weight:700;margin-top:6px;}
 
-/* ---------- Generic-mode UI (game-agnostic decks: no leaders/aspects/schemes/stats/
+/* ---------- Generic-mode UI (game-agnostic decks: no leaders/aspects/side decks/stats/
    sealed-deck-generation) — hides the Echo-of-Omens-specific deckbuilding controls
    entirely rather than leaving them visible-but-inert. */
 body.generic-mode #deckTypeTabs,
@@ -1282,7 +1282,7 @@ state.userEmail = ''; // signed-in user's email, from the server's whoami respon
      filterKey()         which filter bucket the current view uses
      isTypeEligible(card) / isLegal(card)   hard "may it go in the deck" rule / softer legality
      aspectColors, afterCardsLoaded()       optional colors for named attributes / post-load hook
-     id, structured      structured = leaders / aspects / schemes / two deck tabs
+     id, structured      structured = extra deck setup, several deck tabs, side lists
                          (Echo); false = one free-form deck, any card
      multiValueSplit     how "Fire/Water"-style fields split into values
      commaSplits         whether a comma also counts as a separator
@@ -1303,7 +1303,7 @@ state.userEmail = ''; // signed-in user's email, from the server's whoami respon
    just the cards. Methods (d = the deck slot being read/written):
      saveExtras(d) / applySaved(saved, d)      extras kept in the browser's saved decks
      jsonFields(d) / applyJson(file, d)        extras in the .json deck file
-     textSetupLines(d) / textSchemeLines(d)    extra lines in the .txt decklist
+     textSetupLines(d) / textSideListLines(d)    extra lines in the .txt decklist
      parseTextLine(line, ctx)                  true if the line is a game-specific one
      parseTextItem(ctx, match)                 true if a "3x Name" line belongs to a game-specific section
      finishTextImport(ctx, byName, unmatched)  turn parsed names back into the deck
@@ -1316,7 +1316,7 @@ const PlainDeckCodec = {
   jsonFields(d){ return {}; },
   applyJson(file, d){},
   textSetupLines(d){ return []; },
-  textSchemeLines(d){ return []; },
+  textSideListLines(d){ return []; },
   parseTextLine(line, ctx){ return false; },
   parseTextItem(ctx, match){ return false; },
   finishTextImport(ctx, byName, unmatched){},
@@ -1353,7 +1353,6 @@ const GenericGame = {
     r._doubleSided = String(r['is-double-sided']).trim().toUpperCase()==='TRUE';
     const rot = parseInt(r.rotate, 10);
     r._rotate = [90,180,270].includes(rot) ? rot : 0;
-    r._isScheme = false;
     r._isHorizontal = (r._rotate===90 || r._rotate===270);
   },
   copyLimit(card){ return Infinity; }, // generic mode restricts card counts for no reason at all
@@ -2383,7 +2382,7 @@ function cardChangedSinceExport(card){
   return !isNaN(d) && d.getTime() > new Date(baseline).getTime();
 }
 
-// A card referenced by a deck (leader, bonus, extra, deck list, or schemes) can go
+// A card referenced by a deck (leader, bonus, extra, deck list, or side lists) can go
 // missing from the live feed entirely — deleted via applyPendingDeletions(). Rather
 // than showing a bare UUID, this looks up its last-known identity from CardHistory
 // (deletions are archived there before removal), with a small cache since the same
@@ -2683,7 +2682,7 @@ function renderLibrary(){
   pool.forEach((c)=>{
     const tile = document.createElement('div');
     const legal = isLegalForCurrentPool(c);
-    tile.className = 'card-tile' + (c._isHorizontal?' scheme-card':'') + (!legal?' illegal':'');
+    tile.className = 'card-tile' + (c._isHorizontal?' landscape-card':'') + (!legal?' illegal':'');
     if(!legal) tile.title = state.game.illegalHint;
     tile.draggable = true;
     tile.dataset.id = c.id;
@@ -2705,7 +2704,7 @@ function renderLibrary(){
     if(countIn>0){
       const badge=document.createElement('div');
       badge.className='count-badge';
-      badge.textContent = '×'+countIn; // numeric for both modes now — schemes are no longer capped at one
+      badge.textContent = '×'+countIn; // numeric for both modes now — side-deck cards are no longer capped at one
       tile.appendChild(badge);
     }
     if(isRecentlyUpdated(c)){
@@ -2728,7 +2727,7 @@ function renderLibrary(){
     frag.appendChild(tile);
   });
   grid.appendChild(frag);
-  layoutAllSchemeFrames(grid);
+  layoutAllLandscapeFrames(grid);
   state.game.renderViewStats();
 }
 
@@ -2962,7 +2961,7 @@ function renderPickChip(elId, card, placeholderText, selectedId, onRemove){
   el.innerHTML = card
     ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-remove" data-act="remove" title="Remove">✕</span>`
     : `<span class="placeholder">${escapeHtml(placeholderText)}</span>`;
-  if(card && card._isHorizontal) layoutSchemeFrame(el.querySelector('.landscape-frame'));
+  if(card && card._isHorizontal) layoutLandscapeFrame(el.querySelector('.landscape-frame'));
   if(card) wireHoverPreview(el, card);
   if(changed) el.querySelector('[data-act=changed]').addEventListener('click', (e)=>{ e.stopPropagation(); openHistoryModal(card); });
   if(card && onRemove){
@@ -3005,7 +3004,7 @@ document.getElementById('cardScaleSlider').addEventListener('input', (e)=>{
 });
 
 
-// Scheme cards need their art rotated within a landscape frame (see CSS); everything
+// Sideways (landscape) cards need their art rotated within a landscape frame (see CSS); everything
 // else is a plain <img>. Used everywhere a card image renders so the fix lives in one place.
 // Which side of a card is currently displayed — only ever true for cards flagged
 // double-sided (currently just leaders, but driven by the data flag rather than
@@ -3034,7 +3033,7 @@ function cardImageHtml(card, extraAttrs, width){
    Instead: measure the frame's actual rendered pixels and set the pre-rotation image's
    width/height explicitly (swapped) so a -90° rotation lands on an exact pixel match,
    every time, regardless of browser quirks. */
-function layoutSchemeFrame(frame){
+function layoutLandscapeFrame(frame){
   const img = frame.querySelector('img');
   if(!img) return;
   const w = frame.clientWidth, h = frame.clientHeight;
@@ -3042,10 +3041,10 @@ function layoutSchemeFrame(frame){
   img.style.width = h + 'px';
   img.style.height = w + 'px';
 }
-function layoutAllSchemeFrames(root){
-  (root||document).querySelectorAll('.landscape-frame, .hp-frame.scheme, .hp-frame.scheme270, #preview-img-frame.scheme, #preview-img-frame.scheme270').forEach(layoutSchemeFrame);
+function layoutAllLandscapeFrames(root){
+  (root||document).querySelectorAll('.landscape-frame, .hp-frame.landscape, .hp-frame.landscape270, #preview-img-frame.landscape, #preview-img-frame.landscape270').forEach(layoutLandscapeFrame);
 }
-window.addEventListener('resize', ()=>{ clearTimeout(window.__eooResizeT); window.__eooResizeT=setTimeout(()=>layoutAllSchemeFrames(document), 120); });
+window.addEventListener('resize', ()=>{ clearTimeout(window.__eooResizeT); window.__eooResizeT=setTimeout(()=>layoutAllLandscapeFrames(document), 120); });
 
 function mkBtn(label, onClick){
   const b=document.createElement('div');
@@ -3115,10 +3114,10 @@ function showHoverPreview(el, card){
   imgEl.removeAttribute('src'); // clear immediately — otherwise the previous card's bitmap stays visible until the new one finishes loading
   imgEl.src = sizedUrl(url, HOVER_FETCH_WIDTH);
   const is270 = card._isHorizontal && card._rotate===270;
-  frameEl.classList.toggle('scheme', !!card._isHorizontal && !is270);
-  frameEl.classList.toggle('scheme270', is270);
-  hp.classList.toggle('scheme', !!card._isHorizontal && !is270);
-  hp.classList.toggle('scheme270', is270);
+  frameEl.classList.toggle('landscape', !!card._isHorizontal && !is270);
+  frameEl.classList.toggle('landscape270', is270);
+  hp.classList.toggle('landscape', !!card._isHorizontal && !is270);
+  hp.classList.toggle('landscape270', is270);
   imgEl.classList.toggle('rotate-180-fill', !card._isHorizontal && card._rotate===180);
   if(!card._isHorizontal){ imgEl.style.width=''; imgEl.style.height=''; } // clear any stale sizing from a prior rotated preview
   document.getElementById('hoverPreviewName').textContent = card.name;
@@ -3130,7 +3129,7 @@ function showHoverPreview(el, card){
   let top = Math.max(8, Math.min(rect.top, window.innerHeight-boxHeight-8));
   hp.style.left = left+'px'; hp.style.top = top+'px';
   hp.style.display = 'block';
-  if(card._isHorizontal) layoutSchemeFrame(frameEl);
+  if(card._isHorizontal) layoutLandscapeFrame(frameEl);
 }
 function hideHoverPreview(){ document.getElementById('hover-preview').style.display='none'; }
 
@@ -3154,12 +3153,12 @@ function renderDeckPanel(){
       zone.appendChild(buildDeckRow(id, state.byId.get(id), {qty:n, showStepper:true}));
     });
   }
-  layoutAllSchemeFrames(zone);
+  layoutAllLandscapeFrames(zone);
 }
 
 function buildDeckRow(id, card, {qty, showStepper}){
   const row = document.createElement('div');
-  row.className = 'deck-stack' + (card && card._isHorizontal ? ' scheme-row' : '');
+  row.className = 'deck-stack' + (card && card._isHorizontal ? ' landscape-row' : '');
   row.draggable = true;
   row.dataset.id = id;
   // The game decides how many copies are legal (none are ever blocked — this only flags visually).
@@ -3335,8 +3334,8 @@ function openPreview(c){
   const url = displayImageUrl(c);
   imgEl.removeAttribute('src'); // clear immediately so the previous card's bitmap never lingers mid-load
   const is270 = c._isHorizontal && c._rotate===270;
-  frameEl.classList.toggle('scheme', !!c._isHorizontal && !is270);
-  frameEl.classList.toggle('scheme270', is270);
+  frameEl.classList.toggle('landscape', !!c._isHorizontal && !is270);
+  frameEl.classList.toggle('landscape270', is270);
   imgEl.classList.toggle('rotate-180-fill', !c._isHorizontal && c._rotate===180);
   if(!c._isHorizontal){ imgEl.style.width=''; imgEl.style.height=''; }
   frameEl.style.display = url ? 'block':'none';
@@ -3369,7 +3368,7 @@ function openPreview(c){
   histBtn.onclick = () => openHistoryModal(c);
 
   document.getElementById('preview-modal').classList.remove('hidden');
-  if(c._isHorizontal) layoutSchemeFrame(frameEl); // must run after the modal is visible, or clientWidth reads 0
+  if(c._isHorizontal) layoutLandscapeFrame(frameEl); // must run after the modal is visible, or clientWidth reads 0
 }
 
 /* =========================================================================
@@ -3658,7 +3657,7 @@ function openCardPickerModal({title, pool, currentId, onPick}){
     });
   });
   document.getElementById('cardPickerModal').classList.remove('hidden');
-  layoutAllSchemeFrames(grid); // must run after the modal is visible, or clientWidth reads 0 and sizing silently no-ops
+  layoutAllLandscapeFrames(grid); // must run after the modal is visible, or clientWidth reads 0 and sizing silently no-ops
 }
 
 function openLeaderModal(){
@@ -3964,7 +3963,7 @@ const EchoDeckCodec = {
     if(d.bonusAspect) lines.push(`${isOverlord?'Domination':'Quest'} Aspect: ${d.bonusAspect}`);
     return lines;
   },
-  textSchemeLines(d){
+  textSideListLines(d){
     const lines = [];
     if(state.deckType==='overlord' && d.schemeIds.length){
       lines.push('Schemes:');
@@ -4197,7 +4196,7 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
 // A double-sided card (currently just leaders) keeps its own real back. Every other
 // card falls back to the shared generic back for its side — only relevant for
 // exports; nothing else in the app needs to show these generic backs at all.
-// Cards this deck references (leader, bonus, extra, schemes, deck) that no longer
+// Cards this deck references (leader, bonus, extra, side lists, deck) that no longer
 // exist in the live feed — used to warn before an export silently omits them.
 function missingReferencedCardIds(){
   const missing = [];
@@ -4259,7 +4258,7 @@ function buildDecklistTextLines(exportedAtIso){
   if(exportedAtIso) lines.push(`# Exported: ${exportedAtIso}`);
   lines.push(...deckCodec().textSetupLines(curDeck()));
   lines.push('');
-  lines.push(...deckCodec().textSchemeLines(curDeck()));
+  lines.push(...deckCodec().textSideListLines(curDeck()));
   lines.push('Deck:');
   curDeck().deckOrder.forEach(id=>{
     const n = curDeck().deckCards.get(id)||0; const c=state.byId.get(id);
@@ -4592,7 +4591,7 @@ document.addEventListener('keydown', (e)=>{
 initCardScale();
 initVisitTracking();
 document.documentElement.style.setProperty('--hover-preview-width', HOVER_PREVIEW_WIDTH+'px');
-document.documentElement.style.setProperty('--hover-preview-scheme-width', HOVER_PREVIEW_LANDSCAPE_WIDTH+'px');
+document.documentElement.style.setProperty('--hover-preview-landscape-width', HOVER_PREVIEW_LANDSCAPE_WIDTH+'px');
 // The app itself stays inert until sign-in succeeds — no card data, no sets, nothing
 // is fetched until the server has verified an ID token and told us what that account
 // may see. initGoogleSignIn() renders the button; onGoogleSignIn() is what calls loadData().

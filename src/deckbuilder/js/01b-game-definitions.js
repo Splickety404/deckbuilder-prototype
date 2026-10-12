@@ -8,7 +8,7 @@
      filterKey()         which filter bucket the current view uses
      isTypeEligible(card) / isLegal(card)   hard "may it go in the deck" rule / softer legality
      aspectColors, afterCardsLoaded()       optional colors for named attributes / post-load hook
-     id, structured      structured = leaders / aspects / schemes / two deck tabs
+     id, structured      structured = extra deck setup, several deck tabs, side lists
                          (Echo); false = one free-form deck, any card
      multiValueSplit     how "Fire/Water"-style fields split into values
      commaSplits         whether a comma also counts as a separator
@@ -29,7 +29,7 @@
    just the cards. Methods (d = the deck slot being read/written):
      saveExtras(d) / applySaved(saved, d)      extras kept in the browser's saved decks
      jsonFields(d) / applyJson(file, d)        extras in the .json deck file
-     textSetupLines(d) / textSchemeLines(d)    extra lines in the .txt decklist
+     textSetupLines(d) / textSideListLines(d)    extra lines in the .txt decklist
      parseTextLine(line, ctx)                  true if the line is a game-specific one
      parseTextItem(ctx, match)                 true if a "3x Name" line belongs to a game-specific section
      finishTextImport(ctx, byName, unmatched)  turn parsed names back into the deck
@@ -42,7 +42,7 @@ const PlainDeckCodec = {
   jsonFields(d){ return {}; },
   applyJson(file, d){},
   textSetupLines(d){ return []; },
-  textSchemeLines(d){ return []; },
+  textSideListLines(d){ return []; },
   parseTextLine(line, ctx){ return false; },
   parseTextItem(ctx, match){ return false; },
   finishTextImport(ctx, byName, unmatched){},
@@ -79,7 +79,6 @@ const GenericGame = {
     r._doubleSided = String(r['is-double-sided']).trim().toUpperCase()==='TRUE';
     const rot = parseInt(r.rotate, 10);
     r._rotate = [90,180,270].includes(rot) ? rot : 0;
-    r._isScheme = false;
     r._isHorizontal = (r._rotate===90 || r._rotate===270);
   },
   copyLimit(card){ return Infinity; }, // generic mode restricts card counts for no reason at all

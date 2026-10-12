@@ -68,7 +68,7 @@ function cardChangedSinceExport(card){
   return !isNaN(d) && d.getTime() > new Date(baseline).getTime();
 }
 
-// A card referenced by a deck (leader, bonus, extra, deck list, or schemes) can go
+// A card referenced by a deck (leader, bonus, extra, deck list, or side lists) can go
 // missing from the live feed entirely — deleted via applyPendingDeletions(). Rather
 // than showing a bare UUID, this looks up its last-known identity from CardHistory
 // (deletions are archived there before removal), with a small cache since the same

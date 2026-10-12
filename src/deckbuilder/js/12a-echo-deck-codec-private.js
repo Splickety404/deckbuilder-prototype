@@ -48,7 +48,7 @@ const EchoDeckCodec = {
     if(d.bonusAspect) lines.push(`${isOverlord?'Domination':'Quest'} Aspect: ${d.bonusAspect}`);
     return lines;
   },
-  textSchemeLines(d){
+  textSideListLines(d){
     const lines = [];
     if(state.deckType==='overlord' && d.schemeIds.length){
       lines.push('Schemes:');

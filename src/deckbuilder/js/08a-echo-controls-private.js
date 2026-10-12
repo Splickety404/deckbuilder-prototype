@@ -219,7 +219,7 @@ function renderPickChip(elId, card, placeholderText, selectedId, onRemove){
   el.innerHTML = card
     ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-remove" data-act="remove" title="Remove">✕</span>`
     : `<span class="placeholder">${escapeHtml(placeholderText)}</span>`;
-  if(card && card._isHorizontal) layoutSchemeFrame(el.querySelector('.landscape-frame'));
+  if(card && card._isHorizontal) layoutLandscapeFrame(el.querySelector('.landscape-frame'));
   if(card) wireHoverPreview(el, card);
   if(changed) el.querySelector('[data-act=changed]').addEventListener('click', (e)=>{ e.stopPropagation(); openHistoryModal(card); });
   if(card && onRemove){

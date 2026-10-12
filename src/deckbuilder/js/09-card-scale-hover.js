@@ -30,7 +30,7 @@ document.getElementById('cardScaleSlider').addEventListener('input', (e)=>{
 });
 
 
-// Scheme cards need their art rotated within a landscape frame (see CSS); everything
+// Sideways (landscape) cards need their art rotated within a landscape frame (see CSS); everything
 // else is a plain <img>. Used everywhere a card image renders so the fix lives in one place.
 // Which side of a card is currently displayed — only ever true for cards flagged
 // double-sided (currently just leaders, but driven by the data flag rather than
@@ -59,7 +59,7 @@ function cardImageHtml(card, extraAttrs, width){
    Instead: measure the frame's actual rendered pixels and set the pre-rotation image's
    width/height explicitly (swapped) so a -90° rotation lands on an exact pixel match,
    every time, regardless of browser quirks. */
-function layoutSchemeFrame(frame){
+function layoutLandscapeFrame(frame){
   const img = frame.querySelector('img');
   if(!img) return;
   const w = frame.clientWidth, h = frame.clientHeight;
@@ -67,10 +67,10 @@ function layoutSchemeFrame(frame){
   img.style.width = h + 'px';
   img.style.height = w + 'px';
 }
-function layoutAllSchemeFrames(root){
-  (root||document).querySelectorAll('.landscape-frame, .hp-frame.scheme, .hp-frame.scheme270, #preview-img-frame.scheme, #preview-img-frame.scheme270').forEach(layoutSchemeFrame);
+function layoutAllLandscapeFrames(root){
+  (root||document).querySelectorAll('.landscape-frame, .hp-frame.landscape, .hp-frame.landscape270, #preview-img-frame.landscape, #preview-img-frame.landscape270').forEach(layoutLandscapeFrame);
 }
-window.addEventListener('resize', ()=>{ clearTimeout(window.__eooResizeT); window.__eooResizeT=setTimeout(()=>layoutAllSchemeFrames(document), 120); });
+window.addEventListener('resize', ()=>{ clearTimeout(window.__eooResizeT); window.__eooResizeT=setTimeout(()=>layoutAllLandscapeFrames(document), 120); });
 
 function mkBtn(label, onClick){
   const b=document.createElement('div');
@@ -140,10 +140,10 @@ function showHoverPreview(el, card){
   imgEl.removeAttribute('src'); // clear immediately — otherwise the previous card's bitmap stays visible until the new one finishes loading
   imgEl.src = sizedUrl(url, HOVER_FETCH_WIDTH);
   const is270 = card._isHorizontal && card._rotate===270;
-  frameEl.classList.toggle('scheme', !!card._isHorizontal && !is270);
-  frameEl.classList.toggle('scheme270', is270);
-  hp.classList.toggle('scheme', !!card._isHorizontal && !is270);
-  hp.classList.toggle('scheme270', is270);
+  frameEl.classList.toggle('landscape', !!card._isHorizontal && !is270);
+  frameEl.classList.toggle('landscape270', is270);
+  hp.classList.toggle('landscape', !!card._isHorizontal && !is270);
+  hp.classList.toggle('landscape270', is270);
   imgEl.classList.toggle('rotate-180-fill', !card._isHorizontal && card._rotate===180);
   if(!card._isHorizontal){ imgEl.style.width=''; imgEl.style.height=''; } // clear any stale sizing from a prior rotated preview
   document.getElementById('hoverPreviewName').textContent = card.name;
@@ -155,7 +155,7 @@ function showHoverPreview(el, card){
   let top = Math.max(8, Math.min(rect.top, window.innerHeight-boxHeight-8));
   hp.style.left = left+'px'; hp.style.top = top+'px';
   hp.style.display = 'block';
-  if(card._isHorizontal) layoutSchemeFrame(frameEl);
+  if(card._isHorizontal) layoutLandscapeFrame(frameEl);
 }
 function hideHoverPreview(){ document.getElementById('hover-preview').style.display='none'; }
 

@@ -33,7 +33,7 @@ function renderLibrary(){
   pool.forEach((c)=>{
     const tile = document.createElement('div');
     const legal = isLegalForCurrentPool(c);
-    tile.className = 'card-tile' + (c._isHorizontal?' scheme-card':'') + (!legal?' illegal':'');
+    tile.className = 'card-tile' + (c._isHorizontal?' landscape-card':'') + (!legal?' illegal':'');
     if(!legal) tile.title = state.game.illegalHint;
     tile.draggable = true;
     tile.dataset.id = c.id;
@@ -55,7 +55,7 @@ function renderLibrary(){
     if(countIn>0){
       const badge=document.createElement('div');
       badge.className='count-badge';
-      badge.textContent = '×'+countIn; // numeric for both modes now — schemes are no longer capped at one
+      badge.textContent = '×'+countIn; // numeric for both modes now — side-deck cards are no longer capped at one
       tile.appendChild(badge);
     }
     if(isRecentlyUpdated(c)){
@@ -78,7 +78,7 @@ function renderLibrary(){
     frag.appendChild(tile);
   });
   grid.appendChild(frag);
-  layoutAllSchemeFrames(grid);
+  layoutAllLandscapeFrames(grid);
   state.game.renderViewStats();
 }
 

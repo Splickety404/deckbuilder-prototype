@@ -63,7 +63,7 @@ function openCardPickerModal({title, pool, currentId, onPick}){
     });
   });
   document.getElementById('cardPickerModal').classList.remove('hidden');
-  layoutAllSchemeFrames(grid); // must run after the modal is visible, or clientWidth reads 0 and sizing silently no-ops
+  layoutAllLandscapeFrames(grid); // must run after the modal is visible, or clientWidth reads 0 and sizing silently no-ops
 }
 
 function openLeaderModal(){

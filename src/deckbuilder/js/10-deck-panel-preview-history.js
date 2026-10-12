@@ -18,12 +18,12 @@ function renderDeckPanel(){
       zone.appendChild(buildDeckRow(id, state.byId.get(id), {qty:n, showStepper:true}));
     });
   }
-  layoutAllSchemeFrames(zone);
+  layoutAllLandscapeFrames(zone);
 }
 
 function buildDeckRow(id, card, {qty, showStepper}){
   const row = document.createElement('div');
-  row.className = 'deck-stack' + (card && card._isHorizontal ? ' scheme-row' : '');
+  row.className = 'deck-stack' + (card && card._isHorizontal ? ' landscape-row' : '');
   row.draggable = true;
   row.dataset.id = id;
   // The game decides how many copies are legal (none are ever blocked — this only flags visually).
@@ -199,8 +199,8 @@ function openPreview(c){
   const url = displayImageUrl(c);
   imgEl.removeAttribute('src'); // clear immediately so the previous card's bitmap never lingers mid-load
   const is270 = c._isHorizontal && c._rotate===270;
-  frameEl.classList.toggle('scheme', !!c._isHorizontal && !is270);
-  frameEl.classList.toggle('scheme270', is270);
+  frameEl.classList.toggle('landscape', !!c._isHorizontal && !is270);
+  frameEl.classList.toggle('landscape270', is270);
   imgEl.classList.toggle('rotate-180-fill', !c._isHorizontal && c._rotate===180);
   if(!c._isHorizontal){ imgEl.style.width=''; imgEl.style.height=''; }
   frameEl.style.display = url ? 'block':'none';
@@ -233,7 +233,7 @@ function openPreview(c){
   histBtn.onclick = () => openHistoryModal(c);
 
   document.getElementById('preview-modal').classList.remove('hidden');
-  if(c._isHorizontal) layoutSchemeFrame(frameEl); // must run after the modal is visible, or clientWidth reads 0
+  if(c._isHorizontal) layoutLandscapeFrame(frameEl); // must run after the modal is visible, or clientWidth reads 0
 }
 
 /* =========================================================================
