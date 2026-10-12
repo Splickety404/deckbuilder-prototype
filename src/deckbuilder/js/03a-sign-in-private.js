@@ -77,6 +77,7 @@ async function onGoogleSignIn(response){
     setSigninChecking(false);
 
     startWithGames(who.games);
+    initFeedbackAdmin();
   }catch(e){
     setSigninStatus('');
     setSigninChecking(false);
@@ -85,6 +86,7 @@ async function onGoogleSignIn(response){
 }
 
 function signOut(){
+  initFeedbackAdmin(true);
   state.idToken = '';
   state.userEmail = '';
   state.games = [];

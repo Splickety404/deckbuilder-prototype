@@ -1503,7 +1503,13 @@ function doPost(e) {
       return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
     }
     if (req.action === 'cardFeedback') {
-      result = sendCardFeedback(v.email, req);
+      result = saveCardFeedback(v.email, req);
+      result.ok = true;
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (req.action === 'feedbackList' || req.action === 'feedbackMarkRead') {
+      requireFeedbackAdmin(v.email);
+      result = req.action === 'feedbackList' ? listCardFeedback() : markFeedbackRead(req.rows || 'all');
       result.ok = true;
       return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
     }
@@ -1519,34 +1525,105 @@ function doPost(e) {
   return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
 }
 
-// Card feedback from the deckbuilder's per-card 💬 button. The caller is already
-// signed in (doPost verified the idToken); their verified email is what gets added
-// to the message, never one the client typed. replyTo is set so replying goes
-// straight to them. The Discord handle is optional.
-function sendCardFeedback(email, req) {
+// ---------------------------------------------------------------------
+// CARD FEEDBACK. The deckbuilder's per-card 💬 button posts here (signed-in
+// users only — doPost verified the idToken, and the email stored is that
+// verified one, never one the client typed). Each note is appended to a
+// "Deckbuilder Card Feedback" spreadsheet, created on first use (its id is kept
+// in the script properties). The owner is NOT emailed per note: one "you have
+// unread feedback" email goes out when the unread count goes from 0 to 1, and
+// the next one only after everything has been marked read. The owner reads and
+// marks feedback read inside the deckbuilder (feedbackList / feedbackMarkRead,
+// owner-only).
+// ---------------------------------------------------------------------
+const FEEDBACK_ADMIN_EMAIL = 'smcbride@ghostgalaxy.com';
+const FEEDBACK_HEADERS = ['Time', 'From', 'Discord', 'Card', 'Type', 'Set', 'Card id', 'Feedback', 'Read'];
+
+function requireFeedbackAdmin(email) {
+  if (String(email || '').toLowerCase() !== FEEDBACK_ADMIN_EMAIL) throw new Error('Not allowed.');
+}
+
+function getFeedbackSheet() {
+  const props = PropertiesService.getScriptProperties();
+  let id = props.getProperty('FEEDBACK_SHEET_ID');
+  let ss;
+  if (id) {
+    ss = SpreadsheetApp.openById(id);
+  } else {
+    ss = SpreadsheetApp.create('Deckbuilder Card Feedback');
+    props.setProperty('FEEDBACK_SHEET_ID', ss.getId());
+    const sheet = ss.getSheets()[0];
+    sheet.getRange(1, 1, 1, FEEDBACK_HEADERS.length).setValues([FEEDBACK_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  return ss.getSheets()[0];
+}
+
+function saveCardFeedback(email, req) {
   const clip = function (v, n) { return String(v || '').trim().slice(0, n); };
   const feedback = clip(req.feedback, 4000);
   if (!feedback) throw new Error('Please type your feedback first.');
-  const cardName = clip(req.cardName, 120) || '(unknown card)';
-  MailApp.sendEmail({
-    to: 'smcbride@ghostgalaxy.com',
-    subject: 'Card feedback: ' + cardName,
-    body: [
-      'Card feedback from the deckbuilder.',
-      '',
-      'Card: ' + cardName,
-      'Type: ' + (clip(req.cardType, 60) || '(none)'),
-      'Set: ' + (clip(req.cardSet, 120) || '(none)'),
-      'Card id: ' + (clip(req.cardId, 80) || '(none)'),
-      'From: ' + email,
-      'Discord: ' + (clip(req.discord, 64) || '(not given)'),
-      '',
-      'Feedback:',
-      feedback,
-    ].join('\n'),
-    replyTo: email,
-  });
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = getFeedbackSheet();
+    sheet.appendRow([
+      new Date(), email, clip(req.discord, 64), clip(req.cardName, 120) || '(unknown card)',
+      clip(req.cardType, 60), clip(req.cardSet, 120), clip(req.cardId, 80), feedback, '',
+    ]);
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty('FEEDBACK_NOTIFIED') !== 'yes') {
+      MailApp.sendEmail({
+        to: FEEDBACK_ADMIN_EMAIL,
+        subject: 'Deckbuilder: you have unread feedback',
+        body: 'Someone sent card feedback from the deckbuilder. Open the Feedback view in the deckbuilder (top bar) to read it.\n\nYou won\'t be emailed again until you have marked everything read.',
+      });
+      props.setProperty('FEEDBACK_NOTIFIED', 'yes');
+    }
+  } finally {
+    lock.releaseLock();
+  }
   return {};
+}
+
+// Newest first. "row" is the sheet row number, used to mark a note read.
+function listCardFeedback() {
+  const sheet = getFeedbackSheet();
+  const last = sheet.getLastRow();
+  const items = [];
+  if (last >= 2) {
+    const vals = sheet.getRange(2, 1, last - 1, FEEDBACK_HEADERS.length).getValues();
+    vals.forEach(function (r, i) {
+      items.push({
+        row: i + 2, time: r[0] instanceof Date ? r[0].toISOString() : String(r[0]), from: r[1], discord: r[2],
+        card: r[3], type: r[4], set: r[5], cardId: r[6], feedback: r[7], read: !!r[8],
+      });
+    });
+  }
+  items.reverse();
+  return { items: items, unread: items.filter(function (x) { return !x.read; }).length };
+}
+
+// rows: 'all' or an array of sheet row numbers.
+function markFeedbackRead(rows) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const sheet = getFeedbackSheet();
+    const last = sheet.getLastRow();
+    const col = FEEDBACK_HEADERS.indexOf('Read') + 1;
+    if (last >= 2) {
+      const targets = rows === 'all' ? null : (Array.isArray(rows) ? rows.map(Number) : []);
+      for (let r = 2; r <= last; r++) {
+        if (!targets || targets.indexOf(r) !== -1) sheet.getRange(r, col).setValue('yes');
+      }
+    }
+    const result = listCardFeedback();
+    if (result.unread === 0) PropertiesService.getScriptProperties().deleteProperty('FEEDBACK_NOTIFIED');
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // The Cards folder must sit inside a set folder, inside one of KNOWN_GAMES'

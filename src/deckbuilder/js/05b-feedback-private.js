@@ -66,3 +66,60 @@ document.getElementById('btnSubmitFeedback').addEventListener('click', async ()=
     btn.textContent = originalText;
   }
 });
+
+/* ---- Feedback inbox (owner only — the server enforces this; hiding the button is cosmetic) ---- */
+const FEEDBACK_ADMIN_EMAIL = 'smcbride@ghostgalaxy.com';
+let feedbackItems = [];
+
+function initFeedbackAdmin(signingOut){
+  const isAdmin = !signingOut && (state.userEmail||'').toLowerCase()===FEEDBACK_ADMIN_EMAIL;
+  const btn = document.getElementById('btnFeedbackInbox');
+  btn.style.display = isAdmin ? 'inline-flex' : 'none';
+  if(isAdmin) refreshFeedbackInbox().catch(()=>{});
+}
+async function feedbackAdminCall(action, extra){
+  const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ action, idToken: state.idToken, ...(extra||{}) }) });
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  const j = await res.json();
+  if(!j.ok) throw new Error(j.error || 'Unknown error');
+  return j;
+}
+function applyFeedbackResult(j){
+  feedbackItems = j.items;
+  document.getElementById('btnFeedbackInbox').textContent = j.unread ? `Feedback (${j.unread})` : 'Feedback';
+  renderFeedbackInbox();
+}
+async function refreshFeedbackInbox(){ applyFeedbackResult(await feedbackAdminCall('feedbackList')); }
+
+function renderFeedbackInbox(){
+  const unreadOnly = document.getElementById('feedbackUnreadOnly').checked;
+  const unread = feedbackItems.filter(x=>!x.read).length;
+  document.getElementById('feedbackInboxSummary').textContent = `${feedbackItems.length} note${feedbackItems.length===1?'':'s'}, ${unread} unread`;
+  const shown = feedbackItems.filter(x=>!unreadOnly || !x.read);
+  document.getElementById('feedbackInboxList').innerHTML = shown.length ? shown.map(x=>{
+    const when = new Date(x.time); const whenTxt = isNaN(when) ? x.time : when.toLocaleString();
+    return `<div class="fb-item${x.read?'':' unread'}">
+      <div class="fb-meta"><strong>${escapeHtml(x.card)}</strong> · ${escapeHtml(x.type)}${x.set?' · '+escapeHtml(x.set):''} · ${escapeHtml(whenTxt)}</div>
+      <div class="fb-meta">From ${escapeHtml(x.from)}${x.discord?' · Discord: '+escapeHtml(x.discord):''}</div>
+      <div class="fb-text">${escapeHtml(x.feedback)}</div>
+      ${x.read ? '' : `<div class="btn btn-sm" data-row="${x.row}">Mark read</div>`}
+    </div>`;
+  }).join('') : '<p style="color:var(--text-soft);">Nothing here.</p>';
+}
+document.getElementById('btnFeedbackInbox').addEventListener('click', async ()=>{
+  document.getElementById('feedbackInboxError').textContent = '';
+  document.getElementById('feedbackInboxModal').classList.remove('hidden');
+  renderFeedbackInbox();
+  try{ await refreshFeedbackInbox(); }
+  catch(e){ document.getElementById('feedbackInboxError').textContent = 'Could not load feedback: ' + e.message; }
+});
+document.getElementById('feedbackUnreadOnly').addEventListener('change', renderFeedbackInbox);
+async function markFeedbackRead(rows){
+  try{ applyFeedbackResult(await feedbackAdminCall('feedbackMarkRead', {rows})); }
+  catch(e){ document.getElementById('feedbackInboxError').textContent = 'Could not mark read: ' + e.message; }
+}
+document.getElementById('btnFeedbackMarkAll').addEventListener('click', ()=>markFeedbackRead('all'));
+document.getElementById('feedbackInboxList').addEventListener('click', (e)=>{
+  const b = e.target.closest('[data-row]'); if(b) markFeedbackRead([Number(b.dataset.row)]);
+});

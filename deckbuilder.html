@@ -173,6 +173,10 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .leader-chip .removed-badge + span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .deck-stack .removed-badge{margin-left:6px;}
+.fb-item{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:8px;}
+.fb-item.unread{border-left:4px solid var(--accent, #2563eb);background:var(--surface-2);}
+.fb-item .fb-meta{font-size:12px;color:var(--text-soft);margin-bottom:4px;}
+.fb-item .fb-text{white-space:pre-wrap;font-size:13.5px;margin:6px 0;}
 .leader-chip .chip-feedback{margin-left:auto;flex:none;padding:3px 5px;border-radius:5px;font-size:12px;}
 .leader-chip .chip-feedback + .chip-remove{margin-left:0;}
 .leader-chip .chip-remove:hover{background:var(--danger-bg);color:var(--danger);}
@@ -588,6 +592,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
       <div class="tab" data-type="overlord">Overlord</div>
       <div class="tab" data-type="champion">Champion</div>
     </div>
+    <div class="btn" id="btnFeedbackInbox" style="display:none;" title="Read the card feedback people have sent">Feedback</div>
     <div class="btn" id="btnUnwrapBooster" title="Open a booster pack and add its cards to your Overlord and Champion decks — you can open as many as you like">Unwrap a Booster</div>
     <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
     <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
@@ -760,6 +765,21 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
       <div class="modal-body">
         <p style="font-size:13px;color:var(--text-soft);margin-top:0;">These cards were added to your decks.</p>
         <div id="boosterResultList"></div>
+      </div>
+    </div>
+  </div>
+  <!-- Feedback inbox (owner only) -->
+  <div class="modal-overlay hidden" id="feedbackInboxModal">
+    <div class="modal-box" style="width:min(720px,94vw);">
+      <div class="modal-header"><h2>Card feedback</h2><div class="btn btn-icon" data-close="feedbackInboxModal">✕</div></div>
+      <div class="modal-body">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+          <span id="feedbackInboxSummary" style="font-size:13px;color:var(--text-soft);flex:1;"></span>
+          <label class="toggle-row" style="margin:0;"><input type="checkbox" id="feedbackUnreadOnly"><span>Unread only</span></label>
+          <div class="btn btn-sm" id="btnFeedbackMarkAll">Mark all read</div>
+        </div>
+        <p id="feedbackInboxError" style="color:var(--danger);font-size:12.5px;margin:0 0 8px;"></p>
+        <div id="feedbackInboxList"></div>
       </div>
     </div>
   </div>
@@ -1922,6 +1942,7 @@ async function onGoogleSignIn(response){
     setSigninChecking(false);
 
     startWithGames(who.games);
+    initFeedbackAdmin();
   }catch(e){
     setSigninStatus('');
     setSigninChecking(false);
@@ -1930,6 +1951,7 @@ async function onGoogleSignIn(response){
 }
 
 function signOut(){
+  initFeedbackAdmin(true);
   state.idToken = '';
   state.userEmail = '';
   state.games = [];
@@ -2444,6 +2466,63 @@ document.getElementById('btnSubmitFeedback').addEventListener('click', async ()=
   }finally{
     btn.textContent = originalText;
   }
+});
+
+/* ---- Feedback inbox (owner only — the server enforces this; hiding the button is cosmetic) ---- */
+const FEEDBACK_ADMIN_EMAIL = 'smcbride@ghostgalaxy.com';
+let feedbackItems = [];
+
+function initFeedbackAdmin(signingOut){
+  const isAdmin = !signingOut && (state.userEmail||'').toLowerCase()===FEEDBACK_ADMIN_EMAIL;
+  const btn = document.getElementById('btnFeedbackInbox');
+  btn.style.display = isAdmin ? 'inline-flex' : 'none';
+  if(isAdmin) refreshFeedbackInbox().catch(()=>{});
+}
+async function feedbackAdminCall(action, extra){
+  const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ action, idToken: state.idToken, ...(extra||{}) }) });
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  const j = await res.json();
+  if(!j.ok) throw new Error(j.error || 'Unknown error');
+  return j;
+}
+function applyFeedbackResult(j){
+  feedbackItems = j.items;
+  document.getElementById('btnFeedbackInbox').textContent = j.unread ? `Feedback (${j.unread})` : 'Feedback';
+  renderFeedbackInbox();
+}
+async function refreshFeedbackInbox(){ applyFeedbackResult(await feedbackAdminCall('feedbackList')); }
+
+function renderFeedbackInbox(){
+  const unreadOnly = document.getElementById('feedbackUnreadOnly').checked;
+  const unread = feedbackItems.filter(x=>!x.read).length;
+  document.getElementById('feedbackInboxSummary').textContent = `${feedbackItems.length} note${feedbackItems.length===1?'':'s'}, ${unread} unread`;
+  const shown = feedbackItems.filter(x=>!unreadOnly || !x.read);
+  document.getElementById('feedbackInboxList').innerHTML = shown.length ? shown.map(x=>{
+    const when = new Date(x.time); const whenTxt = isNaN(when) ? x.time : when.toLocaleString();
+    return `<div class="fb-item${x.read?'':' unread'}">
+      <div class="fb-meta"><strong>${escapeHtml(x.card)}</strong> · ${escapeHtml(x.type)}${x.set?' · '+escapeHtml(x.set):''} · ${escapeHtml(whenTxt)}</div>
+      <div class="fb-meta">From ${escapeHtml(x.from)}${x.discord?' · Discord: '+escapeHtml(x.discord):''}</div>
+      <div class="fb-text">${escapeHtml(x.feedback)}</div>
+      ${x.read ? '' : `<div class="btn btn-sm" data-row="${x.row}">Mark read</div>`}
+    </div>`;
+  }).join('') : '<p style="color:var(--text-soft);">Nothing here.</p>';
+}
+document.getElementById('btnFeedbackInbox').addEventListener('click', async ()=>{
+  document.getElementById('feedbackInboxError').textContent = '';
+  document.getElementById('feedbackInboxModal').classList.remove('hidden');
+  renderFeedbackInbox();
+  try{ await refreshFeedbackInbox(); }
+  catch(e){ document.getElementById('feedbackInboxError').textContent = 'Could not load feedback: ' + e.message; }
+});
+document.getElementById('feedbackUnreadOnly').addEventListener('change', renderFeedbackInbox);
+async function markFeedbackRead(rows){
+  try{ applyFeedbackResult(await feedbackAdminCall('feedbackMarkRead', {rows})); }
+  catch(e){ document.getElementById('feedbackInboxError').textContent = 'Could not mark read: ' + e.message; }
+}
+document.getElementById('btnFeedbackMarkAll').addEventListener('click', ()=>markFeedbackRead('all'));
+document.getElementById('feedbackInboxList').addEventListener('click', (e)=>{
+  const b = e.target.closest('[data-row]'); if(b) markFeedbackRead([Number(b.dataset.row)]);
 });
 /* =========================================================================
    DYNAMIC SCHEMA — filter/detail fields are derived from whatever columns the
