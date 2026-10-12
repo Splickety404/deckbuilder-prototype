@@ -162,6 +162,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .fb-item{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:8px;}
 .fb-item.unread{border-left:4px solid var(--accent, #2563eb);background:var(--surface-2);}
 .fb-item .fb-meta{font-size:12px;color:var(--text-soft);margin-bottom:4px;}
+.fb-tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:5px;background:var(--accent-soft);color:var(--accent);}
 .fb-item .fb-text{white-space:pre-wrap;font-size:13.5px;margin:6px 0;}
 /* Feedback buttons are deliberately loud (amber, outlined) so they stand apart from every other card button. */
 .feedback-btn, .tile-btn.feedback-btn, .btn.feedback-btn{background:#f59e0b;color:#1f1300;border:1px solid #b45309;font-weight:700;box-shadow:0 0 0 2px rgba(245,158,11,.35);}
@@ -209,7 +210,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 #importDropZone.dragover{background:var(--accent-soft);border-color:var(--accent);color:var(--text);}
 .deck-stack{
   position:relative;
-  display:flex;align-items:center;gap:8px;padding:5px;cursor:grab;
+  display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:5px;cursor:grab;
   background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);
 }
 .deck-stack.over-limit{border-color:var(--danger);background:var(--danger-bg);}
@@ -236,7 +237,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .reorder-indicator{position:absolute;left:6px;right:6px;height:3px;background:var(--accent);border-radius:2px;pointer-events:none;display:none;}
 .deck-stack img{width:28px;height:39px;object-fit:cover;border-radius:3px;flex:none;}
 .deck-stack.landscape-row img{width:auto;height:28px;aspect-ratio:5/7;object-fit:cover;transform:rotate(-90deg);}
-.deck-stack .dsname{flex:1;font-size:12.5px;line-height:1.2;}
+.deck-stack .dsname{flex:1 1 90px;min-width:0;overflow-wrap:anywhere;font-size:12.5px;line-height:1.2;}
 .deck-stack .dscount{font-weight:700;font-size:12px;color:var(--accent);}
 .deck-stack .dscount.over{color:var(--danger);}
 .deck-stack .stepper{display:flex;gap:2px;}
@@ -345,7 +346,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
   cursor:pointer;line-height:1;
 }
 .tile-btn:hover{background:#fff;}
-.deck-stack .tile-actions{position:static;opacity:1;margin-left:auto;}
+.deck-stack .tile-actions{position:static;opacity:1;margin-left:auto;flex:none;}
 .deck-stack .stepper .tile-btn{width:20px;height:20px;font-size:12px;}
 
 /* ---------- Filters (right) ---------- */

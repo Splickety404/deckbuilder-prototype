@@ -77,6 +77,9 @@
     <div class="btn btn-sm" id="btnGridMenu" title="Grid display, snapping, and cell size">Grid ▾</div>
     <div class="btn btn-sm" id="btnBoardMenu" title="Table theme and saved layouts">Board ▾</div>
     <div class="btn btn-sm" id="btnUndo" style="margin-left:auto;opacity:.4;pointer-events:none;" title="Undo your last action (⌘Z / Ctrl+Z)">Undo</div>
+<!--PRIVATE-BEGIN-->
+    <div class="btn btn-sm" id="btnRoomFeedback" title="Send feedback to the designers">💬 Feedback</div>
+<!--PRIVATE-END-->
     <div class="btn btn-sm" id="btnLeaveGame" style="color:var(--danger);">Leave Game</div>
   </header>
   <!-- Menus/popovers opened from the top bar, the chat tools, and the board's
@@ -188,6 +191,26 @@
   </div>
 </div>
 
+
+<!--PRIVATE-BEGIN-->
+<div class="modal-overlay hidden" id="feedbackModal">
+  <div class="modal-box" style="width:min(460px,92vw);">
+    <div class="modal-header"><h2>Send feedback</h2><div class="btn btn-icon" data-close="feedbackModal">✕</div></div>
+    <div class="modal-body">
+      <textarea id="feedbackText" rows="6" maxlength="4000" placeholder="What's on your mind? Bugs, rules questions, ideas…" style="width:100%;box-sizing:border-box;resize:vertical;margin-bottom:10px;font-family:inherit;"></textarea>
+      <label style="font-size:12.5px;color:var(--text-soft);">Discord handle (optional)</label>
+      <input type="text" id="feedbackDiscord" maxlength="64" placeholder="yourname" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+      <label class="focus-item" style="padding-left:0;"><input type="checkbox" id="feedbackSnapshot" checked> Include a snapshot of the board (zoomed to fit everything)</label>
+      <p style="font-size:12px;color:var(--text-soft);margin:6px 0 8px;">Only the shared table is captured, never your hand. Your account email (<span id="feedbackReplyEmail"></span>) is included so you can be contacted. Your Discord handle is saved in this browser for next time.</p>
+      <p id="feedbackError" style="color:var(--danger);font-size:12.5px;min-height:1.2em;margin:0 0 8px;"></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <div class="btn" data-close="feedbackModal">Cancel</div>
+        <div class="btn btn-accent" id="btnSubmitFeedback">Send</div>
+      </div>
+    </div>
+  </div>
+</div>
+<!--PRIVATE-END-->
 
 <!--SCRIPTS-->
 </body>

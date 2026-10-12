@@ -1551,9 +1551,11 @@ function doPost(e) {
       result.ok = true;
       return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
     }
-    if (req.action === 'feedbackList' || req.action === 'feedbackMarkRead') {
+    if (req.action === 'feedbackList' || req.action === 'feedbackMarkRead' || req.action === 'feedbackSnapshot') {
       requireFeedbackAdmin(v.email);
-      result = req.action === 'feedbackList' ? listCardFeedback() : markFeedbackRead(req.rows || 'all');
+      result = req.action === 'feedbackList' ? listCardFeedback()
+        : req.action === 'feedbackSnapshot' ? getFeedbackSnapshot(req.fileId)
+        : markFeedbackRead(req.rows || 'all');
       result.ok = true;
       return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
     }
@@ -1581,7 +1583,7 @@ function doPost(e) {
 // owner-only).
 // ---------------------------------------------------------------------
 const FEEDBACK_ADMIN_EMAIL = 'smcbride@ghostgalaxy.com';
-const FEEDBACK_HEADERS = ['Time', 'From', 'Discord', 'Card', 'Type', 'Set', 'Card id', 'Feedback', 'Read'];
+const FEEDBACK_HEADERS = ['Time', 'From', 'Discord', 'Card', 'Type', 'Set', 'Card id', 'Feedback', 'Read', 'Snapshot', 'Source'];
 
 function requireFeedbackAdmin(email) {
   if (String(email || '').toLowerCase() !== FEEDBACK_ADMIN_EMAIL) throw new Error('Not allowed.');
@@ -1593,6 +1595,11 @@ function getFeedbackSheet() {
   let ss;
   if (id) {
     ss = SpreadsheetApp.openById(id);
+    // Sheets created before the Snapshot/Source columns existed get them added.
+    const first = ss.getSheets()[0];
+    if (first.getLastColumn() < FEEDBACK_HEADERS.length) {
+      first.getRange(1, 1, 1, FEEDBACK_HEADERS.length).setValues([FEEDBACK_HEADERS]).setFontWeight('bold');
+    }
   } else {
     ss = SpreadsheetApp.create('Deckbuilder Card Feedback');
     props.setProperty('FEEDBACK_SHEET_ID', ss.getId());
@@ -1601,6 +1608,38 @@ function getFeedbackSheet() {
     sheet.setFrozenRows(1);
   }
   return ss.getSheets()[0];
+}
+
+// A board snapshot from the game room arrives as a JPEG data URL. It's too big for a sheet
+// cell, so it's saved as a (private) file in a "Deckbuilder Feedback Snapshots" Drive folder
+// and only its file id is kept in the sheet. Returns that id, or '' if there's no usable snapshot.
+function saveFeedbackSnapshot(dataUrl) {
+  const m = /^data:image\/jpeg;base64,([A-Za-z0-9+\/=]+)$/.exec(String(dataUrl || ''));
+  if (!m || m[1].length > 4000000) return '';
+  const props = PropertiesService.getScriptProperties();
+  let folder;
+  const folderId = props.getProperty('FEEDBACK_SNAP_FOLDER_ID');
+  try { folder = folderId ? DriveApp.getFolderById(folderId) : null; } catch (e) { folder = null; }
+  if (!folder) {
+    folder = DriveApp.createFolder('Deckbuilder Feedback Snapshots');
+    props.setProperty('FEEDBACK_SNAP_FOLDER_ID', folder.getId());
+  }
+  const blob = Utilities.newBlob(Utilities.base64Decode(m[1]), 'image/jpeg', 'board-' + Date.now() + '.jpg');
+  return folder.createFile(blob).getId();
+}
+
+// Owner-only: returns a snapshot as a data URL. Only file ids that are actually recorded in the
+// feedback sheet can be fetched, so this can never be used to read arbitrary Drive files.
+function getFeedbackSnapshot(fileId) {
+  const id = String(fileId || '');
+  const sheet = getFeedbackSheet();
+  const last = sheet.getLastRow();
+  const col = FEEDBACK_HEADERS.indexOf('Snapshot') + 1;
+  if (!id || last < 2) throw new Error('No such snapshot.');
+  const ids = sheet.getRange(2, col, last - 1, 1).getValues().map(function (r) { return String(r[0]); });
+  if (ids.indexOf(id) === -1) throw new Error('No such snapshot.');
+  const blob = DriveApp.getFileById(id).getBlob();
+  return { dataUrl: 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes()) };
 }
 
 function saveCardFeedback(email, req) {
@@ -1614,6 +1653,7 @@ function saveCardFeedback(email, req) {
     sheet.appendRow([
       new Date(), email, clip(req.discord, 64), clip(req.cardName, 120) || '(unknown card)',
       clip(req.cardType, 60), clip(req.cardSet, 120), clip(req.cardId, 80), feedback, '',
+      saveFeedbackSnapshot(req.snapshot), req.source === 'room' ? 'room' : 'deckbuilder',
     ]);
     const props = PropertiesService.getScriptProperties();
     if (props.getProperty('FEEDBACK_NOTIFIED') !== 'yes') {
@@ -1641,6 +1681,7 @@ function listCardFeedback() {
       items.push({
         row: i + 2, time: r[0] instanceof Date ? r[0].toISOString() : String(r[0]), from: r[1], discord: r[2],
         card: r[3], type: r[4], set: r[5], cardId: r[6], feedback: r[7], read: !!r[8],
+        snapshot: String(r[9] || ''), source: String(r[10] || 'deckbuilder'),
       });
     });
   }

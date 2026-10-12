@@ -728,3 +728,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .presence-cursor .chip{position:absolute;left:16px;top:17px;font-size:10.5px;padding:2px 7px;border-radius:var(--radius);
   background:var(--surface);border:1px solid var(--accent);color:var(--text);white-space:nowrap;
   box-shadow:0 1px 4px rgba(0,0,0,.35);animation:bouncePopIn .2s var(--bounce);}
+
+/* The feedback button is deliberately loud so people notice it. */
+#btnRoomFeedback{background:#f59e0b;color:#1f1300;border-color:#b45309;font-weight:700;box-shadow:0 0 0 2px rgba(245,158,11,.35);}
+#btnRoomFeedback:hover{background:#fbbf24;}

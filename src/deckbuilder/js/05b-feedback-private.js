@@ -101,9 +101,10 @@ function renderFeedbackInbox(){
   document.getElementById('feedbackInboxList').innerHTML = shown.length ? shown.map(x=>{
     const when = new Date(x.time); const whenTxt = isNaN(when) ? x.time : when.toLocaleString();
     return `<div class="fb-item${x.read?'':' unread'}">
-      <div class="fb-meta"><strong>${escapeHtml(x.card)}</strong> · ${escapeHtml(x.type)}${x.set?' · '+escapeHtml(x.set):''} · ${escapeHtml(whenTxt)}</div>
+      <div class="fb-meta">${x.source==='room'?'<span class="fb-tag">Game room</span> ':''}<strong>${escapeHtml(x.card)}</strong> · ${escapeHtml(x.type)}${x.set?' · '+escapeHtml(x.set):''} · ${escapeHtml(whenTxt)}</div>
       <div class="fb-meta">From ${escapeHtml(x.from)}${x.discord?' · Discord: '+escapeHtml(x.discord):''}</div>
       <div class="fb-text">${escapeHtml(x.feedback)}</div>
+      ${x.snapshot ? `<div class="btn btn-sm" data-snap="${escapeHtml(x.snapshot)}">View board snapshot</div><div class="fb-snap" data-snapbox="${escapeHtml(x.snapshot)}"></div>` : ''}
       ${x.read ? '' : `<div class="btn btn-sm" data-row="${x.row}">Mark read</div>`}
     </div>`;
   }).join('') : '<p style="color:var(--text-soft);">Nothing here.</p>';
@@ -122,5 +123,25 @@ async function markFeedbackRead(rows){
 }
 document.getElementById('btnFeedbackMarkAll').addEventListener('click', ()=>markFeedbackRead('all'));
 document.getElementById('feedbackInboxList').addEventListener('click', (e)=>{
+  const snap = e.target.closest('[data-snap]');
+  if(snap){ toggleFeedbackSnapshot(snap); return; }
   const b = e.target.closest('[data-row]'); if(b) markFeedbackRead([Number(b.dataset.row)]);
 });
+
+// Loads (once) and shows/hides a game-room board snapshot under its note.
+async function toggleFeedbackSnapshot(btn){
+  const id = btn.dataset.snap;
+  const box = [...document.querySelectorAll('[data-snapbox]')].find(el=>el.dataset.snapbox===id);
+  if(!box) return;
+  if(box.dataset.loaded){ box.style.display = box.style.display==='none' ? 'block' : 'none'; return; }
+  btn.textContent = 'Loading snapshot…';
+  try{
+    const j = await feedbackAdminCall('feedbackSnapshot', {fileId:id});
+    box.innerHTML = `<a href="${j.dataUrl}" target="_blank" rel="noopener"><img src="${j.dataUrl}" alt="Board snapshot" style="max-width:100%;border:1px solid var(--border);border-radius:6px;margin-top:8px;"></a>`;
+    box.dataset.loaded = '1';
+    btn.textContent = 'Hide board snapshot';
+  }catch(e){
+    btn.textContent = 'View board snapshot';
+    document.getElementById('feedbackInboxError').textContent = 'Could not load the snapshot: ' + e.message;
+  }
+}
