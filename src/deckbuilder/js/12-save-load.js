@@ -21,10 +21,9 @@ document.getElementById('btnSaveDeck').addEventListener('click', ()=>{
   if(!name){ toast('Give your deck a name first.'); return; }
   const decks = getSavedDecks();
   decks[name] = {
-    deckType: activeDeckKey(), overlordMode: curDeck().overlordMode,
-    leaderId: curDeck().leaderId, bonusCardId: curDeck().bonusCardId, extraCardId: curDeck().extraCardId,
-    bonusAspect: curDeck().bonusAspect, sourceExportedAt: curDeck().sourceExportedAt,
-    deckCards: [...curDeck().deckCards.entries()], deckOrder: curDeck().deckOrder, schemeIds: curDeck().schemeIds,
+    deckType: activeDeckKey(), ...deckCodec().saveExtras(curDeck()),
+    sourceExportedAt: curDeck().sourceExportedAt,
+    deckCards: [...curDeck().deckCards.entries()], deckOrder: curDeck().deckOrder,
   };
   setSavedDecks(decks);
   toast(`Saved "${name}".`);
@@ -48,13 +47,10 @@ function refreshLoadModal(){
 
   body.querySelectorAll('[data-load]').forEach(b=>b.onclick=()=>{
     const d = decks[b.dataset.load];
-    state.deckType = d.deckType; curDeck().overlordMode = d.overlordMode||'main';
-    curDeck().leaderId=d.leaderId; curDeck().bonusAspect=d.bonusAspect||'';
-    curDeck().bonusCardId=d.bonusCardId||null; curDeck().extraCardId=d.extraCardId||null;
+    state.deckType = d.deckType; deckCodec().applySaved(d, curDeck());
     curDeck().sourceExportedAt = d.sourceExportedAt||null;
     curDeck().deckCards = new Map(d.deckCards||[]);
     curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
-    curDeck().schemeIds = d.schemeIds||[];
     curDeck().name = b.dataset.load;
     curDeck().preconFileId = null;
     document.getElementById('loadModal').classList.add('hidden');
@@ -149,12 +145,7 @@ document.getElementById('importFileInput').addEventListener('change', (e)=>{
 
 function importDeckFromJson(d){
   if(!d || !d.deckType) throw new Error('not a recognized deck file');
-  state.deckType = d.deckType; curDeck().overlordMode='main';
-  curDeck().leaderId = d.leaderId || null;
-  curDeck().bonusCardId = d.bonusCardId || null;
-  curDeck().extraCardId = d.extraCardId || null;
-  curDeck().bonusAspect = d.bonusAspect || '';
-  curDeck().schemeIds = d.schemeIds || [];
+  state.deckType = d.deckType; deckCodec().applyJson(d, curDeck());
   curDeck().deckCards = new Map(Object.entries(d.deckCards||{}));
   curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
   curDeck().name = d.name || '';
@@ -166,53 +157,28 @@ function importDeckFromJson(d){
 
 function importDeckFromText(text){
   const lines = text.split('\n').map(l=>l.trim());
-  let section = null;
-  let leaderName = null, bonusCardName = null, extraCardName = null, bonusAspectVal = '', exportedAtVal = null;
-  const schemeNames=[], deckLines=[];
+  const ctx = { section: null, exportedAtVal: null, deckLines: [] };
   lines.forEach(line=>{
     if(!line) return;
     if(line.startsWith('#')){
       const m = line.match(/^#\s*exported:\s*(.+)$/i);
-      if(m) exportedAtVal = m[1].trim();
+      if(m) ctx.exportedAtVal = m[1].trim();
       return;
     }
-    if(/^leader:/i.test(line)){ leaderName = line.split(':').slice(1).join(':').trim(); return; }
-    if(/^(domination|quest):/i.test(line)){ bonusCardName = line.split(':').slice(1).join(':').trim(); return; }
-    if(/^(stronghold|resistance):/i.test(line)){ extraCardName = line.split(':').slice(1).join(':').trim(); return; }
-    if(/aspect:/i.test(line)){ bonusAspectVal = line.split(':').slice(1).join(':').trim(); return; }
-    if(/^schemes:/i.test(line)){ section='schemes'; return; }
-    if(/^deck:/i.test(line)){ section='deck'; return; }
+    if(deckCodec().parseTextLine(line, ctx)) return;
+    if(/^deck:/i.test(line)){ ctx.section='deck'; return; }
     const m = line.match(/^(\d+)x?\s+(.+)$/i);
     if(!m) return;
-    if(section==='schemes') schemeNames.push(m[2].trim());
-    else deckLines.push({name:m[2].trim(), count:Number(m[1])});
+    if(deckCodec().parseTextItem(ctx, m)) return;
+    ctx.deckLines.push({name:m[2].trim(), count:Number(m[1])});
   });
+  const deckLines = ctx.deckLines;
 
   const byName = new Map();
   state.cards.forEach(c=>{ if(!byName.has(c.name)) byName.set(c.name, c); });
 
   const unmatched=[];
-  const leaderCard = leaderName ? state.cards.find(c=>c.name===leaderName && (c.type==='O - Overlord'||c.type==='C - Champion')) : null;
-  if(leaderName && !leaderCard) unmatched.push(leaderName);
-
-  state.deckType = leaderCard ? (leaderCard.type==='O - Overlord'?'overlord':'champion') : state.deckType;
-  curDeck().overlordMode = 'main';
-  curDeck().leaderId = leaderCard ? leaderCard.id : null;
-
-  const bonusCard = bonusCardName ? byName.get(bonusCardName) : null;
-  if(bonusCardName && !bonusCard) unmatched.push(bonusCardName);
-  curDeck().bonusCardId = bonusCard ? bonusCard.id : null;
-  // Prefer the derived value from the matched card, same as everywhere else this is
-  // set — the explicit "Aspect:" line is only a fallback, e.g. for older exported
-  // files from before this card-driven derivation existed.
-  curDeck().bonusAspect = bonusCard ? (bonusCard.aspect||'') : bonusAspectVal;
-
-  const extraCard = extraCardName ? byName.get(extraCardName) : null;
-  if(extraCardName && !extraCard) unmatched.push(extraCardName);
-  curDeck().extraCardId = extraCard ? extraCard.id : null;
-
-  curDeck().schemeIds = [];
-  schemeNames.forEach(n=>{ const c=byName.get(n); c ? curDeck().schemeIds.push(c.id) : unmatched.push(n); });
+  deckCodec().finishTextImport(ctx, byName, unmatched);
 
   curDeck().deckCards = new Map(); curDeck().deckOrder = [];
   deckLines.forEach(({name,count})=>{
@@ -221,7 +187,7 @@ function importDeckFromText(text){
   });
 
   curDeck().name = '';
-  curDeck().sourceExportedAt = exportedAtVal;
+  curDeck().sourceExportedAt = ctx.exportedAtVal;
   renderAll();
   toast(unmatched.length ? `Imported with ${unmatched.length} unmatched line(s): ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}` : 'Deck imported.');
 }

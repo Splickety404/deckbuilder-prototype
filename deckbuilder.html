@@ -1240,9 +1240,40 @@ const cardSource = {
      backUrl(card)       the card back an export should use
      matches(rawSets)    (optional) true if this definition owns the loaded sets
    ========================================================================= */
+/* ---- DECK CODEC — how a deck is written to / read from a saved deck, a .json or .txt file,
+   a playingcards.io CSV and the print list. The shared code owns the part every game has
+   (name, cards, card order); the codec owns whatever extra a game puts in a deck (leaders,
+   side decks…). The plain codec below has no extras, so a free-form game's files hold
+   just the cards. Methods (d = the deck slot being read/written):
+     saveExtras(d) / applySaved(saved, d)      extras kept in the browser's saved decks
+     jsonFields(d) / applyJson(file, d)        extras in the .json deck file
+     textSetupLines(d) / textSchemeLines(d)    extra lines in the .txt decklist
+     parseTextLine(line, ctx)                  true if the line is a game-specific one
+     parseTextItem(ctx, match)                 true if a "3x Name" line belongs to a game-specific section
+     finishTextImport(ctx, byName, unmatched)  turn parsed names back into the deck
+     csvFiles()                                [{suffix, cards}], or {error}
+     printLead(d)                              cards printed before the deck itself
+     referencedIds(d)                          card ids the deck points at besides its main cards */
+const PlainDeckCodec = {
+  saveExtras(d){ return {}; },
+  applySaved(saved, d){},
+  jsonFields(d){ return {}; },
+  applyJson(file, d){},
+  textSetupLines(d){ return []; },
+  textSchemeLines(d){ return []; },
+  parseTextLine(line, ctx){ return false; },
+  parseTextItem(ctx, match){ return false; },
+  finishTextImport(ctx, byName, unmatched){},
+  csvFiles(){ return [{ suffix: '_playingcardsio.csv', cards: expandedDeckList() }]; },
+  printLead(d){ return []; },
+  referencedIds(d){ return []; },
+};
+function deckCodec(){ return state.game.deckCodec; }
+
 const GenericGame = {
   id: 'generic',
   structured: false,
+  deckCodec: PlainDeckCodec,
   multiValueSplit: /[/,]/,
   commaSplits: true,
   keepRow(r){
@@ -1280,6 +1311,7 @@ const GenericGame = {
     return state.genericBackUrl || '';
   },
 };
+
 
 // Which definition owns the cards that just loaded. Other definitions register
 // themselves in `gameDefinitions` (see the private Echo file); anything nobody
@@ -3621,10 +3653,9 @@ document.getElementById('btnSaveDeck').addEventListener('click', ()=>{
   if(!name){ toast('Give your deck a name first.'); return; }
   const decks = getSavedDecks();
   decks[name] = {
-    deckType: activeDeckKey(), overlordMode: curDeck().overlordMode,
-    leaderId: curDeck().leaderId, bonusCardId: curDeck().bonusCardId, extraCardId: curDeck().extraCardId,
-    bonusAspect: curDeck().bonusAspect, sourceExportedAt: curDeck().sourceExportedAt,
-    deckCards: [...curDeck().deckCards.entries()], deckOrder: curDeck().deckOrder, schemeIds: curDeck().schemeIds,
+    deckType: activeDeckKey(), ...deckCodec().saveExtras(curDeck()),
+    sourceExportedAt: curDeck().sourceExportedAt,
+    deckCards: [...curDeck().deckCards.entries()], deckOrder: curDeck().deckOrder,
   };
   setSavedDecks(decks);
   toast(`Saved "${name}".`);
@@ -3648,13 +3679,10 @@ function refreshLoadModal(){
 
   body.querySelectorAll('[data-load]').forEach(b=>b.onclick=()=>{
     const d = decks[b.dataset.load];
-    state.deckType = d.deckType; curDeck().overlordMode = d.overlordMode||'main';
-    curDeck().leaderId=d.leaderId; curDeck().bonusAspect=d.bonusAspect||'';
-    curDeck().bonusCardId=d.bonusCardId||null; curDeck().extraCardId=d.extraCardId||null;
+    state.deckType = d.deckType; deckCodec().applySaved(d, curDeck());
     curDeck().sourceExportedAt = d.sourceExportedAt||null;
     curDeck().deckCards = new Map(d.deckCards||[]);
     curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
-    curDeck().schemeIds = d.schemeIds||[];
     curDeck().name = b.dataset.load;
     curDeck().preconFileId = null;
     document.getElementById('loadModal').classList.add('hidden');
@@ -3749,12 +3777,7 @@ document.getElementById('importFileInput').addEventListener('change', (e)=>{
 
 function importDeckFromJson(d){
   if(!d || !d.deckType) throw new Error('not a recognized deck file');
-  state.deckType = d.deckType; curDeck().overlordMode='main';
-  curDeck().leaderId = d.leaderId || null;
-  curDeck().bonusCardId = d.bonusCardId || null;
-  curDeck().extraCardId = d.extraCardId || null;
-  curDeck().bonusAspect = d.bonusAspect || '';
-  curDeck().schemeIds = d.schemeIds || [];
+  state.deckType = d.deckType; deckCodec().applyJson(d, curDeck());
   curDeck().deckCards = new Map(Object.entries(d.deckCards||{}));
   curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
   curDeck().name = d.name || '';
@@ -3766,53 +3789,28 @@ function importDeckFromJson(d){
 
 function importDeckFromText(text){
   const lines = text.split('\n').map(l=>l.trim());
-  let section = null;
-  let leaderName = null, bonusCardName = null, extraCardName = null, bonusAspectVal = '', exportedAtVal = null;
-  const schemeNames=[], deckLines=[];
+  const ctx = { section: null, exportedAtVal: null, deckLines: [] };
   lines.forEach(line=>{
     if(!line) return;
     if(line.startsWith('#')){
       const m = line.match(/^#\s*exported:\s*(.+)$/i);
-      if(m) exportedAtVal = m[1].trim();
+      if(m) ctx.exportedAtVal = m[1].trim();
       return;
     }
-    if(/^leader:/i.test(line)){ leaderName = line.split(':').slice(1).join(':').trim(); return; }
-    if(/^(domination|quest):/i.test(line)){ bonusCardName = line.split(':').slice(1).join(':').trim(); return; }
-    if(/^(stronghold|resistance):/i.test(line)){ extraCardName = line.split(':').slice(1).join(':').trim(); return; }
-    if(/aspect:/i.test(line)){ bonusAspectVal = line.split(':').slice(1).join(':').trim(); return; }
-    if(/^schemes:/i.test(line)){ section='schemes'; return; }
-    if(/^deck:/i.test(line)){ section='deck'; return; }
+    if(deckCodec().parseTextLine(line, ctx)) return;
+    if(/^deck:/i.test(line)){ ctx.section='deck'; return; }
     const m = line.match(/^(\d+)x?\s+(.+)$/i);
     if(!m) return;
-    if(section==='schemes') schemeNames.push(m[2].trim());
-    else deckLines.push({name:m[2].trim(), count:Number(m[1])});
+    if(deckCodec().parseTextItem(ctx, m)) return;
+    ctx.deckLines.push({name:m[2].trim(), count:Number(m[1])});
   });
+  const deckLines = ctx.deckLines;
 
   const byName = new Map();
   state.cards.forEach(c=>{ if(!byName.has(c.name)) byName.set(c.name, c); });
 
   const unmatched=[];
-  const leaderCard = leaderName ? state.cards.find(c=>c.name===leaderName && (c.type==='O - Overlord'||c.type==='C - Champion')) : null;
-  if(leaderName && !leaderCard) unmatched.push(leaderName);
-
-  state.deckType = leaderCard ? (leaderCard.type==='O - Overlord'?'overlord':'champion') : state.deckType;
-  curDeck().overlordMode = 'main';
-  curDeck().leaderId = leaderCard ? leaderCard.id : null;
-
-  const bonusCard = bonusCardName ? byName.get(bonusCardName) : null;
-  if(bonusCardName && !bonusCard) unmatched.push(bonusCardName);
-  curDeck().bonusCardId = bonusCard ? bonusCard.id : null;
-  // Prefer the derived value from the matched card, same as everywhere else this is
-  // set — the explicit "Aspect:" line is only a fallback, e.g. for older exported
-  // files from before this card-driven derivation existed.
-  curDeck().bonusAspect = bonusCard ? (bonusCard.aspect||'') : bonusAspectVal;
-
-  const extraCard = extraCardName ? byName.get(extraCardName) : null;
-  if(extraCardName && !extraCard) unmatched.push(extraCardName);
-  curDeck().extraCardId = extraCard ? extraCard.id : null;
-
-  curDeck().schemeIds = [];
-  schemeNames.forEach(n=>{ const c=byName.get(n); c ? curDeck().schemeIds.push(c.id) : unmatched.push(n); });
+  deckCodec().finishTextImport(ctx, byName, unmatched);
 
   curDeck().deckCards = new Map(); curDeck().deckOrder = [];
   deckLines.forEach(({name,count})=>{
@@ -3821,11 +3819,137 @@ function importDeckFromText(text){
   });
 
   curDeck().name = '';
-  curDeck().sourceExportedAt = exportedAtVal;
+  curDeck().sourceExportedAt = ctx.exportedAtVal;
   renderAll();
   toast(unmatched.length ? `Imported with ${unmatched.length} unmatched line(s): ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}` : 'Deck imported.');
 }
 
+/* =========================================================================
+   ECHO DECK CODEC (private) — Echo's deck shape in every deck file: leader,
+   Domination/Quest, Stronghold/Resistance, the aspect they set, and the scheme
+   deck. This is also what the live site writes for free-form games (their
+   leader/scheme fields are simply empty), so existing saved decks, .json/.txt
+   files and the room's deck import keep working exactly as before — both
+   games point at this one codec in the private build. See DECK CODEC in 01b. */
+const EchoDeckCodec = {
+  saveExtras(d){
+    return { overlordMode: d.overlordMode, leaderId: d.leaderId, bonusCardId: d.bonusCardId, extraCardId: d.extraCardId,
+             bonusAspect: d.bonusAspect, schemeIds: d.schemeIds };
+  },
+  applySaved(saved, d){
+    d.overlordMode = saved.overlordMode||'main';
+    d.leaderId=saved.leaderId; d.bonusAspect=saved.bonusAspect||'';
+    d.bonusCardId=saved.bonusCardId||null; d.extraCardId=saved.extraCardId||null;
+    d.schemeIds = saved.schemeIds||[];
+  },
+  jsonFields(d){
+    return {
+      leaderId: d.leaderId,
+      leaderName: getLeader()?getLeader().name:null,
+      bonusCardId: d.bonusCardId,
+      bonusCardName: getBonusCard()?getBonusCard().name:null,
+      extraCardId: d.extraCardId,
+      extraCardName: getExtraCard()?getExtraCard().name:null,
+      bonusAspect: d.bonusAspect,
+      schemeIds: d.schemeIds,
+    };
+  },
+  applyJson(file, d){
+    d.overlordMode='main';
+    d.leaderId = file.leaderId || null;
+    d.bonusCardId = file.bonusCardId || null;
+    d.extraCardId = file.extraCardId || null;
+    d.bonusAspect = file.bonusAspect || '';
+    d.schemeIds = file.schemeIds || [];
+  },
+  textSetupLines(d){
+    const leader = getLeader();
+    const bonusCard = getBonusCard();
+    const extraCard = getExtraCard();
+    const isOverlord = state.deckType==='overlord';
+    const lines = [];
+    if(leader) lines.push(`Leader: ${leader.name}`);
+    if(bonusCard) lines.push(`${isOverlord?'Domination':'Quest'}: ${bonusCard.name}`);
+    if(extraCard) lines.push(`${isOverlord?'Stronghold':'Resistance'}: ${extraCard.name}`);
+    if(d.bonusAspect) lines.push(`${isOverlord?'Domination':'Quest'} Aspect: ${d.bonusAspect}`);
+    return lines;
+  },
+  textSchemeLines(d){
+    const lines = [];
+    if(state.deckType==='overlord' && d.schemeIds.length){
+      lines.push('Schemes:');
+      d.schemeIds.forEach(id=>{ const c=state.byId.get(id); if(c) lines.push(`1x ${c.name}`); });
+      lines.push('');
+    }
+    return lines;
+  },
+  parseTextLine(line, ctx){
+    if(!ctx.schemeNames) ctx.schemeNames = [];
+    if(/^leader:/i.test(line)){ ctx.leaderName = line.split(':').slice(1).join(':').trim(); return true; }
+    if(/^(domination|quest):/i.test(line)){ ctx.bonusCardName = line.split(':').slice(1).join(':').trim(); return true; }
+    if(/^(stronghold|resistance):/i.test(line)){ ctx.extraCardName = line.split(':').slice(1).join(':').trim(); return true; }
+    if(/aspect:/i.test(line)){ ctx.bonusAspectVal = line.split(':').slice(1).join(':').trim(); return true; }
+    if(/^schemes:/i.test(line)){ ctx.section='schemes'; return true; }
+    return false;
+  },
+  parseTextItem(ctx, m){
+    if(ctx.section==='schemes'){ ctx.schemeNames.push(m[2].trim()); return true; }
+    return false;
+  },
+  finishTextImport(ctx, byName, unmatched){
+    const leaderName = ctx.leaderName || null, bonusCardName = ctx.bonusCardName || null, extraCardName = ctx.extraCardName || null;
+    const bonusAspectVal = ctx.bonusAspectVal || '', schemeNames = ctx.schemeNames || [];
+    const leaderCard = leaderName ? state.cards.find(c=>c.name===leaderName && (c.type==='O - Overlord'||c.type==='C - Champion')) : null;
+    if(leaderName && !leaderCard) unmatched.push(leaderName);
+
+    state.deckType = leaderCard ? (leaderCard.type==='O - Overlord'?'overlord':'champion') : state.deckType;
+    curDeck().overlordMode = 'main';
+    curDeck().leaderId = leaderCard ? leaderCard.id : null;
+
+    const bonusCard = bonusCardName ? byName.get(bonusCardName) : null;
+    if(bonusCardName && !bonusCard) unmatched.push(bonusCardName);
+    curDeck().bonusCardId = bonusCard ? bonusCard.id : null;
+    // Prefer the derived value from the matched card, same as everywhere else this is
+    // set — the explicit "Aspect:" line is only a fallback, e.g. for older exported
+    // files from before this card-driven derivation existed.
+    curDeck().bonusAspect = bonusCard ? (bonusCard.aspect||'') : bonusAspectVal;
+
+    const extraCard = extraCardName ? byName.get(extraCardName) : null;
+    if(extraCardName && !extraCard) unmatched.push(extraCardName);
+    curDeck().extraCardId = extraCard ? extraCard.id : null;
+
+    curDeck().schemeIds = [];
+    schemeNames.forEach(n=>{ const c=byName.get(n); c ? curDeck().schemeIds.push(c.id) : unmatched.push(n); });
+  },
+  csvFiles(){
+    if(!state.game.structured){
+      // No leader/setup slots to prepend in generic mode — just the deck itself.
+      return [{ suffix: '_playingcardsio.csv', cards: expandedDeckList() }];
+    }
+    const leader = getLeader();
+    if(!leader) return { error: 'Choose a leader first.' };
+    const setupCards = [leader, getBonusCard(), getExtraCard()].filter(Boolean);
+    if(state.deckType==='overlord'){
+      // Two separate files: the Overlord deck (leader, Domination, Stronghold, then the
+      // 50-card deck) and the scheme deck (just the 5 schemes) — matching how you'd
+      // actually build these as two distinct decks on playingcards.io.
+      const schemeList = curDeck().schemeIds.map(id=>state.byId.get(id)).filter(Boolean);
+      return [
+        { suffix: '_overlord_playingcardsio.csv', cards: [...setupCards, ...expandedDeckList()] },
+        { suffix: '_schemes_playingcardsio.csv', cards: schemeList },
+      ];
+    }
+    return [{ suffix: '_playingcardsio.csv', cards: [...setupCards, ...expandedDeckList()] }];
+  },
+  printLead(d){
+    const lead = [getLeader(), getBonusCard(), getExtraCard()];
+    if(state.deckType==='overlord') d.schemeIds.forEach(id=> lead.push(state.byId.get(id)));
+    return lead;
+  },
+  referencedIds(d){ return [d.leaderId, d.bonusCardId, d.extraCardId, ...d.schemeIds]; },
+};
+EchoGame.deckCodec = EchoDeckCodec;
+GenericGame.deckCodec = EchoDeckCodec; // private build only: free-form games keep the live site's file shape
 /* =========================================================================
    EXPORT
    ========================================================================= */
@@ -3886,12 +4010,7 @@ function buildPrintList(){
     list.push({card, side:'front'});
     if(card._doubleSided) list.push({card, side:'back'});
   };
-  pushCard(getLeader());
-  pushCard(getBonusCard());
-  pushCard(getExtraCard());
-  if(state.deckType==='overlord'){
-    curDeck().schemeIds.forEach(id=> pushCard(state.byId.get(id)));
-  }
+  deckCodec().printLead(curDeck()).forEach(pushCard);
   curDeck().deckOrder.forEach(id=>{
     const n = curDeck().deckCards.get(id)||0;
     const c=state.byId.get(id); if(!c) return;
@@ -3992,10 +4111,7 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
 function missingReferencedCardIds(){
   const missing = [];
   const check = (id) => { if(id && !state.byId.has(id)) missing.push(id); };
-  check(curDeck().leaderId);
-  check(curDeck().bonusCardId);
-  check(curDeck().extraCardId);
-  curDeck().schemeIds.forEach(check);
+  deckCodec().referencedIds(curDeck()).forEach(check);
   for(const id of curDeck().deckCards.keys()) check(id);
   return missing;
 }
@@ -4036,48 +4152,23 @@ function expandedDeckList(){
 
 document.getElementById('optExportCsv').addEventListener('click', ()=>{
   warnAboutMissingCards();
-  if(!state.game.structured){
-    // No leader/setup slots to prepend in generic mode — just the deck itself.
-    downloadBlob(csvForCardList(expandedDeckList()), deckFileBase()+'_playingcardsio.csv', 'text/csv');
-    return;
-  }
-  const leader = getLeader();
-  if(!leader){ toast('Choose a leader first.'); return; }
-  const setupCards = [leader, getBonusCard(), getExtraCard()].filter(Boolean);
-
-  if(state.deckType==='overlord'){
-    // Two separate files: the Overlord deck (leader, Domination, Stronghold, then the
-    // 50-card deck) and the scheme deck (just the 5 schemes) — matching how you'd
-    // actually build these as two distinct decks on playingcards.io.
-    downloadBlob(csvForCardList([...setupCards, ...expandedDeckList()]), deckFileBase()+'_overlord_playingcardsio.csv', 'text/csv');
-    const schemeList = curDeck().schemeIds.map(id=>state.byId.get(id)).filter(Boolean);
-    setTimeout(()=>{
-      downloadBlob(csvForCardList(schemeList), deckFileBase()+'_schemes_playingcardsio.csv', 'text/csv');
-    }, 200); // small stagger so browsers don't treat the second download as blocked/suspicious
-  } else {
-    downloadBlob(csvForCardList([...setupCards, ...expandedDeckList()]), deckFileBase()+'_playingcardsio.csv', 'text/csv');
-  }
+  const files = deckCodec().csvFiles();
+  if(files.error){ toast(files.error); return; }
+  files.forEach((f, i)=>{
+    const save = ()=> downloadBlob(csvForCardList(f.cards), deckFileBase()+f.suffix, 'text/csv');
+    if(i===0) save();
+    else setTimeout(save, 200); // small stagger so browsers don't treat the second download as blocked/suspicious
+  });
 });
 
 function buildDecklistTextLines(exportedAtIso){
-  const leader = getLeader();
-  const bonusCard = getBonusCard();
-  const extraCard = getExtraCard();
-  const isOverlord = state.deckType==='overlord';
   const lines = [];
   lines.push(`# ${document.getElementById('deckNameInput').value.trim() || 'Untitled Deck'}`);
   lines.push(`# Deck type: ${activeDeckKey()}`);
   if(exportedAtIso) lines.push(`# Exported: ${exportedAtIso}`);
-  if(leader) lines.push(`Leader: ${leader.name}`);
-  if(bonusCard) lines.push(`${isOverlord?'Domination':'Quest'}: ${bonusCard.name}`);
-  if(extraCard) lines.push(`${isOverlord?'Stronghold':'Resistance'}: ${extraCard.name}`);
-  if(curDeck().bonusAspect) lines.push(`${isOverlord?'Domination':'Quest'} Aspect: ${curDeck().bonusAspect}`);
+  lines.push(...deckCodec().textSetupLines(curDeck()));
   lines.push('');
-  if(isOverlord && curDeck().schemeIds.length){
-    lines.push('Schemes:');
-    curDeck().schemeIds.forEach(id=>{ const c=state.byId.get(id); if(c) lines.push(`1x ${c.name}`); });
-    lines.push('');
-  }
+  lines.push(...deckCodec().textSchemeLines(curDeck()));
   lines.push('Deck:');
   curDeck().deckOrder.forEach(id=>{
     const n = curDeck().deckCards.get(id)||0; const c=state.byId.get(id);
@@ -4107,12 +4198,7 @@ document.getElementById('optExportClipboard').addEventListener('click', async ()
 // JSON export so the game room app can resolve card art/names without any sheet
 // id hardcoded in its own source. A deck mixing Set 1 and Set 2 cards yields 2 entries.
 function computeSourceSheets(){
-  const ids = [];
-  if(curDeck().leaderId) ids.push(curDeck().leaderId);
-  if(curDeck().bonusCardId) ids.push(curDeck().bonusCardId);
-  if(curDeck().extraCardId) ids.push(curDeck().extraCardId);
-  curDeck().schemeIds.forEach(id=>ids.push(id));
-  curDeck().deckOrder.forEach(id=>ids.push(id));
+  const ids = [...deckCodec().referencedIds(curDeck()).filter(Boolean), ...curDeck().deckOrder];
   const seen = new Map(); // sheetId -> setName
   ids.forEach(id=>{
     const c = state.byId.get(id);
@@ -4128,14 +4214,7 @@ function deckJsonData(now){
     name: document.getElementById('deckNameInput').value.trim()||'Untitled Deck',
     deckType: activeDeckKey(),
     exportedAt: now,
-    leaderId: curDeck().leaderId,
-    leaderName: getLeader()?getLeader().name:null,
-    bonusCardId: curDeck().bonusCardId,
-    bonusCardName: getBonusCard()?getBonusCard().name:null,
-    extraCardId: curDeck().extraCardId,
-    extraCardName: getExtraCard()?getExtraCard().name:null,
-    bonusAspect: curDeck().bonusAspect,
-    schemeIds: curDeck().schemeIds,
+    ...deckCodec().jsonFields(curDeck()),
     deckOrder: curDeck().deckOrder,
     deckCards: Object.fromEntries(curDeck().deckCards),
     sourceSheets: computeSourceSheets(),

@@ -17,9 +17,40 @@
      backUrl(card)       the card back an export should use
      matches(rawSets)    (optional) true if this definition owns the loaded sets
    ========================================================================= */
+/* ---- DECK CODEC — how a deck is written to / read from a saved deck, a .json or .txt file,
+   a playingcards.io CSV and the print list. The shared code owns the part every game has
+   (name, cards, card order); the codec owns whatever extra a game puts in a deck (leaders,
+   side decks…). The plain codec below has no extras, so a free-form game's files hold
+   just the cards. Methods (d = the deck slot being read/written):
+     saveExtras(d) / applySaved(saved, d)      extras kept in the browser's saved decks
+     jsonFields(d) / applyJson(file, d)        extras in the .json deck file
+     textSetupLines(d) / textSchemeLines(d)    extra lines in the .txt decklist
+     parseTextLine(line, ctx)                  true if the line is a game-specific one
+     parseTextItem(ctx, match)                 true if a "3x Name" line belongs to a game-specific section
+     finishTextImport(ctx, byName, unmatched)  turn parsed names back into the deck
+     csvFiles()                                [{suffix, cards}], or {error}
+     printLead(d)                              cards printed before the deck itself
+     referencedIds(d)                          card ids the deck points at besides its main cards */
+const PlainDeckCodec = {
+  saveExtras(d){ return {}; },
+  applySaved(saved, d){},
+  jsonFields(d){ return {}; },
+  applyJson(file, d){},
+  textSetupLines(d){ return []; },
+  textSchemeLines(d){ return []; },
+  parseTextLine(line, ctx){ return false; },
+  parseTextItem(ctx, match){ return false; },
+  finishTextImport(ctx, byName, unmatched){},
+  csvFiles(){ return [{ suffix: '_playingcardsio.csv', cards: expandedDeckList() }]; },
+  printLead(d){ return []; },
+  referencedIds(d){ return []; },
+};
+function deckCodec(){ return state.game.deckCodec; }
+
 const GenericGame = {
   id: 'generic',
   structured: false,
+  deckCodec: PlainDeckCodec,
   multiValueSplit: /[/,]/,
   commaSplits: true,
   keepRow(r){
@@ -57,6 +88,7 @@ const GenericGame = {
     return state.genericBackUrl || '';
   },
 };
+
 
 // Which definition owns the cards that just loaded. Other definitions register
 // themselves in `gameDefinitions` (see the private Echo file); anything nobody
