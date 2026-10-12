@@ -283,7 +283,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .card-tile img.rotate-180-fill{transform:rotate(180deg);}
 .card-tile.landscape-card .fallback-face{aspect-ratio:7/5;}
-.card-tile.landscape-card{grid-column:span 2;width:calc(var(--card-min-width, 170px) * 1.647);max-width:calc(var(--card-min-width, 170px) * 1.647);justify-self:start;} /* rotated 90°/270° — wants roughly a portrait card's height as its width, not the full 2-column stretch. Fixed width (not just max-width) matters: without it, an un-stretched tile shrinks/grows to fit its own name text, which is why different scheme cards were rendering at different sizes. Scales with the card-size setting via the same ratio (280/170) established when this was first tuned, so schemes stay visually consistent with normal cards at any size. */
+.card-tile.landscape-card{grid-column:span 2;width:calc(var(--card-min-width, 170px) * 1.647);max-width:calc(var(--card-min-width, 170px) * 1.647);justify-self:start;} /* rotated 90°/270° — wants roughly a portrait card's height as its width, not the full 2-column stretch. Fixed width (not just max-width) matters: without it, an un-stretched tile shrinks/grows to fit its own name text, which is why different sideways cards were rendering at different sizes. Scales with the card-size setting via the same ratio (280/170) established when this was first tuned, so sideways cards stay visually consistent with normal cards at any size. */
 .card-tile.illegal{opacity:.42;filter:grayscale(75%);}
 .card-tile.illegal:hover{opacity:.7;}
 .card-tile .fallback-face{
