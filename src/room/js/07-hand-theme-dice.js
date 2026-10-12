@@ -105,7 +105,7 @@ document.getElementById('btnBoardMenu').addEventListener('click', (e)=>{
   if(willShow) positionMenuNear(menu, document.getElementById('btnBoardMenu'));
 });
 // Same list as the table's right-click Import Precon (which needs a spot of
-// bare table to right-click — the Echo of Omens board is mostly zones). The
+// bare table to right-click — a board is mostly zones). The
 // list opens by the menu; the deck lands in the middle of your view.
 document.getElementById('btnImportPrecon').addEventListener('click', (e)=>{
   e.stopPropagation(); // the outside-click closers would shut the list as it opens

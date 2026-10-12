@@ -60,8 +60,8 @@ function updateConnectionUI(){
 document.getElementById('btnEnterRoom').addEventListener('click', async ()=>{
   const err = document.getElementById('setupError');
   err.textContent = '';
-  // state.playerName is already set from the signed-in Google account (see
-  // onGoogleSignIn) by the time this screen is even reachable.
+  // state.playerName is already set by the start screen (see startRoom) by the
+  // time this screen is even reachable.
 
   const rejoinOpen = !document.getElementById('rejoinFields').classList.contains('hidden');
   if(!rejoinOpen){

@@ -1,7 +1,7 @@
 /* =========================================================================
    DECK IMPORT — one shuffled, face-down pile containing every card from the
-   deckbuilder's exported JSON (leader, Domination/Quest, Stronghold/Resistance,
-   schemes, and the full main deck all mixed together). Pulling specific cards
+   deckbuilder's exported JSON (any leader-style cards the game puts first,
+   then the full main deck). Pulling specific cards
    like the leader out is handled by the search tool (not built this round —
    for now this creates the pile; search/draw come next).
    ========================================================================= */
@@ -11,8 +11,7 @@ function shuffle(arr){
 }
 // No more overlay, no more waiting on the network before the pile even shows
 // up: importing used to block on a full round-trip per set — including the
-// per-set Drive-access check happening server-side (see fetchSheetCards ->
-// Code.gs's getCardsBySheetId) — behind a modal spinner, which is exactly the
+// per-set access check happening server-side (see roomServices.loadSheet) — behind a modal spinner, which is exactly the
 // "really slow" complaint. All the ids this deck needs are already known
 // straight from the deck file itself (no fetch required for THAT part), so
 // the pile is placed immediately via the ordinary PLACE_PIECE path, which
@@ -26,14 +25,11 @@ async function importDeckJson(deckJson, dropX, dropY){
   if(!deckJson.sourceSheets || !deckJson.sourceSheets.length){
     throw new Error('This deck file has no sourceSheets info — re-export it from the latest deckbuilder version.');
   }
-  // The deck goes down in its own list order, NOT shuffled — leader, bonus,
-  // extra, schemes, then the main deck in its saved order — with the first
+  // The deck goes down in its own list order, NOT shuffled — whatever extra cards the
+  // game puts first (a leader, say), then the main deck in its saved order — with the first
   // card on top (a pile's top card is its LAST array entry).
   const order = [];
-  if(deckJson.leaderId) order.push(deckJson.leaderId);
-  if(deckJson.bonusCardId) order.push(deckJson.bonusCardId);
-  if(deckJson.extraCardId) order.push(deckJson.extraCardId);
-  (deckJson.schemeIds||[]).forEach(id=>order.push(id));
+  roomServices.deckLeadIds(deckJson).forEach(id=>order.push(id));
   const counts = deckJson.deckCards || {};
   const mainIds = [...new Set([...(deckJson.deckOrder||[]).filter(id=> counts[id]), ...Object.keys(counts)])];
   mainIds.forEach(id=>{ for(let i=0;i<Number(counts[id]||0);i++) order.push(id); });

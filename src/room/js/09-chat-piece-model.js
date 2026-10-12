@@ -857,7 +857,7 @@ function sendPieceToHand(p){
 // grabbed, so the source pile's count/render updates the instant the card is
 // picked up AND the card itself is, from that point on, a normal floating
 // piece: see driveWholePieceDrag/finalizeWholePieceDrop, which take it from
-// here exactly the same way they drive any other whole-piece drag (hand,
+// here exactly the same way they handle any other whole-piece drag (hand,
 // merge, or tucking into a splayed pile showing its own face). Returns a
 // ctx ready to hand straight to driveWholePieceDrag; its `sourceRestore`
 // is what finalizeWholePieceDrop composes onto the landing undo so a single
@@ -975,7 +975,7 @@ function repositionAttachedTokens(pieceId){
 // following the cursor" drag — a piece that already existed before the drag
 // (wireWholeInteraction) and a piece that was JUST created the instant this
 // particular drag started (peeling a card off a pile, or playing one from
-// hand — see beginPeelAsPiece) both drive through the exact same code from
+// hand — see beginPeelAsPiece) both run through the exact same code from
 // here on, so they look and behave identically: hand-drop feedback, a merge
 // highlight over an ordinary pile, or — hovering a SPLAYED pile — the piece
 // itself relocating into the fan at the exact previewed slot, showing its

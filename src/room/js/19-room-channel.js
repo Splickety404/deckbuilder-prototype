@@ -1,26 +1,18 @@
 /* =========================================================================
-   ROOM CHANNEL — one Ably realtime channel per session code that carries
+   ROOM CHANNEL — one realtime channel per session code that carries
    BOTH real game events (see the SYNC ENGINE section above — postRoomEvent
    publishes here, handleIncomingRoomEvent subscribes here) AND ephemeral
    cosmetic presence: where each connected player's cursor currently is,
-   and whether they're holding/dragging something right now. Ably supports
-   pub/sub messages and presence on the same channel, so one connection
+   and whether they're holding/dragging something right now. A transport
+   supports pub/sub messages and presence on the same channel, so one connection
    does both jobs.
 
    This is now a hard requirement for multiplayer, not an optional add-on —
    see the SYNC ENGINE comment above for why the old Sheets-polling design
-   was replaced outright rather than kept as a fallback. If ABLY_API_KEY is
-   left blank or the SDK fails to load, connectToRoom below shows a clear
-   toast rather than silently limping along on a broken sync.
+   was replaced outright rather than kept as a fallback. If the transport can't
+   start, connectToRoom below shows a clear toast rather than silently
+   limping along on a broken sync.
    ========================================================================= */
-const ABLY_API_KEY = 'TTVNbQ.lz-fZA:mzHxpkBNnMo7qMtP3xs8uqEB4yye8np0lqtaS00fSM0';
-// Paste your Ably app's API key here (Ably dashboard → your app → API Keys
-// tab → copy a key's string, looks like "AbCdEf.GhIjKl:mnopqrstuvwxyz").
-// A key scoped to just {subscribe, publish, presence} on channel "room:*"
-// is the tidy choice; the default root key works fine too for a private
-// game among friends.
-function ablyConfigured(){ return !!ABLY_API_KEY; }
-
 var presenceCursors = new Map(); // playerId -> DOM element in #boardWorld. `var` (hoisted) because renderBoard, defined earlier, reads it
 let presenceLastSent = 0;
 const PRESENCE_SEND_MS = 150; // ~6-7 updates/sec — smooth, and easier on the free tier's message quota now that this channel also carries every game action
@@ -28,7 +20,7 @@ let presenceHolding = false;
 let presenceHeldLabel = null;
 
 /* ---- SyncTransport — how this page talks to the other players --------------
-   The rest of the room only ever talks to `transport` (below), never to Ably
+   The rest of the room only ever talks to `transport` (below), never to a specific service
    directly, so the way players are connected can be swapped without touching
    game logic. A transport is any object with:
      open(code, handlers) -> true if it started, false if it can't run here
@@ -39,57 +31,7 @@ let presenceHeldLabel = null;
      updatePresence(data)    publish this player's cursor / holding state
      leaveNow()              say goodbye immediately (tab closing)
      close()                 stop everything
-   AblyTransport below is the original behavior, moved here unchanged. ------- */
-const AblyTransport = (()=>{
-  let client = null;
-  let channel = null;
-  let handlers = null;
-  function ensureClient(){
-    if(!ablyConfigured()) return false;
-    if(client) return true;
-    try{
-      if(!window.Ably) return false; // SDK <script> tag didn't load (offline, blocked, etc.)
-      client = new Ably.Realtime({ key: ABLY_API_KEY, clientId: state.playerId });
-      client.connection.on((stateChange)=>{
-        const s = stateChange.current;
-        if(handlers) handlers.onStatus(s==='connected', s==='connected' ? null : s);
-      });
-      return true;
-    }catch(err){ console.warn('Live sync disabled — Ably init failed:', err); return false; }
-  }
-  // Presence events (enter/update/leave) only tell us SOMETHING changed, not
-  // the full picture — re-fetching the whole member list each time is cheap
-  // at card-game scale and keeps rendering dead simple.
-  function refreshMembers(){
-    if(!channel) return;
-    // Ably's v2 SDK returns a promise here (the old (err, members) callback form is rejected).
-    channel.presence.get().then(members=>{ if(handlers) handlers.onPresence(members); }).catch(()=>{});
-  }
-  function onMessage(msg){ if(handlers) handlers.onEvent(msg); }
-  return {
-    open(code, h){
-      if(!ensureClient()) return false;
-      handlers = h;
-      channel = client.channels.get(`room:${code}`);
-      channel.subscribe(onMessage);
-      channel.presence.subscribe(refreshMembers);
-      channel.presence.enter({ name: state.playerName, x:0, y:0, holding:false, heldLabel:null });
-      return true;
-    },
-    send(type, envelope){ channel.publish(type, envelope); },
-    updatePresence(data){ channel.presence.update(data); },
-    leaveNow(){ if(channel) channel.presence.leave(); },
-    close(){
-      if(channel){
-        channel.unsubscribe(onMessage);
-        channel.presence.unsubscribe(refreshMembers);
-        channel.presence.leave();
-      }
-      channel = null;
-      handlers = null;
-    },
-  };
-})();
+   The private build's transport lives in a private file. ------- */
 let transport = null; // the active SyncTransport while connected to a room, else null
 // Deterministic per-player color, derived purely from the id — every viewer
 // lands on the same color for the same player with nothing to sync.
@@ -126,7 +68,7 @@ function renderPresenceMembers(members){
     else chip.style.display = 'none';
   });
   // Anyone no longer in the member list (left, disconnected) loses their
-  // cursor — Ably detects a dropped connection and clears their presence
+  // cursor — the transport detects a dropped connection and clears their presence
   // automatically even if they close the tab without warning.
   presenceCursors.forEach((el, pid)=>{ if(!seen.has(pid)){ el.remove(); presenceCursors.delete(pid); } });
 }
@@ -134,7 +76,7 @@ function renderPresenceMembers(members){
 // bus (handleIncomingRoomEvent, defined in the SYNC ENGINE section above)
 // and presence (cursors) ride the same connection.
 function initRoomChannel(){
-  const t = AblyTransport;
+  const t = roomServices.syncTransport;
   const ok = t.open(state.sessionCode, {
     onEvent: handleIncomingRoomEvent,
     onPresence: renderPresenceMembers,

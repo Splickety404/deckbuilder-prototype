@@ -32,37 +32,6 @@ input[type="range"]{accent-color:var(--accent);}
 
 @keyframes eoo-spin{ to{ transform:rotate(360deg); } }
 
-/* ---------- Sign-in gate ---------- */
-/* Same lockdown as the deckbuilder: nothing (not even the "enter the room"
-   setup screen) shows until Google sign-in succeeds. The room doesn't need a
-   server round-trip at sign-in time the way the deckbuilder does (there's no
-   fixed set of "games" to check access to up front) — access is instead
-   checked per-sheet, lazily, the first time a card from that sheet is needed
-   (see fetchSheetCards/getCardsBySheetId) — so this gate just needs a valid
-   Google identity to exist before letting anyone in. */
-#signin-gate .signin-handoff{margin:0 0 12px;padding:9px 12px;border-radius:8px;background:var(--accent-soft, rgba(124,108,255,.15));font-size:13px;font-weight:600;}
-#signin-gate{
-  position:fixed;inset:0;z-index:300;
-  display:flex;align-items:center;justify-content:center;
-  background:var(--bg);
-}
-#signin-gate.hidden{display:none;}
-#signin-gate .signin-box{
-  width:min(360px,90vw);text-align:center;
-  display:flex;flex-direction:column;align-items:center;gap:16px;
-}
-#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
-#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
-#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
-#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
-.signin-spinner{
-  width:26px;height:26px;border-radius:50%;
-  border:3px solid var(--border);border-top-color:var(--accent);
-  animation:eoo-spin 0.9s linear infinite;
-  margin:2px auto 0;
-}
-
-
 /* ---------- Setup screen ---------- */
 #setup-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:50;}
 #setup-screen.hidden{display:none;}
@@ -719,7 +688,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    version set position:relative instead, on the theory that a child needed
    a "positioned ancestor" — true, but .splay-card already IS one,  so the
    override just pulled the card OUT of the piece's absolute fan-layout
-   scheme and into normal HTML block flow, where multiple such cards stack
+   arrangement and into normal HTML block flow, where multiple such cards stack
    downward one after another before their own left/top offsets even get
    applied — invisible with only one such card in the pile, but a very
    visible "cards drift further down/diagonally with every card added" bug

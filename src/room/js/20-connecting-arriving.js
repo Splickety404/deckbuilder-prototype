@@ -11,7 +11,7 @@ function connectToRoom({code, isHost}){
   const channelReady = initRoomChannel();
   if(!channelReady){
     setConnStatus(false, 'not configured');
-    toast('Live sync isn\'t set up yet (missing Ably key) — see the setup notes near ABLY_API_KEY in room.html.');
+    toast(roomServices.syncUnavailableHint);
   }
   if(isHost){
     // Whatever you've already built locally becomes the room's starting layout.
@@ -52,24 +52,14 @@ const roomHandoff = (()=>{
     return h;
   }catch(e){ return null; }
 })();
-if(roomHandoff){
-  const note = document.getElementById('signinHandoff');
-  note.textContent = roomHandoff.mode==='join'
-    ? `Sign in to join room ${String(roomHandoff.code||'').toUpperCase()} with "${roomHandoff.deck.name||'your deck'}".`
-    : `Sign in to open a new room${roomHandoff.boardName ? ` on "${roomHandoff.boardName}"` : ''} with "${roomHandoff.deck.name||'your deck'}".`;
-  note.style.display = '';
-}
+if(roomHandoff) roomServices.showStartNote(roomServices.handoffNote(roomHandoff));
 /* ---- Direct board link: room.html?board=<game folder id> opens a new room
    on that game's newest board layout (the same .json files the deckbuilder's
-   "Send deck to room" offers — see getPrecons in Code.gs), read fresh from
-   the game folder after sign-in. The link is used once: it's taken off the
+   "Send deck to room" offers), read fresh from
+   the game folder once the player is in. The link is used once: it's taken off the
    address bar, so a refresh rejoins the room instead of opening another. */
 const boardLinkGameId = (()=>{ try{ return new URLSearchParams(location.search).get('board') || ''; }catch(e){ return ''; } })();
-if(boardLinkGameId && !roomHandoff){
-  const note = document.getElementById('signinHandoff');
-  note.textContent = 'Sign in to open a new room with this game\'s board.';
-  note.style.display = '';
-}
+if(boardLinkGameId && !roomHandoff) roomServices.showStartNote(roomServices.boardLinkNote());
 function fetchGameBoards(gameId){ return roomServices.fetchGameBoards(gameId); }
 async function startFromBoardLink(gameId){
   try{ history.replaceState(null, '', location.pathname); }catch(e){}

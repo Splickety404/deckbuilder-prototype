@@ -6,15 +6,13 @@
    preview. Never shows mid-drag. Sideways art (landscape cards stored in a
    portrait image, see cardArtRotation) is turned upright.
    ========================================================================= */
-// Which way a card's FRONT art is printed: explicit "rotate" column (0/90/
-// 180/270, the deckbuilder's generic-game rule), else Echo of Omens' own
-// landscape card types — the same rules the deckbuilder uses.
-const ROOM_HORIZONTAL_TYPES = new Set(['O - Scheme','O - Domination','C - Quest','O - Stronghold','C - Resistance']);
+// Which way a card's FRONT art is printed: an explicit "rotate" column (0/90/180/270, the
+// deckbuilder's free-form-game rule) wins; otherwise the game decides (see
+// roomServices.cardRotationFor) — the same rules the deckbuilder uses.
 function cardArtRotation(r){
   const rot = parseInt(r.rotate, 10);
   if([90,180,270].includes(rot)) return rot;
-  if(ROOM_HORIZONTAL_TYPES.has(r.type) || (r.type==='Z - Custom' && (r.name==='Stronghold' || r.name==='Resistance'))) return 90;
-  return 0;
+  return roomServices.cardRotationFor(r);
 }
 let hoverTimer = null;
 const HOVER_PREVIEW_WIDTH = 320; // at preview size 100%

@@ -1,0 +1,37 @@
+/* =========================================================================
+   PRIVATE STYLES — the Google sign-in gate (its markup is wrapped in PRIVATE
+   markers in index.html, so the public build has neither).
+   ========================================================================= */
+/* ---------- Sign-in gate ---------- */
+/* Same lockdown as the deckbuilder: nothing (not even the "enter the room"
+   setup screen) shows until Google sign-in succeeds. The room doesn't need a
+   server round-trip at sign-in time the way the deckbuilder does (there's no
+   fixed set of "games" to check access to up front) — access is instead
+   checked per-sheet, lazily, the first time a card from that sheet is needed
+   (see fetchSheetCards/getCardsBySheetId) — so this gate just needs a valid
+   Google identity to exist before letting anyone in. */
+#signin-gate .signin-handoff{margin:0 0 12px;padding:9px 12px;border-radius:8px;background:var(--accent-soft, rgba(124,108,255,.15));font-size:13px;font-weight:600;}
+#signin-gate{
+  position:fixed;inset:0;z-index:300;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);
+}
+#signin-gate.hidden{display:none;}
+#signin-gate .signin-box{
+  width:min(360px,90vw);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:16px;
+}
+#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
+#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
+#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
+#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
+.signin-spinner{
+  width:26px;height:26px;border-radius:50%;
+  border:3px solid var(--border);border-top-color:var(--accent);
+  animation:eoo-spin 0.9s linear infinite;
+  margin:2px auto 0;
+}
+
+
+
+

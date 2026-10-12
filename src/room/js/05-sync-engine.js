@@ -1,28 +1,18 @@
 /* =========================================================================
-   SYNC ENGINE — rewritten around Ably pub/sub instead of polling a Google
-   Sheet. Why: the old design polled an Apps Script web app every 1.5s for
-   "anything new since sequence N", using the sheet itself as a growing
-   event log — that meant every action already had up to 1.5s of lag baked
-   in even when everything worked, AND the "having trouble syncing" status
-   people were hitting was Apps Script's own quotas/cold-starts/execution
-   limits (it was never built to be a realtime message bus, and the log
-   scan gets slower the longer a session runs). Ably is a purpose-built
-   realtime pub/sub service — publishing a message here reaches every other
-   connected client in well under a second, no polling at all, which is
+   SYNC ENGINE — live game state rides a realtime pub/sub transport (see
+   roomServices.syncTransport and the ROOM CHANNEL section): publishing a message
+   reaches every other connected client in well under a second, no polling —
    what "feels like you're in the same room" actually requires.
 
-   The sheet isn't gone — it just moved to a role it's actually good at:
-   card library data (untouched) and a durable, permanent history log
-   that's written in the background, completely decoupled from the live
-   path below (see the fire-and-forget fetch in postRoomEvent). If that
-   write is slow or fails, gameplay is unaffected; only the "full history"
-   flyout would be missing that one line.
+   A durable, permanent history log is written in the background by
+   roomServices.logEvent, completely decoupled from the live path (see
+   postRoomEvent). If that write is slow or fails, gameplay is unaffected; only
+   the "full history" flyout would be missing that one line.
 
-   Same optimistic-apply + skip-own-echo pattern as before, now over Ably:
-   doAction applies locally first (instant feel), then publishes; every
-   client (including the sender, since Ably echoes your own publishes back
-   to you) runs incoming messages through the same skip-if-it's-mine check
-   that used to guard against re-applying our own polled-back event.
+   Optimistic-apply + skip-own-echo: doAction applies locally first (instant
+   feel), then publishes; every client (including the sender, if the transport
+   echoes your own publishes back to you) runs incoming messages through the same
+   skip-if-it's-mine check so nothing is applied twice.
    ========================================================================= */
 function isConnected(){ return !!state.sessionCode; }
 function postRoomEvent(type, payload){
@@ -39,8 +29,8 @@ function postRoomEvent(type, payload){
   if(type==='REQUEST_STATE' || type==='STATE_SNAPSHOT') return;
   roomServices.logEvent(type, envelope);
 }
-// Fires for every message on the room's Ably channel, including our own
-// (Ably echoes a client's own publishes back to it) — the _origin check
+// Fires for every message on the room's channel, including our own
+// (a transport may echo a client's own publishes back to it) — the _origin check
 // below is what skips re-applying something we already applied optimistically.
 function handleIncomingRoomEvent(msg){
   const payload = msg.data || {};
@@ -59,7 +49,7 @@ function setConnStatus(ok, detail){
 }
 
 // One call does it all for a state-mutating action: apply locally (instant
-// feel), publish it live over Ably, done. Every board-changing interaction
+// feel), publish it live, done. Every board-changing interaction
 // in this app should route through this rather than calling
 // applyRoomEvent/postRoomEvent separately.
 // Mirrors what handleIncomingRoomEvent does for a REMOTE player's action

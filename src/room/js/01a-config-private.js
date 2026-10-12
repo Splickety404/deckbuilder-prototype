@@ -1,5 +1,5 @@
 /* =========================================================================
-   CONFIG
+   PRIVATE CONFIG — the Google/Apps Script backend (private build only)
    ========================================================================= */
 // The NEW, distinct game-room Web App — a fully generic service (see
 // room_apps_script.gs); this URL is safe to hardcode since it isn't bound to

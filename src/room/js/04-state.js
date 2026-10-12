@@ -10,9 +10,7 @@ const state = {
   clientId: randomId(10),
   sessionCode: '',
   playerId: randomId(8),
-  playerName: '',       // set from the signed-in Google account's name at sign-in, not user-typed
-  idToken: '',          // signed-in Google ID token, sent with every card-data fetch for the access check
-  userEmail: '',
+  playerName: '',       // set by whatever start screen the build uses (see startRoom)
   hasInitialState: false, // true once this client has real board state — either it's the host, or a REQUEST_STATE/STATE_SNAPSHOT round-trip completed (or timed out)
   pieces: new Map(),   // id -> { id, x, y, cardIds:[...], faceStates:[bool,...], owner, splayed, splayDir, splaySpacing, label }
   tokens: new Map(),   // id -> { id, x, y, type, count, attachedTo: pieceId|null, attachedCardIndex: number|null }

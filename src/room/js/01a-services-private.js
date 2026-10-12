@@ -8,6 +8,11 @@
      cardAttempts(sheetId)      -> [async () => {ok, cards…}, …] tried in order
                                 until one works (see fetchSheetCards)
      fetchGameBoards(gameId)    -> {ok, boards:[…]} saved boards / precons
+     loadSheet(sheetId)         load one set's cards into cardsById / sheetBacksById (see 03a)
+     sizedUrl(url, w) / cardBackUrl(card, backs) / cardRotationFor(row)   art sizing, which back a card gets, sideways-art rule
+     deckLeadIds(deckJson)      cards a deck file lists before its main deck
+     handoffNote(h) / boardLinkNote() / showStartNote(text)   what the start screen says about an incoming deck / board link
+     syncTransport / syncUnavailableHint   how players are connected (see 19a)
    This is the Google Apps Script implementation — unchanged behavior, moved. */
 const roomServices = {
   logEvent(type, envelope){
@@ -17,6 +22,27 @@ const roomServices = {
       body: JSON.stringify({ sheetId: ROOM_SHEET_ID, sessionCode: state.sessionCode, playerId: state.playerId, playerName: state.playerName, type, payload: envelope }),
     }).catch(e=> console.warn('Durable history log failed (gameplay unaffected):', e));
   },
+  // Cards a deck file lists ahead of its main deck (Echo: leader, Domination/Quest, Stronghold/Resistance, schemes).
+  deckLeadIds(deckJson){
+    const ids = [];
+    if(deckJson.leaderId) ids.push(deckJson.leaderId);
+    if(deckJson.bonusCardId) ids.push(deckJson.bonusCardId);
+    if(deckJson.extraCardId) ids.push(deckJson.extraCardId);
+    (deckJson.schemeIds||[]).forEach(id=>ids.push(id));
+    return ids;
+  },
+  // A note on the start screen (a deck handed over from the deckbuilder, a board link…).
+  showStartNote(text){
+    const note = document.getElementById('signinHandoff');
+    note.textContent = text;
+    note.style.display = '';
+  },
+  handoffNote(h){
+    return h.mode==='join'
+      ? `Sign in to join room ${String(h.code||'').toUpperCase()} with "${h.deck.name||'your deck'}".`
+      : `Sign in to open a new room${h.boardName ? ` on "${h.boardName}"` : ''} with "${h.deck.name||'your deck'}".`;
+  },
+  boardLinkNote(){ return 'Sign in to open a new room with this game\'s board.'; },
   async fetchHistory(){
     const url = `${ROOM_WEBAPP_URL}?pollRoom=${encodeURIComponent(state.sessionCode)}&sheetId=${encodeURIComponent(ROOM_SHEET_ID)}&since=0&_=${Date.now()}`;
     const res = await fetch(url);

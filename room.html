@@ -47,37 +47,6 @@ input[type="range"]{accent-color:var(--accent);}
 
 @keyframes eoo-spin{ to{ transform:rotate(360deg); } }
 
-/* ---------- Sign-in gate ---------- */
-/* Same lockdown as the deckbuilder: nothing (not even the "enter the room"
-   setup screen) shows until Google sign-in succeeds. The room doesn't need a
-   server round-trip at sign-in time the way the deckbuilder does (there's no
-   fixed set of "games" to check access to up front) — access is instead
-   checked per-sheet, lazily, the first time a card from that sheet is needed
-   (see fetchSheetCards/getCardsBySheetId) — so this gate just needs a valid
-   Google identity to exist before letting anyone in. */
-#signin-gate .signin-handoff{margin:0 0 12px;padding:9px 12px;border-radius:8px;background:var(--accent-soft, rgba(124,108,255,.15));font-size:13px;font-weight:600;}
-#signin-gate{
-  position:fixed;inset:0;z-index:300;
-  display:flex;align-items:center;justify-content:center;
-  background:var(--bg);
-}
-#signin-gate.hidden{display:none;}
-#signin-gate .signin-box{
-  width:min(360px,90vw);text-align:center;
-  display:flex;flex-direction:column;align-items:center;gap:16px;
-}
-#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
-#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
-#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
-#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
-.signin-spinner{
-  width:26px;height:26px;border-radius:50%;
-  border:3px solid var(--border);border-top-color:var(--accent);
-  animation:eoo-spin 0.9s linear infinite;
-  margin:2px auto 0;
-}
-
-
 /* ---------- Setup screen ---------- */
 #setup-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:50;}
 #setup-screen.hidden{display:none;}
@@ -734,7 +703,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
    version set position:relative instead, on the theory that a child needed
    a "positioned ancestor" — true, but .splay-card already IS one,  so the
    override just pulled the card OUT of the piece's absolute fan-layout
-   scheme and into normal HTML block flow, where multiple such cards stack
+   arrangement and into normal HTML block flow, where multiple such cards stack
    downward one after another before their own left/top offsets even get
    applied — invisible with only one such card in the pile, but a very
    visible "cards drift further down/diagonally with every card added" bug
@@ -774,6 +743,43 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 .presence-cursor .chip{position:absolute;left:16px;top:17px;font-size:10.5px;padding:2px 7px;border-radius:var(--radius);
   background:var(--surface);border:1px solid var(--accent);color:var(--text);white-space:nowrap;
   box-shadow:0 1px 4px rgba(0,0,0,.35);animation:bouncePopIn .2s var(--bounce);}
+/* =========================================================================
+   PRIVATE STYLES — the Google sign-in gate (its markup is wrapped in PRIVATE
+   markers in index.html, so the public build has neither).
+   ========================================================================= */
+/* ---------- Sign-in gate ---------- */
+/* Same lockdown as the deckbuilder: nothing (not even the "enter the room"
+   setup screen) shows until Google sign-in succeeds. The room doesn't need a
+   server round-trip at sign-in time the way the deckbuilder does (there's no
+   fixed set of "games" to check access to up front) — access is instead
+   checked per-sheet, lazily, the first time a card from that sheet is needed
+   (see fetchSheetCards/getCardsBySheetId) — so this gate just needs a valid
+   Google identity to exist before letting anyone in. */
+#signin-gate .signin-handoff{margin:0 0 12px;padding:9px 12px;border-radius:8px;background:var(--accent-soft, rgba(124,108,255,.15));font-size:13px;font-weight:600;}
+#signin-gate{
+  position:fixed;inset:0;z-index:300;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);
+}
+#signin-gate.hidden{display:none;}
+#signin-gate .signin-box{
+  width:min(360px,90vw);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:16px;
+}
+#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
+#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
+#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
+#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
+.signin-spinner{
+  width:26px;height:26px;border-radius:50%;
+  border:3px solid var(--border);border-top-color:var(--accent);
+  animation:eoo-spin 0.9s linear infinite;
+  margin:2px auto 0;
+}
+
+
+
+
 </style>
 </head>
 <body>
@@ -949,7 +955,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
 
 <script>
 /* =========================================================================
-   CONFIG
+   PRIVATE CONFIG — the Google/Apps Script backend (private build only)
    ========================================================================= */
 // The NEW, distinct game-room Web App — a fully generic service (see
 // room_apps_script.gs); this URL is safe to hardcode since it isn't bound to
@@ -977,6 +983,11 @@ const GOOGLE_CLIENT_ID = '1053912607552-pvrm9heedm4floaohv1olp5k5mdp95lq.apps.go
      cardAttempts(sheetId)      -> [async () => {ok, cards…}, …] tried in order
                                 until one works (see fetchSheetCards)
      fetchGameBoards(gameId)    -> {ok, boards:[…]} saved boards / precons
+     loadSheet(sheetId)         load one set's cards into cardsById / sheetBacksById (see 03a)
+     sizedUrl(url, w) / cardBackUrl(card, backs) / cardRotationFor(row)   art sizing, which back a card gets, sideways-art rule
+     deckLeadIds(deckJson)      cards a deck file lists before its main deck
+     handoffNote(h) / boardLinkNote() / showStartNote(text)   what the start screen says about an incoming deck / board link
+     syncTransport / syncUnavailableHint   how players are connected (see 19a)
    This is the Google Apps Script implementation — unchanged behavior, moved. */
 const roomServices = {
   logEvent(type, envelope){
@@ -986,6 +997,27 @@ const roomServices = {
       body: JSON.stringify({ sheetId: ROOM_SHEET_ID, sessionCode: state.sessionCode, playerId: state.playerId, playerName: state.playerName, type, payload: envelope }),
     }).catch(e=> console.warn('Durable history log failed (gameplay unaffected):', e));
   },
+  // Cards a deck file lists ahead of its main deck (Echo: leader, Domination/Quest, Stronghold/Resistance, schemes).
+  deckLeadIds(deckJson){
+    const ids = [];
+    if(deckJson.leaderId) ids.push(deckJson.leaderId);
+    if(deckJson.bonusCardId) ids.push(deckJson.bonusCardId);
+    if(deckJson.extraCardId) ids.push(deckJson.extraCardId);
+    (deckJson.schemeIds||[]).forEach(id=>ids.push(id));
+    return ids;
+  },
+  // A note on the start screen (a deck handed over from the deckbuilder, a board link…).
+  showStartNote(text){
+    const note = document.getElementById('signinHandoff');
+    note.textContent = text;
+    note.style.display = '';
+  },
+  handoffNote(h){
+    return h.mode==='join'
+      ? `Sign in to join room ${String(h.code||'').toUpperCase()} with "${h.deck.name||'your deck'}".`
+      : `Sign in to open a new room${h.boardName ? ` on "${h.boardName}"` : ''} with "${h.deck.name||'your deck'}".`;
+  },
+  boardLinkNote(){ return 'Sign in to open a new room with this game\'s board.'; },
   async fetchHistory(){
     const url = `${ROOM_WEBAPP_URL}?pollRoom=${encodeURIComponent(state.sessionCode)}&sheetId=${encodeURIComponent(ROOM_SHEET_ID)}&since=0&_=${Date.now()}`;
     const res = await fetch(url);
@@ -1036,68 +1068,8 @@ const roomServices = {
   },
 };
 /* =========================================================================
-   SIGN-IN — gates the whole app, same as the deckbuilder. Unlike the
-   deckbuilder, there's no fixed list of "sets this account can see" to fetch
-   up front (a room isn't tied to any one game or set) — access is instead
-   checked per-sheet, lazily, the moment a card from that sheet is actually
-   needed (see fetchSheetCards -> Code.gs's getCardsBySheetId). So this gate's
-   only job is to make sure a real Google identity exists before letting
-   anyone past it; state.idToken is what actually gets checked, every time,
-   server-side.
+   BOARD GEOMETRY — piece footprints, splay bounds, attached-token placement.
    ========================================================================= */
-function showSigninGate(){ document.getElementById('signin-gate').classList.remove('hidden'); }
-function hideSigninGate(){ document.getElementById('signin-gate').classList.add('hidden'); }
-function setSigninStatus(s){ document.getElementById('signinStatus').textContent = s; }
-function setSigninChecking(isChecking){ document.getElementById('signinSpinner').style.display = isChecking ? 'block' : 'none'; }
-function setSigninError(s){ document.getElementById('signinError').textContent = s; }
-
-// The GIS script tag is loaded with async, so it's a race against this inline
-// script — poll briefly for window.google rather than failing on the first check.
-function initGoogleSignIn(attempt){
-  attempt = attempt || 0;
-  if(!window.google || !google.accounts || !google.accounts.id){
-    if(attempt < 100){ // up to ~10s total, checked every 100ms
-      setTimeout(()=>initGoogleSignIn(attempt+1), 100);
-      return;
-    }
-    setSigninError('Could not load Google Sign-In. Check your connection and reload — if this keeps happening, an ad/tracker blocker may be blocking accounts.google.com.');
-    return;
-  }
-  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleSignIn });
-  google.accounts.id.renderButton(document.getElementById('googleSignInButton'), {
-    theme: 'outline', size: 'large', text: 'signin_with', width: 280,
-  });
-  google.accounts.id.prompt(); // offers One Tap for a returning, already-Google-signed-in user
-}
-
-// Reads the account's name/email straight off the ID token's payload, purely
-// to prefill "Playing as" — this is NOT the access check (that's server-side,
-// against the raw token itself, every time a sheet is fetched), just display.
-function decodeIdTokenPayload(idToken){
-  try{
-    const b64 = idToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
-    const json = decodeURIComponent(atob(b64).split('').map(c=>'%'+c.charCodeAt(0).toString(16).padStart(2,'0')).join(''));
-    return JSON.parse(json);
-  }catch(e){ return {}; }
-}
-
-function onGoogleSignIn(response){
-  setSigninError('');
-  setSigninChecking(true);
-  const payload = decodeIdTokenPayload(response.credential);
-  state.idToken = response.credential;
-  state.userEmail = payload.email || '';
-  state.playerName = payload.name || payload.email || 'Player';
-  setSigninChecking(false);
-  hideSigninGate();
-  document.getElementById('setupSignedInAs').textContent = state.playerName + (state.userEmail ? ` (${state.userEmail})` : '');
-  if(roomHandoff){ startFromHandoff(roomHandoff); return; } // sent here from the deckbuilder: skip the setup screen
-  if(boardLinkGameId){ startFromBoardLink(boardLinkGameId); return; } // a direct "open a room on this game's board" link
-  document.getElementById('setup-screen').classList.remove('hidden');
-}
-
-initGoogleSignIn();
-
 const PIECE_W = 140, PIECE_H = 196; // board-space px at scale 1 — matches the .piece CSS size, and is the
 // fixed footprint of every ordinary card-stack piece. A custom-image piece (kind:'image')
 // carries its OWN w/h instead (any scale the uploader picked), so anywhere the board needs
@@ -1253,6 +1225,78 @@ function attachedTokenPos(t){
 }
 
 /* =========================================================================
+   SIGN-IN — gates the whole app, same as the deckbuilder. Unlike the
+   deckbuilder, there's no fixed list of "sets this account can see" to fetch
+   up front (a room isn't tied to any one game or set) — access is instead
+   checked per-sheet, lazily, the moment a card from that sheet is actually
+   needed (see fetchSheetCards -> Code.gs's getCardsBySheetId). So this gate's
+   only job is to make sure a real Google identity exists before letting
+   anyone past it; state.idToken is what actually gets checked, every time,
+   server-side.
+   ========================================================================= */
+function showSigninGate(){ document.getElementById('signin-gate').classList.remove('hidden'); }
+function hideSigninGate(){ document.getElementById('signin-gate').classList.add('hidden'); }
+function setSigninStatus(s){ document.getElementById('signinStatus').textContent = s; }
+function setSigninChecking(isChecking){ document.getElementById('signinSpinner').style.display = isChecking ? 'block' : 'none'; }
+function setSigninError(s){ document.getElementById('signinError').textContent = s; }
+
+// The GIS script tag is loaded with async, so it's a race against this inline
+// script — poll briefly for window.google rather than failing on the first check.
+function initGoogleSignIn(attempt){
+  attempt = attempt || 0;
+  if(!window.google || !google.accounts || !google.accounts.id){
+    if(attempt < 100){ // up to ~10s total, checked every 100ms
+      setTimeout(()=>initGoogleSignIn(attempt+1), 100);
+      return;
+    }
+    setSigninError('Could not load Google Sign-In. Check your connection and reload — if this keeps happening, an ad/tracker blocker may be blocking accounts.google.com.');
+    return;
+  }
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: onGoogleSignIn });
+  google.accounts.id.renderButton(document.getElementById('googleSignInButton'), {
+    theme: 'outline', size: 'large', text: 'signin_with', width: 280,
+  });
+  google.accounts.id.prompt(); // offers One Tap for a returning, already-Google-signed-in user
+}
+
+// Reads the account's name/email straight off the ID token's payload, purely
+// to prefill "Playing as" — this is NOT the access check (that's server-side,
+// against the raw token itself, every time a sheet is fetched), just display.
+function decodeIdTokenPayload(idToken){
+  try{
+    const b64 = idToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json = decodeURIComponent(atob(b64).split('').map(c=>'%'+c.charCodeAt(0).toString(16).padStart(2,'0')).join(''));
+    return JSON.parse(json);
+  }catch(e){ return {}; }
+}
+
+function onGoogleSignIn(response){
+  setSigninError('');
+  setSigninChecking(true);
+  const payload = decodeIdTokenPayload(response.credential);
+  state.idToken = response.credential;
+  state.userEmail = payload.email || '';
+  const name = payload.name || payload.email || 'Player';
+  setSigninChecking(false);
+  hideSigninGate();
+  startRoom({ name, label: name + (state.userEmail ? ` (${state.userEmail})` : '') });
+}
+
+initGoogleSignIn();
+/* =========================================================================
+   START — whatever start screen the build uses (see 02a in the private build)
+   ends up here once it knows who is playing. Carries on into a
+   deck handed over from the deckbuilder or a direct board link if there is one,
+   else shows the setup screen.
+   ========================================================================= */
+function startRoom(player){   // player = { name, label }  (label: how "Playing as" reads)
+  state.playerName = player.name;
+  document.getElementById('setupSignedInAs').textContent = player.label;
+  if(roomHandoff){ startFromHandoff(roomHandoff); return; } // sent here from the deckbuilder: skip the setup screen
+  if(boardLinkGameId){ startFromBoardLink(boardLinkGameId); return; } // a direct "open a room on this game's board" link
+  document.getElementById('setup-screen').classList.remove('hidden');
+}
+/* =========================================================================
    CARD LIBRARY DATA — NO card-library sheet id is hardcoded here at all. Every
    imported deck's JSON carries the exact sheet id(s) its own cards come from
    (deckJson.sourceSheets); this app fetches each one, on demand, the first
@@ -1269,12 +1313,101 @@ function attachedTokenPos(t){
 const cardsById = new Map();
 const knownSheetIds = new Set(); // sheets already fetched (or currently being fetched)
 const sheetNamesById = new Map(); // sheetId -> setName, for re-embedding sourceSheets on layout export
-// sheetId -> {genericBackUrl, overlordBackUrl, schemeBackUrl, championBackUrl} — the
-// per-GAME (not per-set) card-back art fetchSheetCards pulls in alongside a sheet's
-// rows (see Code.gs's getCardsBySheetId/scanGameFolderAssets). Every sheet in the same
+// sheetId -> {genericBackUrl, …} — the per-GAME (not per-set) card-back art
+// roomServices.loadSheet pulls in alongside a sheet's rows. Every sheet in the same
 // game shares one entry here, keyed redundantly under each of that game's sheet ids —
 // simpler than a second gameFolderId->sheetIds index for what's a tiny amount of data.
 const sheetBacksById = new Map();
+// Fetches whatever sheets in the given list aren't already cached. Safe to call
+// repeatedly/concurrently with overlapping lists — already-known sheets are skipped.
+async function ensureSheetsLoaded(sourceSheets){
+  (sourceSheets||[]).forEach(s=>{ if(s && s.sheetId && s.setName) sheetNamesById.set(s.sheetId, s.setName); });
+  const toFetch = (sourceSheets||[]).filter(s=>s && s.sheetId && !knownSheetIds.has(s.sheetId));
+  if(!toFetch.length) return;
+  toFetch.forEach(s=>knownSheetIds.add(s.sheetId)); // mark BEFORE awaiting, so concurrent calls don't double-fetch
+  await Promise.all(toFetch.map(s=>roomServices.loadSheet(s.sheetId).catch(e=>{
+    console.error('Could not load sheet '+s.sheetId+':', e);
+    knownSheetIds.delete(s.sheetId); // allow a retry later
+    toast(`Could not load cards from "${s.setName||s.sheetId}": ${e.message}`);
+  })));
+}
+// Registers a lightweight stand-in for every id whose real data (or "Classified"
+// status) isn't known yet — called the instant a piece referencing an unfetched
+// sheet appears on the board (deck import, a synced PLACE_PIECE/LOAD_LAYOUT/
+// STATE_SNAPSHOT from another client), always BEFORE the renderBoard() that
+// follows in the same tick, so that first render shows "Access Pending" (see
+// pending-face CSS, cardFaceHtml/pieceFaceHtml/cardFrontInnerHtml) instead of
+// either a bare "?" or — worse — blocking on the network at all. Whichever
+// sheet each pending id actually belongs to is still in flight and unknown
+// here, so this can't fill in _sheetId; that's fine, fetchSheetCards
+// unconditionally overwrites every id it resolves (real row or classified)
+// the moment its sheet comes back, pending placeholder included. Never
+// overwrites an id that's already resolved one way or the other.
+function registerPendingCards(cardIds){
+  (cardIds||[]).forEach(id=>{
+    if(id && !cardsById.has(id)) cardsById.set(id, { id, name:'Access Pending', _pending:true });
+  });
+}
+// Every sheet referenced by any card currently placed on the board/held in hand —
+// used to re-embed exactly the decks a saved layout needs into its export.
+function sourceSheetsInUse(){
+  const ids = new Set();
+  state.pieces.forEach(p=> p.cardIds.forEach(cid=>{ const c=cardsById.get(cid); if(c && c._sheetId) ids.add(c._sheetId); }));
+  return [...ids].map(sheetId=>({ sheetId, setName: sheetNamesById.get(sheetId)||sheetId }));
+}
+// Art links are resized by whoever knows how the image host works — see roomServices.sizedUrl.
+function sizedUrl(url, w){ return roomServices.sizedUrl(url, w); }
+// Warms the browser's image cache for a card face the instant its URL is
+// known (see fetchSheetCards), rather than waiting for the first time a
+// player actually flips to it — that first flip used to be the first time
+// the browser ever requested the image at all, so it visibly popped in a
+// beat late. Preloads at both sizes actually used to display a card: 320px
+// (an ordinary board/hand face — see cardFaceHtml/pieceFaceHtml) and 700px
+// (the larger hover preview — see showHoverPreview). A bare `new Image()`
+// with its `src` set is the standard way to get the browser to fetch and
+// cache a URL without putting anything on screen; nothing here holds a
+// reference to the Image past this call because nothing needs to — once
+// the browser has it cached, the real <img> tag rendered later reuses it.
+// The Image objects are kept (heldArt) so the browser keeps them in memory:
+// the board redraws its cards after nearly every move, and a picture no
+// longer held anywhere could otherwise be fetched (and pop in) all over again.
+const heldArt = new Map();
+function preloadCardFace(url){
+  if(!url) return;
+  [sizedUrl(url, 320), sizedUrl(url, 700)].forEach(src=>{
+    if(heldArt.has(src)) return;
+    const img = new Image(); img.decoding = 'async'; img.src = src;
+    heldArt.set(src, img);
+  });
+}
+// Picks the card-back image for a card that isn't itself genuinely double-sided
+// (cardFaceHtml/pieceFaceHtml/showHoverPreview all fall back to this only after checking
+// card._doubleSided/_back first). Which of a game's backs a card gets is the game's call —
+// see roomServices.cardBackUrl. Returns '' when nothing is configured — every caller already
+// falls back to the plain "🂠" placeholder in that case, so a game with no back files uploaded
+// degrades to exactly today's look, nothing breaks.
+function cardBackImageUrl(card){
+  if(!card || !card._sheetId) return '';
+  const backs = sheetBacksById.get(card._sheetId);
+  if(!backs) return '';
+  return roomServices.cardBackUrl(card, backs);
+}
+// Preloads every back image a sheet's game actually has configured, the
+// instant they're known (fresh fetch or restored from cache) — same rationale
+// as preloadCardFace, so the very first card flipped face-down doesn't have to
+// wait on a fresh network request for its back.
+function preloadSheetBacks(backs){
+  if(!backs) return;
+  Object.values(backs).forEach(preloadCardFace);
+}
+
+/* =========================================================================
+   CARD LIBRARY (private) — fetching a sheet's cards through the Drive-gated
+   Apps Script (with the per-account cache, the "Classified" handling and the
+   Echo-style back/rotation conventions). Plugged in through roomServices
+   (loadSheet, sizedUrl, cardBackUrl, cardRotationFor, deckLeadIds); moved here
+   unchanged from the shared card-library section.
+   ========================================================================= */
 // The card-library Apps Script — a REUSABLE SERVICE URL (same distinction as
 // ROOM_WEBAPP_URL: not tied to any specific sheet's data), used only to resolve
 // a given sheet id's cards through ITS OWN elevated ("Execute as: Me")
@@ -1282,6 +1415,7 @@ const sheetBacksById = new Map();
 // "anyone with the link" — it doesn't need to be, for the deckbuilder itself to
 // work — so the room app can't always rely on fetching it directly.
 const CARD_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxuoxW84Mn4Grrq2T9_RCoCJO1ftMdBPJ2gNqcwW5T7wXNonNjZaKOcxgc3ZQAHanVpZQ/exec';
+
 
 /* ---------- Persistent (cross-session) sheet card cache ----------
    Pure speed optimization, never a substitute for the real check: the live
@@ -1426,43 +1560,7 @@ async function fetchSheetCards(sheetId){
   }
   throw lastErr || new Error('Could not load cards for sheet '+sheetId);
 }
-// Fetches whatever sheets in the given list aren't already cached. Safe to call
-// repeatedly/concurrently with overlapping lists — already-known sheets are skipped.
-async function ensureSheetsLoaded(sourceSheets){
-  (sourceSheets||[]).forEach(s=>{ if(s && s.sheetId && s.setName) sheetNamesById.set(s.sheetId, s.setName); });
-  const toFetch = (sourceSheets||[]).filter(s=>s && s.sheetId && !knownSheetIds.has(s.sheetId));
-  if(!toFetch.length) return;
-  toFetch.forEach(s=>knownSheetIds.add(s.sheetId)); // mark BEFORE awaiting, so concurrent calls don't double-fetch
-  await Promise.all(toFetch.map(s=>fetchSheetCards(s.sheetId).catch(e=>{
-    console.error('Could not load sheet '+s.sheetId+':', e);
-    knownSheetIds.delete(s.sheetId); // allow a retry later
-    toast(`Could not load cards from "${s.setName||s.sheetId}": ${e.message}`);
-  })));
-}
-// Registers a lightweight stand-in for every id whose real data (or "Classified"
-// status) isn't known yet — called the instant a piece referencing an unfetched
-// sheet appears on the board (deck import, a synced PLACE_PIECE/LOAD_LAYOUT/
-// STATE_SNAPSHOT from another client), always BEFORE the renderBoard() that
-// follows in the same tick, so that first render shows "Access Pending" (see
-// pending-face CSS, cardFaceHtml/pieceFaceHtml/cardFrontInnerHtml) instead of
-// either a bare "?" or — worse — blocking on the network at all. Whichever
-// sheet each pending id actually belongs to is still in flight and unknown
-// here, so this can't fill in _sheetId; that's fine, fetchSheetCards
-// unconditionally overwrites every id it resolves (real row or classified)
-// the moment its sheet comes back, pending placeholder included. Never
-// overwrites an id that's already resolved one way or the other.
-function registerPendingCards(cardIds){
-  (cardIds||[]).forEach(id=>{
-    if(id && !cardsById.has(id)) cardsById.set(id, { id, name:'Access Pending', _pending:true });
-  });
-}
-// Every sheet referenced by any card currently placed on the board/held in hand —
-// used to re-embed exactly the decks a saved layout needs into its export.
-function sourceSheetsInUse(){
-  const ids = new Set();
-  state.pieces.forEach(p=> p.cardIds.forEach(cid=>{ const c=cardsById.get(cid); if(c && c._sheetId) ids.add(c._sheetId); }));
-  return [...ids].map(sheetId=>({ sheetId, setName: sheetNamesById.get(sheetId)||sheetId }));
-}
+
 // Same "#img-src"/"#pdf-src" marker Code.gs's artUrl() tags every art URL
 // with (see deckbuilder.html's sizedUrl for the full rationale): a PNG/JPEG
 // source is requested at its own native size (fast — no on-demand CDN
@@ -1472,65 +1570,30 @@ function sourceSheetsInUse(){
 // is never sent with the request), so every card here was silently already
 // being fetched at native size — harmless for plain images, but meant a
 // PDF-sourced card's thumbnail request was subtly broken too.
-function sizedUrl(url, w){
+function driveSizedUrl(url, w){
   if(!url) return '';
   const isImage = url.includes('#img-src');
   const base = url.split('#')[0];
   return isImage ? base : (base + '=w' + w);
 }
-// Warms the browser's image cache for a card face the instant its URL is
-// known (see fetchSheetCards), rather than waiting for the first time a
-// player actually flips to it — that first flip used to be the first time
-// the browser ever requested the image at all, so it visibly popped in a
-// beat late. Preloads at both sizes actually used to display a card: 320px
-// (an ordinary board/hand face — see cardFaceHtml/pieceFaceHtml) and 700px
-// (the larger hover preview — see showHoverPreview). A bare `new Image()`
-// with its `src` set is the standard way to get the browser to fetch and
-// cache a URL without putting anything on screen; nothing here holds a
-// reference to the Image past this call because nothing needs to — once
-// the browser has it cached, the real <img> tag rendered later reuses it.
-// The Image objects are kept (heldArt) so the browser keeps them in memory:
-// the board redraws its cards after nearly every move, and a picture no
-// longer held anywhere could otherwise be fetched (and pop in) all over again.
-const heldArt = new Map();
-function preloadCardFace(url){
-  if(!url) return;
-  [sizedUrl(url, 320), sizedUrl(url, 700)].forEach(src=>{
-    if(heldArt.has(src)) return;
-    const img = new Image(); img.decoding = 'async'; img.src = src;
-    heldArt.set(src, img);
-  });
-}
-// Picks the right "generic" card-back image for a card that isn't itself a
-// genuinely double-sided card (cardFaceHtml/pieceFaceHtml/showHoverPreview all
-// fall back to this only after checking card._doubleSided/_back first) — Echo
-// mode's own three-way overlord/scheme/champion split by the card's own type
-// column, falling back to a single shared back for anything that doesn't match
-// one of the three (a non-Echo game, or an odd/missing type). Mirrors
-// deckbuilder.html's own backUrlForExport dispatch exactly, so the table shows
-// the same back a printed card would. Returns '' when nothing is configured —
-// every caller already falls back to the plain "🂠" placeholder in that case,
-// so an older Code.gs deployment that doesn't send genericBacks yet, or a game
-// with no back files uploaded, degrades to exactly today's look, nothing breaks.
-function cardBackImageUrl(card){
-  if(!card || !card._sheetId) return '';
-  const backs = sheetBacksById.get(card._sheetId);
-  if(!backs) return '';
+
+function echoCardBackUrl(card, backs){
   const type = card.type || '';
   if(type === 'O - Scheme') return backs.schemeBackUrl || backs.genericBackUrl || '';
   if(type.indexOf('O -')===0) return backs.overlordBackUrl || backs.genericBackUrl || '';
   if(type.indexOf('C -')===0) return backs.championBackUrl || backs.genericBackUrl || '';
   return backs.genericBackUrl || '';
 }
-// Preloads every back image a sheet's game actually has configured, the
-// instant they're known (fresh fetch or restored from cache) — same rationale
-// as preloadCardFace, so the very first card flipped face-down doesn't have to
-// wait on a fresh network request for its back.
-function preloadSheetBacks(backs){
-  if(!backs) return;
-  [backs.genericBackUrl, backs.overlordBackUrl, backs.schemeBackUrl, backs.championBackUrl].forEach(preloadCardFace);
-}
+roomServices.loadSheet = fetchSheetCards;
+roomServices.sizedUrl = driveSizedUrl;
+roomServices.cardBackUrl = echoCardBackUrl;
 
+// Echo's own landscape card types print sideways (90°) — the same rule the deckbuilder uses.
+const ROOM_HORIZONTAL_TYPES = new Set(['O - Scheme','O - Domination','C - Quest','O - Stronghold','C - Resistance']);
+roomServices.cardRotationFor = function(r){
+  if(ROOM_HORIZONTAL_TYPES.has(r.type) || (r.type==='Z - Custom' && (r.name==='Stronghold' || r.name==='Resistance'))) return 90;
+  return 0;
+};
 /* =========================================================================
    STATE
    ========================================================================= */
@@ -1543,9 +1606,7 @@ const state = {
   clientId: randomId(10),
   sessionCode: '',
   playerId: randomId(8),
-  playerName: '',       // set from the signed-in Google account's name at sign-in, not user-typed
-  idToken: '',          // signed-in Google ID token, sent with every card-data fetch for the access check
-  userEmail: '',
+  playerName: '',       // set by whatever start screen the build uses (see startRoom)
   hasInitialState: false, // true once this client has real board state — either it's the host, or a REQUEST_STATE/STATE_SNAPSHOT round-trip completed (or timed out)
   pieces: new Map(),   // id -> { id, x, y, cardIds:[...], faceStates:[bool,...], owner, splayed, splayDir, splaySpacing, label }
   tokens: new Map(),   // id -> { id, x, y, type, count, attachedTo: pieceId|null, attachedCardIndex: number|null }
@@ -1587,31 +1648,24 @@ function hexToRgba(hex, alpha){
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+// Private build only: the signed-in Google account (see 02a-sign-in-private.js).
+state.idToken = '';   // signed-in Google ID token, sent with every card-data fetch for the access check
+state.userEmail = '';
 /* =========================================================================
-   SYNC ENGINE — rewritten around Ably pub/sub instead of polling a Google
-   Sheet. Why: the old design polled an Apps Script web app every 1.5s for
-   "anything new since sequence N", using the sheet itself as a growing
-   event log — that meant every action already had up to 1.5s of lag baked
-   in even when everything worked, AND the "having trouble syncing" status
-   people were hitting was Apps Script's own quotas/cold-starts/execution
-   limits (it was never built to be a realtime message bus, and the log
-   scan gets slower the longer a session runs). Ably is a purpose-built
-   realtime pub/sub service — publishing a message here reaches every other
-   connected client in well under a second, no polling at all, which is
+   SYNC ENGINE — live game state rides a realtime pub/sub transport (see
+   roomServices.syncTransport and the ROOM CHANNEL section): publishing a message
+   reaches every other connected client in well under a second, no polling —
    what "feels like you're in the same room" actually requires.
 
-   The sheet isn't gone — it just moved to a role it's actually good at:
-   card library data (untouched) and a durable, permanent history log
-   that's written in the background, completely decoupled from the live
-   path below (see the fire-and-forget fetch in postRoomEvent). If that
-   write is slow or fails, gameplay is unaffected; only the "full history"
-   flyout would be missing that one line.
+   A durable, permanent history log is written in the background by
+   roomServices.logEvent, completely decoupled from the live path (see
+   postRoomEvent). If that write is slow or fails, gameplay is unaffected; only
+   the "full history" flyout would be missing that one line.
 
-   Same optimistic-apply + skip-own-echo pattern as before, now over Ably:
-   doAction applies locally first (instant feel), then publishes; every
-   client (including the sender, since Ably echoes your own publishes back
-   to you) runs incoming messages through the same skip-if-it's-mine check
-   that used to guard against re-applying our own polled-back event.
+   Optimistic-apply + skip-own-echo: doAction applies locally first (instant
+   feel), then publishes; every client (including the sender, if the transport
+   echoes your own publishes back to you) runs incoming messages through the same
+   skip-if-it's-mine check so nothing is applied twice.
    ========================================================================= */
 function isConnected(){ return !!state.sessionCode; }
 function postRoomEvent(type, payload){
@@ -1628,8 +1682,8 @@ function postRoomEvent(type, payload){
   if(type==='REQUEST_STATE' || type==='STATE_SNAPSHOT') return;
   roomServices.logEvent(type, envelope);
 }
-// Fires for every message on the room's Ably channel, including our own
-// (Ably echoes a client's own publishes back to it) — the _origin check
+// Fires for every message on the room's channel, including our own
+// (a transport may echo a client's own publishes back to it) — the _origin check
 // below is what skips re-applying something we already applied optimistically.
 function handleIncomingRoomEvent(msg){
   const payload = msg.data || {};
@@ -1648,7 +1702,7 @@ function setConnStatus(ok, detail){
 }
 
 // One call does it all for a state-mutating action: apply locally (instant
-// feel), publish it live over Ably, done. Every board-changing interaction
+// feel), publish it live, done. Every board-changing interaction
 // in this app should route through this rather than calling
 // applyRoomEvent/postRoomEvent separately.
 // Mirrors what handleIncomingRoomEvent does for a REMOTE player's action
@@ -2314,8 +2368,8 @@ function describeEvent(type, payload, playerName){
 
 /* =========================================================================
    DECK IMPORT — one shuffled, face-down pile containing every card from the
-   deckbuilder's exported JSON (leader, Domination/Quest, Stronghold/Resistance,
-   schemes, and the full main deck all mixed together). Pulling specific cards
+   deckbuilder's exported JSON (any leader-style cards the game puts first,
+   then the full main deck). Pulling specific cards
    like the leader out is handled by the search tool (not built this round —
    for now this creates the pile; search/draw come next).
    ========================================================================= */
@@ -2325,8 +2379,7 @@ function shuffle(arr){
 }
 // No more overlay, no more waiting on the network before the pile even shows
 // up: importing used to block on a full round-trip per set — including the
-// per-set Drive-access check happening server-side (see fetchSheetCards ->
-// Code.gs's getCardsBySheetId) — behind a modal spinner, which is exactly the
+// per-set access check happening server-side (see roomServices.loadSheet) — behind a modal spinner, which is exactly the
 // "really slow" complaint. All the ids this deck needs are already known
 // straight from the deck file itself (no fetch required for THAT part), so
 // the pile is placed immediately via the ordinary PLACE_PIECE path, which
@@ -2340,14 +2393,11 @@ async function importDeckJson(deckJson, dropX, dropY){
   if(!deckJson.sourceSheets || !deckJson.sourceSheets.length){
     throw new Error('This deck file has no sourceSheets info — re-export it from the latest deckbuilder version.');
   }
-  // The deck goes down in its own list order, NOT shuffled — leader, bonus,
-  // extra, schemes, then the main deck in its saved order — with the first
+  // The deck goes down in its own list order, NOT shuffled — whatever extra cards the
+  // game puts first (a leader, say), then the main deck in its saved order — with the first
   // card on top (a pile's top card is its LAST array entry).
   const order = [];
-  if(deckJson.leaderId) order.push(deckJson.leaderId);
-  if(deckJson.bonusCardId) order.push(deckJson.bonusCardId);
-  if(deckJson.extraCardId) order.push(deckJson.extraCardId);
-  (deckJson.schemeIds||[]).forEach(id=>order.push(id));
+  roomServices.deckLeadIds(deckJson).forEach(id=>order.push(id));
   const counts = deckJson.deckCards || {};
   const mainIds = [...new Set([...(deckJson.deckOrder||[]).filter(id=> counts[id]), ...Object.keys(counts)])];
   mainIds.forEach(id=>{ for(let i=0;i<Number(counts[id]||0);i++) order.push(id); });
@@ -2601,7 +2651,7 @@ document.getElementById('btnBoardMenu').addEventListener('click', (e)=>{
   if(willShow) positionMenuNear(menu, document.getElementById('btnBoardMenu'));
 });
 // Same list as the table's right-click Import Precon (which needs a spot of
-// bare table to right-click — the Echo of Omens board is mostly zones). The
+// bare table to right-click — a board is mostly zones). The
 // list opens by the menu; the deck lands in the middle of your view.
 document.getElementById('btnImportPrecon').addEventListener('click', (e)=>{
   e.stopPropagation(); // the outside-click closers would shut the list as it opens
@@ -3806,7 +3856,7 @@ function sendPieceToHand(p){
 // grabbed, so the source pile's count/render updates the instant the card is
 // picked up AND the card itself is, from that point on, a normal floating
 // piece: see driveWholePieceDrag/finalizeWholePieceDrop, which take it from
-// here exactly the same way they drive any other whole-piece drag (hand,
+// here exactly the same way they handle any other whole-piece drag (hand,
 // merge, or tucking into a splayed pile showing its own face). Returns a
 // ctx ready to hand straight to driveWholePieceDrag; its `sourceRestore`
 // is what finalizeWholePieceDrop composes onto the landing undo so a single
@@ -3924,7 +3974,7 @@ function repositionAttachedTokens(pieceId){
 // following the cursor" drag — a piece that already existed before the drag
 // (wireWholeInteraction) and a piece that was JUST created the instant this
 // particular drag started (peeling a card off a pile, or playing one from
-// hand — see beginPeelAsPiece) both drive through the exact same code from
+// hand — see beginPeelAsPiece) both run through the exact same code from
 // here on, so they look and behave identically: hand-drop feedback, a merge
 // highlight over an ordinary pile, or — hovering a SPLAYED pile — the piece
 // itself relocating into the fan at the exact previewed slot, showing its
@@ -7098,15 +7148,13 @@ document.addEventListener('mousedown', (e)=>{
    preview. Never shows mid-drag. Sideways art (landscape cards stored in a
    portrait image, see cardArtRotation) is turned upright.
    ========================================================================= */
-// Which way a card's FRONT art is printed: explicit "rotate" column (0/90/
-// 180/270, the deckbuilder's generic-game rule), else Echo of Omens' own
-// landscape card types — the same rules the deckbuilder uses.
-const ROOM_HORIZONTAL_TYPES = new Set(['O - Scheme','O - Domination','C - Quest','O - Stronghold','C - Resistance']);
+// Which way a card's FRONT art is printed: an explicit "rotate" column (0/90/180/270, the
+// deckbuilder's free-form-game rule) wins; otherwise the game decides (see
+// roomServices.cardRotationFor) — the same rules the deckbuilder uses.
 function cardArtRotation(r){
   const rot = parseInt(r.rotate, 10);
   if([90,180,270].includes(rot)) return rot;
-  if(ROOM_HORIZONTAL_TYPES.has(r.type) || (r.type==='Z - Custom' && (r.name==='Stronghold' || r.name==='Resistance'))) return 90;
-  return 0;
+  return roomServices.cardRotationFor(r);
 }
 let hoverTimer = null;
 const HOVER_PREVIEW_WIDTH = 320; // at preview size 100%
@@ -7980,8 +8028,8 @@ function updateConnectionUI(){
 document.getElementById('btnEnterRoom').addEventListener('click', async ()=>{
   const err = document.getElementById('setupError');
   err.textContent = '';
-  // state.playerName is already set from the signed-in Google account (see
-  // onGoogleSignIn) by the time this screen is even reachable.
+  // state.playerName is already set by the start screen (see startRoom) by the
+  // time this screen is even reachable.
 
   const rejoinOpen = !document.getElementById('rejoinFields').classList.contains('hidden');
   if(!rejoinOpen){
@@ -7996,28 +8044,20 @@ document.getElementById('btnEnterRoom').addEventListener('click', async ()=>{
 });
 
 /* =========================================================================
-   ROOM CHANNEL — one Ably realtime channel per session code that carries
+   ROOM CHANNEL — one realtime channel per session code that carries
    BOTH real game events (see the SYNC ENGINE section above — postRoomEvent
    publishes here, handleIncomingRoomEvent subscribes here) AND ephemeral
    cosmetic presence: where each connected player's cursor currently is,
-   and whether they're holding/dragging something right now. Ably supports
-   pub/sub messages and presence on the same channel, so one connection
+   and whether they're holding/dragging something right now. A transport
+   supports pub/sub messages and presence on the same channel, so one connection
    does both jobs.
 
    This is now a hard requirement for multiplayer, not an optional add-on —
    see the SYNC ENGINE comment above for why the old Sheets-polling design
-   was replaced outright rather than kept as a fallback. If ABLY_API_KEY is
-   left blank or the SDK fails to load, connectToRoom below shows a clear
-   toast rather than silently limping along on a broken sync.
+   was replaced outright rather than kept as a fallback. If the transport can't
+   start, connectToRoom below shows a clear toast rather than silently
+   limping along on a broken sync.
    ========================================================================= */
-const ABLY_API_KEY = 'TTVNbQ.lz-fZA:mzHxpkBNnMo7qMtP3xs8uqEB4yye8np0lqtaS00fSM0';
-// Paste your Ably app's API key here (Ably dashboard → your app → API Keys
-// tab → copy a key's string, looks like "AbCdEf.GhIjKl:mnopqrstuvwxyz").
-// A key scoped to just {subscribe, publish, presence} on channel "room:*"
-// is the tidy choice; the default root key works fine too for a private
-// game among friends.
-function ablyConfigured(){ return !!ABLY_API_KEY; }
-
 var presenceCursors = new Map(); // playerId -> DOM element in #boardWorld. `var` (hoisted) because renderBoard, defined earlier, reads it
 let presenceLastSent = 0;
 const PRESENCE_SEND_MS = 150; // ~6-7 updates/sec — smooth, and easier on the free tier's message quota now that this channel also carries every game action
@@ -8025,7 +8065,7 @@ let presenceHolding = false;
 let presenceHeldLabel = null;
 
 /* ---- SyncTransport — how this page talks to the other players --------------
-   The rest of the room only ever talks to `transport` (below), never to Ably
+   The rest of the room only ever talks to `transport` (below), never to a specific service
    directly, so the way players are connected can be swapped without touching
    game logic. A transport is any object with:
      open(code, handlers) -> true if it started, false if it can't run here
@@ -8036,7 +8076,110 @@ let presenceHeldLabel = null;
      updatePresence(data)    publish this player's cursor / holding state
      leaveNow()              say goodbye immediately (tab closing)
      close()                 stop everything
-   AblyTransport below is the original behavior, moved here unchanged. ------- */
+   The private build's transport lives in a private file. ------- */
+let transport = null; // the active SyncTransport while connected to a room, else null
+// Deterministic per-player color, derived purely from the id — every viewer
+// lands on the same color for the same player with nothing to sync.
+function presenceColorFor(id){
+  let hash = 0;
+  for(let i=0;i<id.length;i++) hash = (hash*31 + id.charCodeAt(i)) | 0;
+  return `hsl(${Math.abs(hash)%360}, 80%, 64%)`;
+}
+function renderPresenceMembers(members){
+  const world = document.getElementById('boardWorld');
+  const seen = new Set();
+  (members||[]).forEach(m=>{
+    const pid = m.clientId, p = m.data || {};
+    if(!pid || pid === state.playerId) return; // never render our own cursor back at ourselves
+    seen.add(pid);
+    let el = presenceCursors.get(pid);
+    if(!el){
+      el = document.createElement('div');
+      el.className = 'presence-cursor';
+      const color = presenceColorFor(pid);
+      el.innerHTML = `<div class="dot" style="background:${color};border:2px solid rgba(255,255,255,.85);"></div>`+
+        `<div class="tag" style="background:${color};">${escapeHtml(p.name||'Player')}</div>`+
+        `<div class="chip" style="display:none;"></div>`;
+      presenceCursors.set(pid, el);
+    }
+    // renderBoard empties #boardWorld on nearly every interaction — put the
+    // cursor back if that happened since we last saw this player move.
+    if(!el.isConnected) world.appendChild(el);
+    el.style.left = (p.x||0)+'px';
+    el.style.top = (p.y||0)+'px';
+    el.classList.toggle('holding', !!p.holding);
+    const chip = el.querySelector('.chip');
+    if(p.holding && p.heldLabel){ chip.style.display=''; chip.textContent = '✋ '+p.heldLabel; }
+    else chip.style.display = 'none';
+  });
+  // Anyone no longer in the member list (left, disconnected) loses their
+  // cursor — the transport detects a dropped connection and clears their presence
+  // automatically even if they close the tab without warning.
+  presenceCursors.forEach((el, pid)=>{ if(!seen.has(pid)){ el.remove(); presenceCursors.delete(pid); } });
+}
+// Sets up the sync transport for this session — both the live game-event
+// bus (handleIncomingRoomEvent, defined in the SYNC ENGINE section above)
+// and presence (cursors) ride the same connection.
+function initRoomChannel(){
+  const t = roomServices.syncTransport;
+  const ok = t.open(state.sessionCode, {
+    onEvent: handleIncomingRoomEvent,
+    onPresence: renderPresenceMembers,
+    onStatus: setConnStatus,
+  });
+  if(!ok) return false;
+  transport = t;
+  return true;
+}
+function teardownRoomChannel(){
+  if(transport) transport.close();
+  transport = null;
+  presenceCursors.forEach(el=>el.remove());
+  presenceCursors.clear();
+}
+function sendPresence(clientX, clientY, forceNow){
+  if(!transport) return;
+  const now = Date.now();
+  if(!forceNow && now - presenceLastSent < PRESENCE_SEND_MS) return;
+  presenceLastSent = now;
+  const w = clientToWorld(clientX, clientY);
+  transport.updatePresence({ name: state.playerName, x: Math.round(w.x), y: Math.round(w.y), holding: presenceHolding, heldLabel: presenceHeldLabel });
+}
+window.addEventListener('mousemove', (e)=>{ sendPresence(e.clientX, e.clientY); });
+// A generic "is this player currently holding/dragging something" signal —
+// deliberately kept independent of the board's many individual drag handlers
+// (pieces, splayed stacks, tokens) rather than threading a broadcast call
+// into each one, so this can't regress any of them. It just watches, at the
+// document level, whether the mouse went down on something draggable and
+// hasn't come back up yet, and grabs a human-readable label for it (a
+// piece's label/top-card name if it has one) along the way.
+document.addEventListener('mousedown', (e)=>{
+  const target = e.target.closest('.piece, .token');
+  if(!target) return;
+  presenceHolding = true;
+  presenceHeldLabel = target.querySelector('.piece-label')?.textContent?.trim() || target.getAttribute('title') || 'a card';
+  sendPresence(e.clientX, e.clientY, true);
+}, true);
+document.addEventListener('mouseup', (e)=>{
+  if(!presenceHolding) return;
+  presenceHolding = false;
+  presenceHeldLabel = null;
+  sendPresence(e.clientX, e.clientY, true);
+}, true);
+window.addEventListener('beforeunload', ()=>{ if(transport) transport.leaveNow(); });
+
+/* =========================================================================
+   ABLY TRANSPORT (private) — the live-sync transport the private build uses,
+   plugged in as roomServices.syncTransport. Moved here unchanged.
+   ========================================================================= */
+const ABLY_API_KEY = 'TTVNbQ.lz-fZA:mzHxpkBNnMo7qMtP3xs8uqEB4yye8np0lqtaS00fSM0';
+// Paste your Ably app's API key here (Ably dashboard → your app → API Keys
+// tab → copy a key's string, looks like "AbCdEf.GhIjKl:mnopqrstuvwxyz").
+// A key scoped to just {subscribe, publish, presence} on channel "room:*"
+// is the tidy choice; the default root key works fine too for a private
+// game among friends.
+function ablyConfigured(){ return !!ABLY_API_KEY; }
+
 const AblyTransport = (()=>{
   let client = null;
   let channel = null;
@@ -8087,97 +8230,8 @@ const AblyTransport = (()=>{
     },
   };
 })();
-let transport = null; // the active SyncTransport while connected to a room, else null
-// Deterministic per-player color, derived purely from the id — every viewer
-// lands on the same color for the same player with nothing to sync.
-function presenceColorFor(id){
-  let hash = 0;
-  for(let i=0;i<id.length;i++) hash = (hash*31 + id.charCodeAt(i)) | 0;
-  return `hsl(${Math.abs(hash)%360}, 80%, 64%)`;
-}
-function renderPresenceMembers(members){
-  const world = document.getElementById('boardWorld');
-  const seen = new Set();
-  (members||[]).forEach(m=>{
-    const pid = m.clientId, p = m.data || {};
-    if(!pid || pid === state.playerId) return; // never render our own cursor back at ourselves
-    seen.add(pid);
-    let el = presenceCursors.get(pid);
-    if(!el){
-      el = document.createElement('div');
-      el.className = 'presence-cursor';
-      const color = presenceColorFor(pid);
-      el.innerHTML = `<div class="dot" style="background:${color};border:2px solid rgba(255,255,255,.85);"></div>`+
-        `<div class="tag" style="background:${color};">${escapeHtml(p.name||'Player')}</div>`+
-        `<div class="chip" style="display:none;"></div>`;
-      presenceCursors.set(pid, el);
-    }
-    // renderBoard empties #boardWorld on nearly every interaction — put the
-    // cursor back if that happened since we last saw this player move.
-    if(!el.isConnected) world.appendChild(el);
-    el.style.left = (p.x||0)+'px';
-    el.style.top = (p.y||0)+'px';
-    el.classList.toggle('holding', !!p.holding);
-    const chip = el.querySelector('.chip');
-    if(p.holding && p.heldLabel){ chip.style.display=''; chip.textContent = '✋ '+p.heldLabel; }
-    else chip.style.display = 'none';
-  });
-  // Anyone no longer in the member list (left, disconnected) loses their
-  // cursor — Ably detects a dropped connection and clears their presence
-  // automatically even if they close the tab without warning.
-  presenceCursors.forEach((el, pid)=>{ if(!seen.has(pid)){ el.remove(); presenceCursors.delete(pid); } });
-}
-// Sets up the sync transport for this session — both the live game-event
-// bus (handleIncomingRoomEvent, defined in the SYNC ENGINE section above)
-// and presence (cursors) ride the same connection.
-function initRoomChannel(){
-  const t = AblyTransport;
-  const ok = t.open(state.sessionCode, {
-    onEvent: handleIncomingRoomEvent,
-    onPresence: renderPresenceMembers,
-    onStatus: setConnStatus,
-  });
-  if(!ok) return false;
-  transport = t;
-  return true;
-}
-function teardownRoomChannel(){
-  if(transport) transport.close();
-  transport = null;
-  presenceCursors.forEach(el=>el.remove());
-  presenceCursors.clear();
-}
-function sendPresence(clientX, clientY, forceNow){
-  if(!transport) return;
-  const now = Date.now();
-  if(!forceNow && now - presenceLastSent < PRESENCE_SEND_MS) return;
-  presenceLastSent = now;
-  const w = clientToWorld(clientX, clientY);
-  transport.updatePresence({ name: state.playerName, x: Math.round(w.x), y: Math.round(w.y), holding: presenceHolding, heldLabel: presenceHeldLabel });
-}
-window.addEventListener('mousemove', (e)=>{ sendPresence(e.clientX, e.clientY); });
-// A generic "is this player currently holding/dragging something" signal —
-// deliberately kept independent of the board's many individual drag handlers
-// (pieces, splayed stacks, tokens) rather than threading a broadcast call
-// into each one, so this can't regress any of them. It just watches, at the
-// document level, whether the mouse went down on something draggable and
-// hasn't come back up yet, and grabs a human-readable label for it (a
-// piece's label/top-card name if it has one) along the way.
-document.addEventListener('mousedown', (e)=>{
-  const target = e.target.closest('.piece, .token');
-  if(!target) return;
-  presenceHolding = true;
-  presenceHeldLabel = target.querySelector('.piece-label')?.textContent?.trim() || target.getAttribute('title') || 'a card';
-  sendPresence(e.clientX, e.clientY, true);
-}, true);
-document.addEventListener('mouseup', (e)=>{
-  if(!presenceHolding) return;
-  presenceHolding = false;
-  presenceHeldLabel = null;
-  sendPresence(e.clientX, e.clientY, true);
-}, true);
-window.addEventListener('beforeunload', ()=>{ if(transport) transport.leaveNow(); });
-
+roomServices.syncTransport = AblyTransport;
+roomServices.syncUnavailableHint = 'Live sync isn\'t set up yet (missing Ably key) — see the setup notes near ABLY_API_KEY in room.html.';
 /* =========================================================================
    CONNECTING A ROOM — open it up to others once you're happy with your local
    board (pushes it as the shared starting layout), or join one already
@@ -8191,7 +8245,7 @@ function connectToRoom({code, isHost}){
   const channelReady = initRoomChannel();
   if(!channelReady){
     setConnStatus(false, 'not configured');
-    toast('Live sync isn\'t set up yet (missing Ably key) — see the setup notes near ABLY_API_KEY in room.html.');
+    toast(roomServices.syncUnavailableHint);
   }
   if(isHost){
     // Whatever you've already built locally becomes the room's starting layout.
@@ -8232,24 +8286,14 @@ const roomHandoff = (()=>{
     return h;
   }catch(e){ return null; }
 })();
-if(roomHandoff){
-  const note = document.getElementById('signinHandoff');
-  note.textContent = roomHandoff.mode==='join'
-    ? `Sign in to join room ${String(roomHandoff.code||'').toUpperCase()} with "${roomHandoff.deck.name||'your deck'}".`
-    : `Sign in to open a new room${roomHandoff.boardName ? ` on "${roomHandoff.boardName}"` : ''} with "${roomHandoff.deck.name||'your deck'}".`;
-  note.style.display = '';
-}
+if(roomHandoff) roomServices.showStartNote(roomServices.handoffNote(roomHandoff));
 /* ---- Direct board link: room.html?board=<game folder id> opens a new room
    on that game's newest board layout (the same .json files the deckbuilder's
-   "Send deck to room" offers — see getPrecons in Code.gs), read fresh from
-   the game folder after sign-in. The link is used once: it's taken off the
+   "Send deck to room" offers), read fresh from
+   the game folder once the player is in. The link is used once: it's taken off the
    address bar, so a refresh rejoins the room instead of opening another. */
 const boardLinkGameId = (()=>{ try{ return new URLSearchParams(location.search).get('board') || ''; }catch(e){ return ''; } })();
-if(boardLinkGameId && !roomHandoff){
-  const note = document.getElementById('signinHandoff');
-  note.textContent = 'Sign in to open a new room with this game\'s board.';
-  note.style.display = '';
-}
+if(boardLinkGameId && !roomHandoff) roomServices.showStartNote(roomServices.boardLinkNote());
 function fetchGameBoards(gameId){ return roomServices.fetchGameBoards(gameId); }
 async function startFromBoardLink(gameId){
   try{ history.replaceState(null, '', location.pathname); }catch(e){}
