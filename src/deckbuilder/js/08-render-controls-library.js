@@ -84,51 +84,10 @@ function renderLibrary(){
 
 function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
-// Google's image CDN accepts a =w{pixels} size suffix on lh3.googleusercontent.com
-// links, so we can request an appropriately-sized render instead of always pulling the
-// full source resolution — dramatically cuts load time (and, for the PDF export, file
-// size) for a card sourced from a PDF, where that "render" is the only way to get a
-// viewable image out of it at all in the first place. But for a card whose art is
-// already a standalone PNG/JPEG, asking for one more exact pixel width forces Google's
-// CDN to dynamically resize it on request instead of just serving the file as-is —
-// real, easy-to-notice latency (especially on hover, where the preview needs a
-// different width than whatever the grid thumbnail already asked for) bought for very
-// little, since these aren't a page pulled out of some huge multi-card PDF. Code.gs's
-// artUrl() tags every URL it hands back with a "#img-src" or "#pdf-src" fragment
-// (inert — never sent to the browser's actual request, just text this function reads
-// off the string) saying which case it is, so only a URL NOT tagged as a plain image
-// (a PDF, or anything untagged/legacy from before this existed) gets sized down; an
-// image URL is returned as-is, fragment stripped, requesting the file at its own
-// native size.
-//
-// The PDF export is the one caller that always wants the `force` override: it
-// deliberately downsizes to a fixed print resolution (900px wide) no matter the
-// source format, both to cap file size and because a native-resolution PNG can be
-// print-production scale — large enough that fetching/decoding it client-side is
-// what was actually failing PDF export for PNG-sourced cards. `force` skips the
-// "leave images alone" branch above and always appends the width, same as a PDF.
-// Cards published by the Card Updater also have a small copy of their art
-// (375 px wide, a third of the download). Known small copies, by full-size link:
-// whenever a picture is wanted at small-copy size or less, the small one is used.
-// Cards without one (every older card) are unaffected.
-const smallImageFor = new Map();
-const SMALL_IMAGE_MAX_WIDTH = 400;
-function noteSmallImage(url, smallUrl){
-  const sm = String(smallUrl||'').trim();
-  if(url && sm) smallImageFor.set(url, sm);
-}
-function sizedUrl(url, w, force){
-  if(!url) return '';
-  if(!force && w <= SMALL_IMAGE_MAX_WIDTH && smallImageFor.has(url)) url = smallImageFor.get(url);
-  const isImage = !force && url.includes('#img-src');
-  const base = url.split('#')[0]; // e.g. ".../d/<fileId>" or ".../d/<fileId>?v=<token>" (see Code.gs artUrl())
-  if(isImage) return base;
-  // The "=wNNN" size directive has to sit directly after the fileId, BEFORE any
-  // "?v=..." cache-busting query string Code.gs's artUrl() may have added — Google's
-  // CDN only recognizes it as a path suffix, not as part of a query string. So it's
-  // inserted right before the "?", not just appended to the end of the string.
-  const qIdx = base.indexOf('?');
-  return qIdx === -1 ? (base + '=w' + w) : (base.slice(0, qIdx) + '=w' + w + base.slice(qIdx));
-}
+// Art links are resized (and small copies preferred) by the card source, since only it knows how
+// its image host works — see cardSource.sizedUrl / noteSmallImage. These two wrappers are what the
+// rest of the app calls.
+function noteSmallImage(url, smallUrl){ cardSource.noteSmallImage(url, smallUrl); }
+function sizedUrl(url, w, force){ return cardSource.sizedUrl(url, w, force); }
 
 

@@ -5,9 +5,8 @@
 // counts as hidden here if EVERY set it belongs to is currently unchecked — checking
 // any one of its sets is enough to keep it visible, matching how set membership
 // actually works rather than just whichever set's copy happens to be displayed.
-// Factored out of cardMatchesFilters so the Leader/Domination-Quest/Stronghold-
-// Resistance pickers (openLeaderModal/openBonusCardModal/openExtraCardModal below —
-// none of which go through cardMatchesFilters or poolForCurrentMode at all, since
+// Factored out of cardMatchesFilters so any single-card picker a game adds (a leader pick,
+// say — none of which go through cardMatchesFilters or poolForCurrentMode at all, since
 // they build their own one-card-only pools) can apply the exact same set-checkbox
 // rule the main card grid does, instead of silently ignoring it.
 function cardVisibleBySet(c){
@@ -48,7 +47,7 @@ function renderFilters(){
 
   // Keep the search box in sync with the active tab's own filter state — it's a plain
   // input, not re-rendered from scratch like the chip groups below, so this needs to
-  // happen explicitly on every render (including right after switching Overlord/Champion).
+  // happen explicitly on every render (including right after switching between deck tabs).
   const searchBox = document.getElementById('searchBox');
   if(document.activeElement !== searchBox) searchBox.value = curFilters().search; // don't fight the user's cursor while they're actively typing
   document.getElementById('deckViewCheckbox').checked = curFilters().deckViewOnly;

@@ -47,10 +47,8 @@ function downloadBlob(content, filename, type){
   a.click();
 }
 
-// Overlord export order: leader -> 5 schemes (your order) -> 50-card deck (your order).
-// Champion: leader -> deck (no schemes).
-// Leader -> Domination/Quest -> Stronghold/Resistance -> Schemes (Overlord only) -> the
-// 50-card deck. None of the leader-like cards count toward the 50.
+// Print order: whatever the game's deck codec puts first (printLead — e.g. a leader), then the deck
+// itself in the order you arranged it.
 function buildPrintList(){
   const list=[];
   const pushCard = (card) => {
@@ -67,16 +65,13 @@ function buildPrintList(){
   return list;
 }
 
-const PDF_JPEG_QUALITY = 0.8; // genuine, controllable compression — this was the actual missing lever: previously we just embedded whatever raw bytes Google served (often PNG-ish for painted art, much larger than an equivalent JPEG at a quality difference nobody would notice in print)
-// A real card render off Google's CDN is always at least a few hundred px on
-// its short side. If the fetch/decode "succeeds" but hands back something
-// tiny — Google quietly substituting a small "can't preview this file" icon
-// for a request it won't actually serve, instead of a proper HTTP error — no
-// exception gets thrown anywhere, so the OLD code just embedded that little
-// icon as if it were the card's real art: no failure reported, no text
-// fallback, just a page of near-blank cards. Guarding on size turns that into
-// a normal, counted failure (text fallback + the "N image(s) failed" count)
-// instead of a silent blank export.
+const PDF_JPEG_QUALITY = 0.8; // genuine, controllable compression — this was the actual missing lever: previously we just embedded whatever raw bytes the host served (often PNG-ish for painted art, much larger than an equivalent JPEG at a quality difference nobody would notice in print)
+// A real card render is always at least a few hundred px on its short side. If the
+// fetch/decode "succeeds" but hands back something tiny — a host quietly substituting a small
+// "can't preview this file" icon instead of a proper HTTP error — no exception gets thrown
+// anywhere, so that little icon would be embedded as if it were the card's real art: no
+// failure reported, no text fallback, just a page of near-blank cards. Guarding on size turns
+// that into a normal, counted failure (text fallback + the "N image(s) failed" count).
 const MIN_EMBEDDABLE_DIM = 100;
 async function urlToDataUrl(url){
   const res = await fetch(url, {mode:'cors'});
@@ -84,7 +79,7 @@ async function urlToDataUrl(url){
   const blob = await res.blob();
   const bitmap = await createImageBitmap(blob);
   if(bitmap.width < MIN_EMBEDDABLE_DIM || bitmap.height < MIN_EMBEDDABLE_DIM){
-    throw new Error(`image came back suspiciously small (${bitmap.width}x${bitmap.height}) — likely a Drive "can't preview" placeholder, not real art`);
+    throw new Error(`image came back suspiciously small (${bitmap.width}x${bitmap.height}) — likely a "can't preview" placeholder, not real art`);
   }
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width; canvas.height = bitmap.height;

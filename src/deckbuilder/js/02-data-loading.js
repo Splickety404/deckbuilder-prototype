@@ -64,19 +64,14 @@ function mergeCardSets(setCardLists){
 
 
 
-// Echo mode is detected once per load, globally, from the union of every authorized
-// set's RAW rows (before any row-filtering, since that filtering itself needs to know
-// the mode first): if any loaded card is presented the way Echo of Omens presents
-// cards — an "O - Overlord" type value — the full Echo deckbuilder loads (leaders,
-// aspects, scheme decks, sealed decks, stats...); otherwise every set is treated as a
-// generic, game-agnostic card pool.
+// Which game definition owns the loaded cards is decided once per load by pickGame() (see the game
+// definitions) from the union of every set's RAW rows, before any row-filtering, since that
+// filtering itself depends on the definition.
 
 function applyModeUI(){
   document.body.classList.toggle('generic-mode', !state.game.structured);
   const titleEl = document.getElementById('topbarTitle');
-  // The current GAME's own live folder name drives branding for both modes now —
-  // simpler and more accurate than a hardcoded "ECHO OF OMENS" string, and it stays
-  // correct even if that folder ever gets renamed.
+  // The current game's own name drives branding — it stays correct even if the game is renamed.
   const gameName = state.currentGameLabel || (state.authorizedSets[0] && state.authorizedSets[0].label) || 'Card Set';
   titleEl.textContent = gameName.toUpperCase();
   document.title = gameName + ' — Deckbuilder';
@@ -111,14 +106,14 @@ async function loadData(silent){
         rows: result.rows,
         setName: result.setName || entry.label,
         folderId: entry.folderId,
-        sheetId: result.sheetId, // the set's actual Google Sheet file id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.gs indexes by sheet id, never folder id)
+        sheetId: result.sheetId, // the set's actual data-sheet id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.gs indexes by sheet id, never folder id)
       });
     });
 
     state.game = pickGame(rawSetResults);
 
-    // Every card's own _sheetId (see processRawRows) has to be the actual Google
-    // Sheet file id (s.sheetId), NOT the set's folder id (s.folderId) — this was
+    // Every card's own _sheetId (see processRawRows) has to be the actual
+    // sheet id (s.sheetId), NOT the set's folder id (s.folderId) — this was
     // passing folderId here, which is fine for everything the deckbuilder itself
     // does (folderId already uniquely identifies a set internally), but meant
     // every deck exported to JSON carried a bogus "sheetId" the game room app
@@ -198,11 +193,7 @@ async function loadGameAssetsInBackground(gameFolderId){
   try{
     const assets = await cardSource.loadGameAssets(gameFolderId);
     state.genericBackUrl = assets.genericBackUrl || '';
-    state.genericBacks = {
-      overlordBackUrl: assets.overlordBackUrl || '',
-      schemeBackUrl: assets.schemeBackUrl || '',
-      championBackUrl: assets.championBackUrl || '',
-    };
+    state.genericBacks = assets.genericBacks || {};
     state.pcio = assets.pcio || {found:false};
     applyPcioUI();
   }catch(e){

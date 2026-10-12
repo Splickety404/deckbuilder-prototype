@@ -964,6 +964,7 @@ function curFilters(){ return state.filtersByType[activeFilterKey()]; }
      precons(gameFolderId)              preconstructed decks + boards
      savePrecon(fileId, deck, replace)  add/replace a preconstructed deck
      submitAccessRequest(game, set, email, note)
+     sizedUrl(url, width, force) / noteSmallImage(url, smallUrl)   how this host resizes art / which small copies exist
    This is the Google Apps Script / Drive implementation — unchanged behavior,
    moved here from the files that used to hold each function. */
 // A plain fetch() can hang indefinitely if the Apps Script endpoint itself is slow or
@@ -1190,16 +1191,72 @@ async function savePreconToServer(fileId, deck, replace){
   return j;
 }
 
+// Google's image CDN accepts a =w{pixels} size suffix on lh3.googleusercontent.com
+// links, so we can request an appropriately-sized render instead of always pulling the
+// full source resolution — dramatically cuts load time (and, for the PDF export, file
+// size) for a card sourced from a PDF, where that "render" is the only way to get a
+// viewable image out of it at all in the first place. But for a card whose art is
+// already a standalone PNG/JPEG, asking for one more exact pixel width forces Google's
+// CDN to dynamically resize it on request instead of just serving the file as-is —
+// real, easy-to-notice latency (especially on hover, where the preview needs a
+// different width than whatever the grid thumbnail already asked for) bought for very
+// little, since these aren't a page pulled out of some huge multi-card PDF. Code.gs's
+// artUrl() tags every URL it hands back with a "#img-src" or "#pdf-src" fragment
+// (inert — never sent to the browser's actual request, just text this function reads
+// off the string) saying which case it is, so only a URL NOT tagged as a plain image
+// (a PDF, or anything untagged/legacy from before this existed) gets sized down; an
+// image URL is returned as-is, fragment stripped, requesting the file at its own
+// native size.
+//
+// The PDF export is the one caller that always wants the `force` override: it
+// deliberately downsizes to a fixed print resolution (900px wide) no matter the
+// source format, both to cap file size and because a native-resolution PNG can be
+// print-production scale — large enough that fetching/decoding it client-side is
+// what was actually failing PDF export for PNG-sourced cards. `force` skips the
+// "leave images alone" branch above and always appends the width, same as a PDF.
+// Cards published by the Card Updater also have a small copy of their art
+// (375 px wide, a third of the download). Known small copies, by full-size link:
+// whenever a picture is wanted at small-copy size or less, the small one is used.
+// Cards without one (every older card) are unaffected.
+const smallImageFor = new Map();
+const SMALL_IMAGE_MAX_WIDTH = 400;
+function driveNoteSmallImage(url, smallUrl){
+  const sm = String(smallUrl||'').trim();
+  if(url && sm) smallImageFor.set(url, sm);
+}
+function driveSizedUrl(url, w, force){
+  if(!url) return '';
+  if(!force && w <= SMALL_IMAGE_MAX_WIDTH && smallImageFor.has(url)) url = smallImageFor.get(url);
+  const isImage = !force && url.includes('#img-src');
+  const base = url.split('#')[0]; // e.g. ".../d/<fileId>" or ".../d/<fileId>?v=<token>" (see Code.gs artUrl())
+  if(isImage) return base;
+  // The "=wNNN" size directive has to sit directly after the fileId, BEFORE any
+  // "?v=..." cache-busting query string Code.gs's artUrl() may have added — Google's
+  // CDN only recognizes it as a path suffix, not as part of a query string. So it's
+  // inserted right before the "?", not just appended to the end of the string.
+  const qIdx = base.indexOf('?');
+  return qIdx === -1 ? (base + '=w' + w) : (base.slice(0, qIdx) + '=w' + w + base.slice(qIdx));
+}
+
 const cardSource = {
   whoAmI: fetchWhoAmI,
   loadSet: fetchSetData,
   loadSetImages: fetchSetImages,
-  loadGameAssets: fetchGameAssets,
+  loadGameAssets: async (gameFolderId)=>{
+    const a = await fetchGameAssets(gameFolderId);
+    return {
+      genericBackUrl: a.genericBackUrl,
+      genericBacks: { overlordBackUrl: a.overlordBackUrl || '', schemeBackUrl: a.schemeBackUrl || '', championBackUrl: a.championBackUrl || '' },
+      pcio: a.pcio,
+    };
+  },
   loadHelp: fetchHelpFromServer,
   cardHistory: fetchCardHistory,
   precons: fetchPrecons,
   savePrecon: savePreconToServer,
   submitAccessRequest: submitAccessRequest,
+  sizedUrl: driveSizedUrl,
+  noteSmallImage: driveNoteSmallImage,
 };
 /* =========================================================================
    PRIVATE CONFIG — the Google/Drive backend and sign-in (private build only)
@@ -1292,7 +1349,7 @@ const GenericGame = {
   tagCard(r){
     // Generic mode: a required "is-double-sided" column (TRUE/FALSE) and a required
     // "rotate" column (0/90/180/270, defaulting to 0) — the data-driven equivalent
-    // of Echo's hardcoded scheme/domination/stronghold rotation rules.
+    // of a structured game's hardcoded rotation rules.
     r._doubleSided = String(r['is-double-sided']).trim().toUpperCase()==='TRUE';
     const rot = parseInt(r.rotate, 10);
     r._rotate = [90,180,270].includes(rot) ? rot : 0;
@@ -1493,19 +1550,14 @@ function mergeCardSets(setCardLists){
 
 
 
-// Echo mode is detected once per load, globally, from the union of every authorized
-// set's RAW rows (before any row-filtering, since that filtering itself needs to know
-// the mode first): if any loaded card is presented the way Echo of Omens presents
-// cards — an "O - Overlord" type value — the full Echo deckbuilder loads (leaders,
-// aspects, scheme decks, sealed decks, stats...); otherwise every set is treated as a
-// generic, game-agnostic card pool.
+// Which game definition owns the loaded cards is decided once per load by pickGame() (see the game
+// definitions) from the union of every set's RAW rows, before any row-filtering, since that
+// filtering itself depends on the definition.
 
 function applyModeUI(){
   document.body.classList.toggle('generic-mode', !state.game.structured);
   const titleEl = document.getElementById('topbarTitle');
-  // The current GAME's own live folder name drives branding for both modes now —
-  // simpler and more accurate than a hardcoded "ECHO OF OMENS" string, and it stays
-  // correct even if that folder ever gets renamed.
+  // The current game's own name drives branding — it stays correct even if the game is renamed.
   const gameName = state.currentGameLabel || (state.authorizedSets[0] && state.authorizedSets[0].label) || 'Card Set';
   titleEl.textContent = gameName.toUpperCase();
   document.title = gameName + ' — Deckbuilder';
@@ -1540,14 +1592,14 @@ async function loadData(silent){
         rows: result.rows,
         setName: result.setName || entry.label,
         folderId: entry.folderId,
-        sheetId: result.sheetId, // the set's actual Google Sheet file id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.gs indexes by sheet id, never folder id)
+        sheetId: result.sheetId, // the set's actual data-sheet id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.gs indexes by sheet id, never folder id)
       });
     });
 
     state.game = pickGame(rawSetResults);
 
-    // Every card's own _sheetId (see processRawRows) has to be the actual Google
-    // Sheet file id (s.sheetId), NOT the set's folder id (s.folderId) — this was
+    // Every card's own _sheetId (see processRawRows) has to be the actual
+    // sheet id (s.sheetId), NOT the set's folder id (s.folderId) — this was
     // passing folderId here, which is fine for everything the deckbuilder itself
     // does (folderId already uniquely identifies a set internally), but meant
     // every deck exported to JSON carried a bogus "sheetId" the game room app
@@ -1627,11 +1679,7 @@ async function loadGameAssetsInBackground(gameFolderId){
   try{
     const assets = await cardSource.loadGameAssets(gameFolderId);
     state.genericBackUrl = assets.genericBackUrl || '';
-    state.genericBacks = {
-      overlordBackUrl: assets.overlordBackUrl || '',
-      schemeBackUrl: assets.schemeBackUrl || '',
-      championBackUrl: assets.championBackUrl || '',
-    };
+    state.genericBacks = assets.genericBacks || {};
     state.pcio = assets.pcio || {found:false};
     applyPcioUI();
   }catch(e){
@@ -2461,9 +2509,8 @@ EchoGame.isLegal = function(card){
 // counts as hidden here if EVERY set it belongs to is currently unchecked — checking
 // any one of its sets is enough to keep it visible, matching how set membership
 // actually works rather than just whichever set's copy happens to be displayed.
-// Factored out of cardMatchesFilters so the Leader/Domination-Quest/Stronghold-
-// Resistance pickers (openLeaderModal/openBonusCardModal/openExtraCardModal below —
-// none of which go through cardMatchesFilters or poolForCurrentMode at all, since
+// Factored out of cardMatchesFilters so any single-card picker a game adds (a leader pick,
+// say — none of which go through cardMatchesFilters or poolForCurrentMode at all, since
 // they build their own one-card-only pools) can apply the exact same set-checkbox
 // rule the main card grid does, instead of silently ignoring it.
 function cardVisibleBySet(c){
@@ -2504,7 +2551,7 @@ function renderFilters(){
 
   // Keep the search box in sync with the active tab's own filter state — it's a plain
   // input, not re-rendered from scratch like the chip groups below, so this needs to
-  // happen explicitly on every render (including right after switching Overlord/Champion).
+  // happen explicitly on every render (including right after switching between deck tabs).
   const searchBox = document.getElementById('searchBox');
   if(document.activeElement !== searchBox) searchBox.value = curFilters().search; // don't fight the user's cursor while they're actively typing
   document.getElementById('deckViewCheckbox').checked = curFilters().deckViewOnly;
@@ -2687,52 +2734,11 @@ function renderLibrary(){
 
 function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
-// Google's image CDN accepts a =w{pixels} size suffix on lh3.googleusercontent.com
-// links, so we can request an appropriately-sized render instead of always pulling the
-// full source resolution — dramatically cuts load time (and, for the PDF export, file
-// size) for a card sourced from a PDF, where that "render" is the only way to get a
-// viewable image out of it at all in the first place. But for a card whose art is
-// already a standalone PNG/JPEG, asking for one more exact pixel width forces Google's
-// CDN to dynamically resize it on request instead of just serving the file as-is —
-// real, easy-to-notice latency (especially on hover, where the preview needs a
-// different width than whatever the grid thumbnail already asked for) bought for very
-// little, since these aren't a page pulled out of some huge multi-card PDF. Code.gs's
-// artUrl() tags every URL it hands back with a "#img-src" or "#pdf-src" fragment
-// (inert — never sent to the browser's actual request, just text this function reads
-// off the string) saying which case it is, so only a URL NOT tagged as a plain image
-// (a PDF, or anything untagged/legacy from before this existed) gets sized down; an
-// image URL is returned as-is, fragment stripped, requesting the file at its own
-// native size.
-//
-// The PDF export is the one caller that always wants the `force` override: it
-// deliberately downsizes to a fixed print resolution (900px wide) no matter the
-// source format, both to cap file size and because a native-resolution PNG can be
-// print-production scale — large enough that fetching/decoding it client-side is
-// what was actually failing PDF export for PNG-sourced cards. `force` skips the
-// "leave images alone" branch above and always appends the width, same as a PDF.
-// Cards published by the Card Updater also have a small copy of their art
-// (375 px wide, a third of the download). Known small copies, by full-size link:
-// whenever a picture is wanted at small-copy size or less, the small one is used.
-// Cards without one (every older card) are unaffected.
-const smallImageFor = new Map();
-const SMALL_IMAGE_MAX_WIDTH = 400;
-function noteSmallImage(url, smallUrl){
-  const sm = String(smallUrl||'').trim();
-  if(url && sm) smallImageFor.set(url, sm);
-}
-function sizedUrl(url, w, force){
-  if(!url) return '';
-  if(!force && w <= SMALL_IMAGE_MAX_WIDTH && smallImageFor.has(url)) url = smallImageFor.get(url);
-  const isImage = !force && url.includes('#img-src');
-  const base = url.split('#')[0]; // e.g. ".../d/<fileId>" or ".../d/<fileId>?v=<token>" (see Code.gs artUrl())
-  if(isImage) return base;
-  // The "=wNNN" size directive has to sit directly after the fileId, BEFORE any
-  // "?v=..." cache-busting query string Code.gs's artUrl() may have added — Google's
-  // CDN only recognizes it as a path suffix, not as part of a query string. So it's
-  // inserted right before the "?", not just appended to the end of the string.
-  const qIdx = base.indexOf('?');
-  return qIdx === -1 ? (base + '=w' + w) : (base.slice(0, qIdx) + '=w' + w + base.slice(qIdx));
-}
+// Art links are resized (and small copies preferred) by the card source, since only it knows how
+// its image host works — see cardSource.sizedUrl / noteSmallImage. These two wrappers are what the
+// rest of the app calls.
+function noteSmallImage(url, smallUrl){ cardSource.noteSmallImage(url, smallUrl); }
+function sizedUrl(url, w, force){ return cardSource.sizedUrl(url, w, force); }
 
 
 /* =========================================================================
@@ -4089,10 +4095,8 @@ function downloadBlob(content, filename, type){
   a.click();
 }
 
-// Overlord export order: leader -> 5 schemes (your order) -> 50-card deck (your order).
-// Champion: leader -> deck (no schemes).
-// Leader -> Domination/Quest -> Stronghold/Resistance -> Schemes (Overlord only) -> the
-// 50-card deck. None of the leader-like cards count toward the 50.
+// Print order: whatever the game's deck codec puts first (printLead — e.g. a leader), then the deck
+// itself in the order you arranged it.
 function buildPrintList(){
   const list=[];
   const pushCard = (card) => {
@@ -4109,16 +4113,13 @@ function buildPrintList(){
   return list;
 }
 
-const PDF_JPEG_QUALITY = 0.8; // genuine, controllable compression — this was the actual missing lever: previously we just embedded whatever raw bytes Google served (often PNG-ish for painted art, much larger than an equivalent JPEG at a quality difference nobody would notice in print)
-// A real card render off Google's CDN is always at least a few hundred px on
-// its short side. If the fetch/decode "succeeds" but hands back something
-// tiny — Google quietly substituting a small "can't preview this file" icon
-// for a request it won't actually serve, instead of a proper HTTP error — no
-// exception gets thrown anywhere, so the OLD code just embedded that little
-// icon as if it were the card's real art: no failure reported, no text
-// fallback, just a page of near-blank cards. Guarding on size turns that into
-// a normal, counted failure (text fallback + the "N image(s) failed" count)
-// instead of a silent blank export.
+const PDF_JPEG_QUALITY = 0.8; // genuine, controllable compression — this was the actual missing lever: previously we just embedded whatever raw bytes the host served (often PNG-ish for painted art, much larger than an equivalent JPEG at a quality difference nobody would notice in print)
+// A real card render is always at least a few hundred px on its short side. If the
+// fetch/decode "succeeds" but hands back something tiny — a host quietly substituting a small
+// "can't preview this file" icon instead of a proper HTTP error — no exception gets thrown
+// anywhere, so that little icon would be embedded as if it were the card's real art: no
+// failure reported, no text fallback, just a page of near-blank cards. Guarding on size turns
+// that into a normal, counted failure (text fallback + the "N image(s) failed" count).
 const MIN_EMBEDDABLE_DIM = 100;
 async function urlToDataUrl(url){
   const res = await fetch(url, {mode:'cors'});
@@ -4126,7 +4127,7 @@ async function urlToDataUrl(url){
   const blob = await res.blob();
   const bitmap = await createImageBitmap(blob);
   if(bitmap.width < MIN_EMBEDDABLE_DIM || bitmap.height < MIN_EMBEDDABLE_DIM){
-    throw new Error(`image came back suspiciously small (${bitmap.width}x${bitmap.height}) — likely a Drive "can't preview" placeholder, not real art`);
+    throw new Error(`image came back suspiciously small (${bitmap.width}x${bitmap.height}) — likely a "can't preview" placeholder, not real art`);
   }
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width; canvas.height = bitmap.height;

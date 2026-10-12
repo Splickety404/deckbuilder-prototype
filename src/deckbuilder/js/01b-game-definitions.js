@@ -75,7 +75,7 @@ const GenericGame = {
   tagCard(r){
     // Generic mode: a required "is-double-sided" column (TRUE/FALSE) and a required
     // "rotate" column (0/90/180/270, defaulting to 0) — the data-driven equivalent
-    // of Echo's hardcoded scheme/domination/stronghold rotation rules.
+    // of a structured game's hardcoded rotation rules.
     r._doubleSided = String(r['is-double-sided']).trim().toUpperCase()==='TRUE';
     const rot = parseInt(r.rotate, 10);
     r._rotate = [90,180,270].includes(rot) ? rot : 0;
