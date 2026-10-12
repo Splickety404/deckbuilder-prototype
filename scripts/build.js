@@ -35,7 +35,7 @@ const reportOnly = process.argv.includes('--report');
 // every file that would ship, so each hit points at code still to be separated out.
 const LEAK_PATTERNS = [
   // a specific game's own names and card-type codes
-  /overlord/i, /champion/i, /stronghold/i, /resistance/i, /domination/i, /scheme/i,
+  /overlord/i, /champion/i, /stronghold/i, /resistance/i, /domination/i, /(?<!color-)scheme/i,
   /echo of omens/i, /hellbreak/i, /'[OCZQ] - /,
   // private services and sign-in plumbing
   /google/i, /\bably\b/i, /\bdrive\b/i, /idtoken/i,
