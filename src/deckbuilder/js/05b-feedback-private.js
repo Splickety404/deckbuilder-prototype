@@ -29,6 +29,7 @@ function addCardFeedbackButton(actionsEl, card){
   if(!card) return;
   const b = mkBtn('💬', ()=>openCardFeedback(card));
   b.title = 'Send feedback on this card';
+  b.classList.add('feedback-btn');
   actionsEl.appendChild(b);
 }
 

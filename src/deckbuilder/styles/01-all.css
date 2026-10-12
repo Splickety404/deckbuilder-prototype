@@ -163,6 +163,10 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .fb-item.unread{border-left:4px solid var(--accent, #2563eb);background:var(--surface-2);}
 .fb-item .fb-meta{font-size:12px;color:var(--text-soft);margin-bottom:4px;}
 .fb-item .fb-text{white-space:pre-wrap;font-size:13.5px;margin:6px 0;}
+/* Feedback buttons are deliberately loud (amber, outlined) so they stand apart from every other card button. */
+.feedback-btn, .tile-btn.feedback-btn, .btn.feedback-btn{background:#f59e0b;color:#1f1300;border:1px solid #b45309;font-weight:700;box-shadow:0 0 0 2px rgba(245,158,11,.35);}
+.feedback-btn:hover, .tile-btn.feedback-btn:hover, .btn.feedback-btn:hover{background:#fbbf24;color:#1f1300;}
+.deck-stack .tile-actions .feedback-btn{opacity:1;}
 .leader-chip .chip-feedback{margin-left:auto;flex:none;padding:3px 5px;border-radius:5px;font-size:12px;}
 .leader-chip .chip-feedback + .chip-remove{margin-left:0;}
 .leader-chip .chip-remove:hover{background:var(--danger-bg);color:var(--danger);}

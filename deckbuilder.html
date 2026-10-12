@@ -177,6 +177,10 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 .fb-item.unread{border-left:4px solid var(--accent, #2563eb);background:var(--surface-2);}
 .fb-item .fb-meta{font-size:12px;color:var(--text-soft);margin-bottom:4px;}
 .fb-item .fb-text{white-space:pre-wrap;font-size:13.5px;margin:6px 0;}
+/* Feedback buttons are deliberately loud (amber, outlined) so they stand apart from every other card button. */
+.feedback-btn, .tile-btn.feedback-btn, .btn.feedback-btn{background:#f59e0b;color:#1f1300;border:1px solid #b45309;font-weight:700;box-shadow:0 0 0 2px rgba(245,158,11,.35);}
+.feedback-btn:hover, .tile-btn.feedback-btn:hover, .btn.feedback-btn:hover{background:#fbbf24;color:#1f1300;}
+.deck-stack .tile-actions .feedback-btn{opacity:1;}
 .leader-chip .chip-feedback{margin-left:auto;flex:none;padding:3px 5px;border-radius:5px;font-size:12px;}
 .leader-chip .chip-feedback + .chip-remove{margin-left:0;}
 .leader-chip .chip-remove:hover{background:var(--danger-bg);color:var(--danger);}
@@ -712,7 +716,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
           <dl id="preview-text"></dl>
           <div id="previewLastUpdated" style="font-size:12px;color:var(--text-soft);margin-top:10px;"></div>
           <div class="btn btn-sm" id="btnViewHistory" style="margin-top:6px;display:none;">Version History</div>
-          <div class="btn btn-sm" id="btnCardFeedback" style="margin-top:6px;">💬 Send feedback</div>
+          <div class="btn btn-sm feedback-btn" id="btnCardFeedback" style="margin-top:6px;">💬 Send feedback</div>
         </div>
       </div>
     </div>
@@ -2430,6 +2434,7 @@ function addCardFeedbackButton(actionsEl, card){
   if(!card) return;
   const b = mkBtn('💬', ()=>openCardFeedback(card));
   b.title = 'Send feedback on this card';
+  b.classList.add('feedback-btn');
   actionsEl.appendChild(b);
 }
 
@@ -3175,7 +3180,7 @@ function renderPickChip(elId, card, placeholderText, selectedId, onRemove){
   const imgHtml = card ? cardImageHtml(card, '', 150) : '';
   const changed = card && cardChangedSinceExport(card);
   el.innerHTML = card
-    ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-feedback" data-act="feedback" title="Send feedback on this card">💬</span><span class="chip-remove" data-act="remove" title="Remove">✕</span>`
+    ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-feedback feedback-btn" data-act="feedback" title="Send feedback on this card">💬</span><span class="chip-remove" data-act="remove" title="Remove">✕</span>`
     : `<span class="placeholder">${escapeHtml(placeholderText)}</span>`;
   if(card && card._isHorizontal) layoutLandscapeFrame(el.querySelector('.landscape-frame'));
   if(card) wireHoverPreview(el, card);
@@ -3856,7 +3861,7 @@ function openCardPickerModal({title, pool, currentId, onPick}){
       <div style="display:flex;justify-content:center;gap:4px;padding:0 6px 8px 6px;">
         ${(c._doubleSided && c._back) ? `<div class="btn btn-sm" data-act="flip">Flip</div>` : ''}
         <div class="btn btn-sm" data-act="detail">Details</div>
-        <div class="btn btn-sm" data-act="feedback" title="Send feedback on this card">💬</div>
+        <div class="btn btn-sm feedback-btn" data-act="feedback" title="Send feedback on this card">💬</div>
       </div>
     </div>`;
   }).join('');

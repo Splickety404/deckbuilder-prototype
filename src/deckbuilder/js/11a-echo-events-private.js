@@ -41,7 +41,7 @@ function openCardPickerModal({title, pool, currentId, onPick}){
       <div style="display:flex;justify-content:center;gap:4px;padding:0 6px 8px 6px;">
         ${(c._doubleSided && c._back) ? `<div class="btn btn-sm" data-act="flip">Flip</div>` : ''}
         <div class="btn btn-sm" data-act="detail">Details</div>
-        <div class="btn btn-sm" data-act="feedback" title="Send feedback on this card">💬</div>
+        <div class="btn btn-sm feedback-btn" data-act="feedback" title="Send feedback on this card">💬</div>
       </div>
     </div>`;
   }).join('');
