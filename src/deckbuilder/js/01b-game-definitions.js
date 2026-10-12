@@ -78,6 +78,10 @@ const GenericGame = {
   listCount(id){ return curDeck().deckCards.get(id)||0; },
   removeOne(id){ removeOneCopy(id); },
   illegalHint: 'Not legal for this deck.',
+  illegalRowHint: 'Not legal for this deck.',
+  // A second list the deck panel can be editing instead of the main deck (a side deck…) —
+  // null, or an object with render(zone) / order() / setOrder(arr) / removeOne(id) / removeAll(id) / add(ids).
+  activeSideList(){ return null; },
   // Optional extras a structured game draws around the deck panel — none for a plain card pool.
   renderTabs(){},
   renderDeckControlsExtras(){},

@@ -1301,6 +1301,10 @@ const GenericGame = {
   listCount(id){ return curDeck().deckCards.get(id)||0; },
   removeOne(id){ removeOneCopy(id); },
   illegalHint: 'Not legal for this deck.',
+  illegalRowHint: 'Not legal for this deck.',
+  // A second list the deck panel can be editing instead of the main deck (a side deck…) —
+  // null, or an object with render(zone) / order() / setOrder(arr) / removeOne(id) / removeAll(id) / add(ids).
+  activeSideList(){ return null; },
   // Optional extras a structured game draws around the deck panel — none for a plain card pool.
   renderTabs(){},
   renderDeckControlsExtras(){},
@@ -3085,18 +3089,9 @@ function renderDeckPanel(){
   const zone = document.getElementById('deck-drop-zone');
   zone.innerHTML='';
 
-  if(activeIsSchemeMode()){
-    if(!curDeck().schemeIds.length){
-      zone.innerHTML = `<div id="deck-empty-hint">Drag schemes here, or use the + button on a card. Choose exactly 5.</div>`;
-    }
-    const schemeCounts = {}, schemeOrder = [];
-    curDeck().schemeIds.forEach(id=>{
-      if(!(id in schemeCounts)){ schemeCounts[id]=0; schemeOrder.push(id); }
-      schemeCounts[id]++;
-    });
-    schemeOrder.forEach(id=>{
-      zone.appendChild(buildDeckRow(id, state.byId.get(id), {qty:schemeCounts[id], showStepper:true}));
-    });
+  const side = state.game.activeSideList();
+  if(side){
+    side.render(zone);
   } else {
     if(!curDeck().deckOrder.length){
       zone.innerHTML = `<div id="deck-empty-hint">Drag cards here, or use the + button on a card.</div>`;
@@ -3115,14 +3110,12 @@ function buildDeckRow(id, card, {qty, showStepper}){
   row.className = 'deck-stack' + (card && card._isHorizontal ? ' scheme-row' : '');
   row.draggable = true;
   row.dataset.id = id;
-  // Schemes: documented 1-copy max (Echo only). Generic mode restricts card counts for
-  // no reason at all, so there's effectively no limit. Either way this only ever
-  // flags visually — it has never actually blocked adding more copies.
+  // The game decides how many copies are legal (none are ever blocked — this only flags visually).
   const copyLimit = state.game.copyLimit(card);
   const overLimit = showStepper && qty>copyLimit;
   const illegal = !card || !isLegalForCurrentPool(card);
   if(overLimit || illegal) row.classList.add('over-limit');
-  if(illegal) row.title = 'Not legal for this deck — wrong type, or wrong aspect for your leader/domination aspect.';
+  if(illegal) row.title = state.game.illegalRowHint;
 
   const img = card && displayImageUrl(card) ? `<img src="${escapeHtml(sizedUrl(displayImageUrl(card),150))}">` : '';
   let name, removedBadgeHtml = '';
@@ -3157,7 +3150,7 @@ function buildDeckRow(id, card, {qty, showStepper}){
   }
   if(card && card._doubleSided && card._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(id); renderDeckPanel(); }));
   actions.appendChild(mkBtn('…', ()=> card && openPreview(card)));
-  actions.appendChild(mkBtn('×', ()=> showStepper ? removeAllCopies(id) : removeScheme(id)));
+  actions.appendChild(mkBtn('×', ()=> removeAllCopies(id)));
   row.appendChild(actions);
 
   wireRowDrag(row, id);
@@ -3226,14 +3219,15 @@ function wireRowDrag(row, id){
     try{ payload = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ return; }
     if(payload && payload.reorder){
       if(payload.id===id) return;
-      const orderArr = activeIsSchemeMode() ? curDeck().schemeIds : curDeck().deckOrder;
+      const side = state.game.activeSideList();
+      const orderArr = side ? side.order() : curDeck().deckOrder;
       const rect = row.getBoundingClientRect();
       const before = (e.clientY - rect.top) < rect.height/2;
       const filtered = orderArr.filter(x=>x!==payload.id);
       const idx = filtered.indexOf(id);
       const insertAt = before ? idx : idx+1;
       filtered.splice(insertAt<0?filtered.length:insertAt, 0, payload.id);
-      if(activeIsSchemeMode()) curDeck().schemeIds = filtered; else curDeck().deckOrder = filtered;
+      if(side) side.setOrder(filtered); else curDeck().deckOrder = filtered;
       renderAll();
     } else if(Array.isArray(payload)){
       addCardsToDeck(payload);
@@ -3242,7 +3236,8 @@ function wireRowDrag(row, id){
 }
 
 function removeOneCopy(id){
-  if(activeIsSchemeMode()){ removeScheme(id); return; }
+  const side = state.game.activeSideList();
+  if(side){ side.removeOne(id); return; }
   const cur = curDeck().deckCards.get(id)||0;
   const nn = cur-1;
   if(nn<=0){ curDeck().deckCards.delete(id); curDeck().deckOrder = curDeck().deckOrder.filter(x=>x!==id); }
@@ -3250,8 +3245,9 @@ function removeOneCopy(id){
   renderAll();
 }
 function removeAllCopies(id){
-  if(activeIsSchemeMode()){
-    curDeck().schemeIds = curDeck().schemeIds.filter(x=>x!==id);
+  const side = state.game.activeSideList();
+  if(side){
+    side.removeAll(id);
     renderAll();
     return;
   }
@@ -3259,24 +3255,10 @@ function removeAllCopies(id){
   curDeck().deckOrder = curDeck().deckOrder.filter(x=>x!==id);
   renderAll();
 }
-function removeScheme(id){
-  // Removes only ONE occurrence — schemeIds can now contain duplicates (sealed-deck
-  // generation may add a scheme that's already present), so removing every matching
-  // entry via a plain filter would silently delete all of them from one click.
-  const idx = curDeck().schemeIds.indexOf(id);
-  if(idx!==-1) curDeck().schemeIds.splice(idx,1);
-  renderAll();
-}
-
 function addCardsToDeck(ids){
-  if(activeIsSchemeMode()){
-    let added=0, skipped=0;
-    ids.forEach(id=>{
-      const c = state.byId.get(id);
-      if(!c || !isTypeEligible(c)) { skipped++; return; } // aspect-illegal cards ARE addable now — only wrong type is a hard block
-      curDeck().schemeIds.push(id); added++; // duplicates now allowed freely, same as main-deck cards — the rules checklist flags >1 copy, it never blocks it
-    });
-    toast(`Added ${added} scheme${added!==1?'s':''}${skipped?`, skipped ${skipped}`:''}.`);
+  const side = state.game.activeSideList();
+  if(side){
+    side.add(ids);
   } else {
     let added=0, skipped=0;
     ids.forEach(id=>{
@@ -3414,6 +3396,53 @@ function openDiffModal(oldRow, currentCard){
   document.getElementById('diffModalBody').innerHTML = html;
   document.getElementById('historyModal').classList.add('hidden');
   document.getElementById('diffModal').classList.remove('hidden');
+}
+
+/* =========================================================================
+   ECHO — SCHEME DECK LIST (private). While the Overlord's "Scheme" tab is open
+   the deck panel edits a second list (schemeIds, duplicates allowed) instead of
+   the main deck. The shared panel only knows "is a side list active?" — see
+   activeSideList in the game definition — and asks it to render / reorder /
+   add / remove. Moved here unchanged from the deck panel.
+   ========================================================================= */
+const SchemeList = {
+  render(zone){
+    if(!curDeck().schemeIds.length){
+      zone.innerHTML = `<div id="deck-empty-hint">Drag schemes here, or use the + button on a card. Choose exactly 5.</div>`;
+    }
+    const schemeCounts = {}, schemeOrder = [];
+    curDeck().schemeIds.forEach(id=>{
+      if(!(id in schemeCounts)){ schemeCounts[id]=0; schemeOrder.push(id); }
+      schemeCounts[id]++;
+    });
+    schemeOrder.forEach(id=>{
+      zone.appendChild(buildDeckRow(id, state.byId.get(id), {qty:schemeCounts[id], showStepper:true}));
+    });
+  },
+  order(){ return curDeck().schemeIds; },
+  setOrder(arr){ curDeck().schemeIds = arr; },
+  removeOne(id){ removeScheme(id); },
+  removeAll(id){ curDeck().schemeIds = curDeck().schemeIds.filter(x=>x!==id); },
+  add(ids){
+    let added=0, skipped=0;
+    ids.forEach(id=>{
+      const c = state.byId.get(id);
+      if(!c || !isTypeEligible(c)) { skipped++; return; } // aspect-illegal cards ARE addable now — only wrong type is a hard block
+      curDeck().schemeIds.push(id); added++; // duplicates now allowed freely, same as main-deck cards — the rules checklist flags >1 copy, it never blocks it
+    });
+    toast(`Added ${added} scheme${added!==1?'s':''}${skipped?`, skipped ${skipped}`:''}.`);
+  },
+};
+EchoGame.activeSideList = ()=> activeIsSchemeMode() ? SchemeList : null;
+EchoGame.illegalRowHint = 'Not legal for this deck — wrong type, or wrong aspect for your leader/domination aspect.';
+
+function removeScheme(id){
+  // Removes only ONE occurrence — schemeIds can now contain duplicates (sealed-deck
+  // generation may add a scheme that's already present), so removing every matching
+  // entry via a plain filter would silently delete all of them from one click.
+  const idx = curDeck().schemeIds.indexOf(id);
+  if(idx!==-1) curDeck().schemeIds.splice(idx,1);
+  renderAll();
 }
 
 /* =========================================================================
