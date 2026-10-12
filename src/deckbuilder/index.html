@@ -83,10 +83,12 @@
 
   <header id="topbar">
     <h1 id="topbarTitle">DECKBUILDER PROTOTYPE</h1>
+<!--PRIVATE-BEGIN-->
     <div class="tab-group" id="deckTypeTabs">
       <div class="tab" data-type="overlord">Overlord</div>
       <div class="tab" data-type="champion">Champion</div>
     </div>
+<!--PRIVATE-END-->
 <!--PRIVATE-BEGIN-->
     <div class="btn" id="btnSealedDecks" title="Randomly build BOTH the Overlord and Champion decks (plus the scheme deck) from a single shared card pool, following the sealed-deck rules">Get Sealed Decks</div>
 <!--PRIVATE-END-->
@@ -120,6 +122,7 @@
         </div>
       </div>
       <div id="deck-controls">
+<!--PRIVATE-BEGIN-->
         <div class="mode-toggle" id="overlordModeToggle">
           <div class="tab" data-mode="main">Main Deck (50)</div>
           <div class="tab" data-mode="scheme">Scheme Deck (5)</div>
@@ -140,10 +143,12 @@
             <span id="aspectValue" style="font-size:13px;color:var(--text-soft);">—</span>
           </div>
         </details>
+<!--PRIVATE-END-->
         <div id="deckHeaderLine">
           <h3 id="deckPanelTitle">Your Deck</h3>
           <span id="deckCountLabel">0 / 50</span>
         </div>
+<!--PRIVATE-BEGIN-->
         <div class="btn btn-sm" id="btnClearIllegal" style="display:none;">Remove illegal cards</div>
         <details id="deckRulesPanel">
           <summary>Rules Check</summary>
@@ -153,6 +158,7 @@
           <summary>Deck Stats</summary>
           <div id="deckStatsBody"></div>
         </details>
+<!--PRIVATE-END-->
       </div>
 
       <div id="deck-drop-zone">
@@ -171,10 +177,12 @@
     </section>
 
     <aside id="filters-panel">
+<!--PRIVATE-BEGIN-->
       <details id="viewStatsPanel">
         <summary>Current View Stats</summary>
         <div id="viewStatsBody"></div>
       </details>
+<!--PRIVATE-END-->
       <h3>Filters</h3>
       <label id="deckViewToggle" class="toggle-row">
         <input type="checkbox" id="deckViewCheckbox">
@@ -188,6 +196,7 @@
 
   </div>
 
+<!--PRIVATE-BEGIN-->
   <!-- Leader picker modal -->
   <div class="modal-overlay hidden" id="cardPickerModal">
     <div class="modal-box">
@@ -195,6 +204,7 @@
       <div class="modal-body"><div class="leader-grid" id="cardPickerGrid"></div></div>
     </div>
   </div>
+<!--PRIVATE-END-->
 
   <!-- Card preview modal -->
   <div class="modal-overlay hidden" id="preview-modal">

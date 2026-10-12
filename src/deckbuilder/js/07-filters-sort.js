@@ -18,7 +18,8 @@ function cardVisibleBySet(c){
 
 function cardMatchesFilters(c, exceptKey){
   if(curFilters().deckViewOnly){
-    const inDeck = activeIsSchemeMode() ? curDeck().schemeIds.includes(c.id) : curDeck().deckCards.has(c.id);
+    const side = state.game.activeSideList();
+    const inDeck = side ? side.has(c.id) : curDeck().deckCards.has(c.id);
     if(!inDeck) return false;
   }
   if(!cardVisibleBySet(c)) return false;

@@ -19,6 +19,7 @@ const SchemeList = {
       zone.appendChild(buildDeckRow(id, state.byId.get(id), {qty:schemeCounts[id], showStepper:true}));
     });
   },
+  has(id){ return curDeck().schemeIds.includes(id); },
   order(){ return curDeck().schemeIds; },
   setOrder(arr){ curDeck().schemeIds = arr; },
   removeOne(id){ removeScheme(id); },

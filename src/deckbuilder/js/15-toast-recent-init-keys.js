@@ -72,8 +72,6 @@ document.addEventListener('keydown', (e)=>{
   }
 });
 
-const rememberedDeckType = localStorage.getItem(LS_LAST_DECKTYPE_KEY);
-if(rememberedDeckType==='overlord' || rememberedDeckType==='champion') state.deckType = rememberedDeckType;
 initCardScale();
 initVisitTracking();
 document.documentElement.style.setProperty('--hover-preview-width', HOVER_PREVIEW_WIDTH+'px');

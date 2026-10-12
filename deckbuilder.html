@@ -1306,7 +1306,7 @@ const GenericGame = {
   illegalHint: 'Not legal for this deck.',
   illegalRowHint: 'Not legal for this deck.',
   // A second list the deck panel can be editing instead of the main deck (a side deck…) —
-  // null, or an object with render(zone) / order() / setOrder(arr) / removeOne(id) / removeAll(id) / add(ids).
+  // null, or an object with render(zone) / has(id) / order() / setOrder(arr) / removeOne(id) / removeAll(id) / add(ids).
   activeSideList(){ return null; },
   // Optional extras a structured game draws around the deck panel — none for a plain card pool.
   renderTabs(){},
@@ -2451,7 +2451,8 @@ function cardVisibleBySet(c){
 
 function cardMatchesFilters(c, exceptKey){
   if(curFilters().deckViewOnly){
-    const inDeck = activeIsSchemeMode() ? curDeck().schemeIds.includes(c.id) : curDeck().deckCards.has(c.id);
+    const side = state.game.activeSideList();
+    const inDeck = side ? side.has(c.id) : curDeck().deckCards.has(c.id);
     if(!inDeck) return false;
   }
   if(!cardVisibleBySet(c)) return false;
@@ -3441,6 +3442,7 @@ const SchemeList = {
       zone.appendChild(buildDeckRow(id, state.byId.get(id), {qty:schemeCounts[id], showStepper:true}));
     });
   },
+  has(id){ return curDeck().schemeIds.includes(id); },
   order(){ return curDeck().schemeIds; },
   setOrder(arr){ curDeck().schemeIds = arr; },
   removeOne(id){ removeScheme(id); },
@@ -3482,6 +3484,93 @@ function renderAll(){
 /* =========================================================================
    EVENTS
    ========================================================================= */
+document.getElementById('sortSelect').addEventListener('change', (e)=>{
+  state.sortField = e.target.value;
+  renderLibrary();
+});
+
+document.getElementById('searchBox').addEventListener('input', (e)=>{
+  curFilters().search = e.target.value;
+  renderFilters(); renderLibrary();
+});
+document.getElementById('deckViewCheckbox').addEventListener('change', (e)=>{
+  curFilters().deckViewOnly = e.target.checked;
+  renderAll();
+});
+document.getElementById('btnClearFilters').addEventListener('click', ()=>{
+  state.filtersByType[activeFilterKey()] = freshFilters();
+  document.getElementById('searchBox').value='';
+  renderAll();
+});
+
+document.querySelectorAll('[data-close]').forEach(b=>{
+  b.addEventListener('click', ()=> document.getElementById(b.dataset.close).classList.add('hidden'));
+});
+
+document.getElementById('btnThemeToggle').addEventListener('click', ()=>{
+  const cur = document.documentElement.getAttribute('data-theme') || 'light';
+  applyTheme(cur==='dark' ? 'light' : 'dark');
+});
+
+document.getElementById('deckNameInput').addEventListener('input', (e)=>{ curDeck().name = e.target.value; });
+
+document.getElementById('btnNewDeck').addEventListener('click', ()=>{
+  if(!confirm('Start a new deck? Unsaved changes will be lost.')) return;
+  state.decks[activeDeckKey()] = freshDeckSlot();
+  renderAll();
+});
+/* deck drop zone: only fires for drops NOT on a specific row (row handlers stopPropagation) */
+const dropZone = document.getElementById('deck-drop-zone');
+dropZone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropZone.classList.add('dragover'); showReorderIndicatorAt(dropZone, null); });
+dropZone.addEventListener('dragleave', ()=> dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e)=>{
+  e.preventDefault(); dropZone.classList.remove('dragover'); hideReorderIndicator();
+  let payload;
+  try{ payload = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ return; }
+  if(payload && payload.reorder){
+    const side = state.game.activeSideList();
+    const orderArr = side ? side.order() : curDeck().deckOrder;
+    const filtered = orderArr.filter(x=>x!==payload.id);
+    filtered.push(payload.id);
+    if(side) side.setOrder(filtered); else curDeck().deckOrder = filtered;
+    renderAll();
+  } else if(Array.isArray(payload)){
+    addCardsToDeck(payload);
+  }
+});
+
+document.getElementById('btnResync').addEventListener('click', ()=> loadData(false));
+
+/* =========================================================================
+   PLAYTEST ROOM LINK + BOARD (.pcio) DOWNLOAD
+   ========================================================================= */
+// This opens the template page with the "Blank Game" button front and center,
+// rather than trying to create a room directly. That button's actual room
+// creation happens through playingcards.io's own backend (looks Firebase-backed,
+// not a plain link or documented API) — nothing externally callable to hook into
+// safely, so one extra click here is the honest, durable tradeoff.
+const PLAYTEST_ROOM_URL = 'https://playingcards.io/@playingcardsio/standard-52-card-deck-game';
+(function wirePlaytestRoomLink(){
+  const el = document.getElementById('btnPlaytestRoom');
+  el.href = PLAYTEST_ROOM_URL;
+})();
+
+// state.pcio is already known (resolved once per game load, from the game's own main
+// folder — see loadData/applyPcioUI) so there's no need for a separate round trip
+// here; the button itself is hidden entirely whenever state.pcio.found is false.
+document.getElementById('btnDownloadPcio').addEventListener('click', ()=>{
+  if(!state.pcio || !state.pcio.found){ toast('No .pcio file found for this game.'); return; }
+  window.open(state.pcio.downloadUrl, '_blank');
+});
+
+
+/* =========================================================================
+   ECHO — DECK TABS, SETUP PICKERS AND "REMOVE ILLEGAL CARDS" (private). The
+   Overlord/Champion tabs, the Main/Scheme toggle, the leader / Domination /
+   Stronghold pickers and the illegal-card clean-up button. Their page markup
+   is wrapped in PRIVATE markers in index.html, so a public build has neither
+   the markup nor this wiring. Moved here unchanged from the events section.
+   ========================================================================= */
 const LS_LAST_DECKTYPE_KEY = 'eoo_last_decktype';
 document.getElementById('deckTypeTabs').addEventListener('click', (e)=>{
   const t = e.target.closest('.tab'); if(!t) return;
@@ -3498,6 +3587,8 @@ document.getElementById('overlordModeToggle').addEventListener('click', (e)=>{
   state.selection = new Set();
   renderAll();
 });
+const rememberedDeckType = localStorage.getItem(LS_LAST_DECKTYPE_KEY);
+if(rememberedDeckType==='overlord' || rememberedDeckType==='champion') state.deckType = rememberedDeckType;
 
 document.getElementById('deck-leader-slot').addEventListener('click', openLeaderModal);
 document.getElementById('deck-bonus-slot').addEventListener('click', openBonusCardModal);
@@ -3578,12 +3669,6 @@ function openExtraCardModal(){
   });
 }
 
-
-document.getElementById('sortSelect').addEventListener('change', (e)=>{
-  state.sortField = e.target.value;
-  renderLibrary();
-});
-
 document.getElementById('btnClearIllegal').addEventListener('click', ()=>{
   const snapshot = activeIsSchemeMode()
     ? { schemeIds: [...curDeck().schemeIds] }
@@ -3606,81 +3691,6 @@ document.getElementById('btnClearIllegal').addEventListener('click', ()=>{
     renderAll();
   });
 });
-
-document.getElementById('searchBox').addEventListener('input', (e)=>{
-  curFilters().search = e.target.value;
-  renderFilters(); renderLibrary();
-});
-document.getElementById('deckViewCheckbox').addEventListener('change', (e)=>{
-  curFilters().deckViewOnly = e.target.checked;
-  renderAll();
-});
-document.getElementById('btnClearFilters').addEventListener('click', ()=>{
-  state.filtersByType[activeFilterKey()] = freshFilters();
-  document.getElementById('searchBox').value='';
-  renderAll();
-});
-
-document.querySelectorAll('[data-close]').forEach(b=>{
-  b.addEventListener('click', ()=> document.getElementById(b.dataset.close).classList.add('hidden'));
-});
-
-document.getElementById('btnThemeToggle').addEventListener('click', ()=>{
-  const cur = document.documentElement.getAttribute('data-theme') || 'light';
-  applyTheme(cur==='dark' ? 'light' : 'dark');
-});
-
-document.getElementById('deckNameInput').addEventListener('input', (e)=>{ curDeck().name = e.target.value; });
-
-document.getElementById('btnNewDeck').addEventListener('click', ()=>{
-  if(!confirm('Start a new deck? Unsaved changes will be lost.')) return;
-  state.decks[activeDeckKey()] = freshDeckSlot();
-  renderAll();
-});
-/* deck drop zone: only fires for drops NOT on a specific row (row handlers stopPropagation) */
-const dropZone = document.getElementById('deck-drop-zone');
-dropZone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropZone.classList.add('dragover'); showReorderIndicatorAt(dropZone, null); });
-dropZone.addEventListener('dragleave', ()=> dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', (e)=>{
-  e.preventDefault(); dropZone.classList.remove('dragover'); hideReorderIndicator();
-  let payload;
-  try{ payload = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ return; }
-  if(payload && payload.reorder){
-    const orderArr = activeIsSchemeMode() ? curDeck().schemeIds : curDeck().deckOrder;
-    const filtered = orderArr.filter(x=>x!==payload.id);
-    filtered.push(payload.id);
-    if(activeIsSchemeMode()) curDeck().schemeIds = filtered; else curDeck().deckOrder = filtered;
-    renderAll();
-  } else if(Array.isArray(payload)){
-    addCardsToDeck(payload);
-  }
-});
-
-document.getElementById('btnResync').addEventListener('click', ()=> loadData(false));
-
-/* =========================================================================
-   PLAYTEST ROOM LINK + BOARD (.pcio) DOWNLOAD
-   ========================================================================= */
-// This opens the template page with the "Blank Game" button front and center,
-// rather than trying to create a room directly. That button's actual room
-// creation happens through playingcards.io's own backend (looks Firebase-backed,
-// not a plain link or documented API) — nothing externally callable to hook into
-// safely, so one extra click here is the honest, durable tradeoff.
-const PLAYTEST_ROOM_URL = 'https://playingcards.io/@playingcardsio/standard-52-card-deck-game';
-(function wirePlaytestRoomLink(){
-  const el = document.getElementById('btnPlaytestRoom');
-  el.href = PLAYTEST_ROOM_URL;
-})();
-
-// state.pcio is already known (resolved once per game load, from the game's own main
-// folder — see loadData/applyPcioUI) so there's no need for a separate round trip
-// here; the button itself is hidden entirely whenever state.pcio.found is false.
-document.getElementById('btnDownloadPcio').addEventListener('click', ()=>{
-  if(!state.pcio || !state.pcio.found){ toast('No .pcio file found for this game.'); return; }
-  window.open(state.pcio.downloadUrl, '_blank');
-});
-
-
 /* =========================================================================
    SAVE / LOAD DECKS (localStorage)
    ========================================================================= */
@@ -4554,8 +4564,6 @@ document.addEventListener('keydown', (e)=>{
   }
 });
 
-const rememberedDeckType = localStorage.getItem(LS_LAST_DECKTYPE_KEY);
-if(rememberedDeckType==='overlord' || rememberedDeckType==='champion') state.deckType = rememberedDeckType;
 initCardScale();
 initVisitTracking();
 document.documentElement.style.setProperty('--hover-preview-width', HOVER_PREVIEW_WIDTH+'px');
