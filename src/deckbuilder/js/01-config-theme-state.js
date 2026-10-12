@@ -88,9 +88,6 @@ const state = {
   selection: new Set(),
   lastClickIndex: null,
   visibleCardsOrder: [],
-  genericBacks: {}, // a structured game's own per-type card backs, for exports only
-  genericBackUrl: '', // generic (non-Echo) mode's single shared "back.png"/"back.pdf" per game, for exports only
-  pcio: {found:false}, // this game's .pcio board file, if it has one — see applyPcioUI()
   precons: {canEdit:false, decks:[], boards:[]}, // this game's preconstructed decks and room board layouts this person may see — see loadPrecons()
   flippedCards: new Set(), // ids currently showing their real back (double-sided cards only)
 };

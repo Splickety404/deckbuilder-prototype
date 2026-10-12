@@ -599,8 +599,6 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     </div>
     <div class="btn" id="btnFeedbackInbox" style="display:none;" title="Read the card feedback people have sent">Feedback</div>
     <div class="btn" id="btnUnwrapBooster" title="Open a booster pack and add its cards to your Overlord and Champion decks — you can open as many as you like">Unwrap a Booster</div>
-    <a class="btn" id="btnPlaytestRoom" href="#" target="_blank" rel="noopener" title="Opens the template page — click &quot;Blank Game&quot; there to create a fresh room">New Blank Room ↗</a>
-    <div class="btn" id="btnDownloadPcio" style="display:none;">Download Board</div>
     <div class="btn btn-sm" id="btnManageSets" title="Which card sets you have access to">Sets</div>
     <div class="btn btn-sm" id="btnChangeGame" title="Switch to a different game" style="display:none;">Game ▾</div>
     <div class="btn btn-icon" id="btnHelp" title="Help">❔</div>
@@ -883,10 +881,6 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
           <p>Overlord export order: leader, then your 5 schemes, then your 50-card deck (in your reordered sequence). Double-sided cards print front then back. Scheme cards print at their native angle, same physical size as every other card — rotate the printed card by hand to read it.</p>
           <p id="pdfPageEstimate" style="font-weight:600;"></p>
         </div>
-        <div class="export-option card-surface" id="optExportCsv">
-          <h3>🃏 playingcards.io CSV</h3>
-          <p>Columns: name, front, back — one row per physical copy, in deck order. For an Overlord deck this downloads two files: the 50-card deck (leader first) and the 5-card scheme deck, separately.</p>
-        </div>
         <div class="export-option card-surface" id="optExportTxt">
           <h3>📋 Plain-text decklist</h3>
           <p>Human-readable list you can paste into Discord/chat to share with friends.</p>
@@ -1014,9 +1008,6 @@ const state = {
   selection: new Set(),
   lastClickIndex: null,
   visibleCardsOrder: [],
-  genericBacks: {}, // a structured game's own per-type card backs, for exports only
-  genericBackUrl: '', // generic (non-Echo) mode's single shared "back.png"/"back.pdf" per game, for exports only
-  pcio: {found:false}, // this game's .pcio board file, if it has one — see applyPcioUI()
   precons: {canEdit:false, decks:[], boards:[]}, // this game's preconstructed decks and room board layouts this person may see — see loadPrecons()
   flippedCards: new Set(), // ids currently showing their real back (double-sided cards only)
 };
@@ -1037,7 +1028,6 @@ function curFilters(){ return state.filtersByType[activeFilterKey()]; }
      whoAmI(idToken)                    who is signed in + which games/sets they can open
      loadSet(folderId, fast)            one set's rows + art (fast skips the art scan)
      loadSetImages(folderId)            the slower art-link catch-up for one set
-     loadGameAssets(gameFolderId)       card backs + board file shared by a whole game
      loadHelp(folderId)                 the game's help articles
      cardHistory(cardId)                past versions of one card
      precons(gameFolderId)              preconstructed decks + boards
@@ -1089,7 +1079,7 @@ async function fetchSetData(folderId, fast){
     });
   }
   if(!result.ok) throw new Error(result.error || 'Unknown error scanning that folder.');
-  return result; // {ok:true, setName, sheetId, rows, genericBackUrl, genericBacks, pcio}
+  return result; // {ok:true, setName, sheetId, rows}
 }
 
 // The slow half a fast=true fetchSetData() skipped: runs that set's live Drive
@@ -1115,31 +1105,6 @@ async function fetchSetImages(folderId){
   }
   if(!result.ok) throw new Error(result.error || 'Unknown error syncing art for that set.');
   return result; // {ok:true, sheetId, images:[{id,'front-image-url','back-image-url'}, ...]}
-}
-
-// Game-level assets (card backs, the .pcio board file) — see the gameAssets endpoint
-// in Code.gs. A fast=true fetchSetData() skips these too (same live-Drive-folder-scan
-// cost as art), so this is called once per GAME (not once per set within it — every
-// set in a game shares the same assets) to catch them up in the background.
-async function fetchGameAssets(gameFolderId){
-  const url = `${WEBAPP_URL}?gameAssets=${encodeURIComponent(gameFolderId)}&idToken=${encodeURIComponent(state.idToken)}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooAssetsCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to load this game\'s shared assets.')); }, 30000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Unknown error loading this game\'s assets.');
-  return result; // {ok:true, genericBackUrl, overlordBackUrl, schemeBackUrl, championBackUrl, pcio}
 }
 
 // Asks the server who this ID token belongs to, and which GAMES (each with only the
@@ -1322,14 +1287,6 @@ const cardSource = {
   whoAmI: fetchWhoAmI,
   loadSet: fetchSetData,
   loadSetImages: fetchSetImages,
-  loadGameAssets: async (gameFolderId)=>{
-    const a = await fetchGameAssets(gameFolderId);
-    return {
-      genericBackUrl: a.genericBackUrl,
-      genericBacks: { overlordBackUrl: a.overlordBackUrl || '', schemeBackUrl: a.schemeBackUrl || '', championBackUrl: a.championBackUrl || '' },
-      pcio: a.pcio,
-    };
-  },
   loadHelp: fetchHelpFromServer,
   cardHistory: fetchCardHistory,
   precons: fetchPrecons,
@@ -1376,11 +1333,10 @@ state.userEmail = ''; // signed-in user's email, from the server's whoami respon
      listCount(id) / removeOne(id)   how many of a card the active list holds / remove one
      illegalHint         tooltip for a card that isn't legal for the deck
      renderTabs() / renderDeckControlsExtras() / renderViewStats()   extra panel UI (optional)
-     backUrl(card)       the card back an export should use
      matches(rawSets)    (optional) true if this definition owns the loaded sets
    ========================================================================= */
 /* ---- DECK CODEC — how a deck is written to / read from a saved deck, a .json or .txt file,
-   a playingcards.io CSV and the print list. The shared code owns the part every game has
+   and the print list. The shared code owns the part every game has
    (name, cards, card order); the codec owns whatever extra a game puts in a deck (leaders,
    side decks…). The plain codec below has no extras, so a free-form game's files hold
    just the cards. Methods (d = the deck slot being read/written):
@@ -1390,7 +1346,6 @@ state.userEmail = ''; // signed-in user's email, from the server's whoami respon
      parseTextLine(line, ctx)                  true if the line is a game-specific one
      parseTextItem(ctx, match)                 true if a "3x Name" line belongs to a game-specific section
      finishTextImport(ctx, byName, unmatched)  turn parsed names back into the deck
-     csvFiles()                                [{suffix, cards}], or {error}
      printLead(d)                              cards printed before the deck itself
      referencedIds(d)                          card ids the deck points at besides its main cards */
 const PlainDeckCodec = {
@@ -1403,7 +1358,6 @@ const PlainDeckCodec = {
   parseTextLine(line, ctx){ return false; },
   parseTextItem(ctx, match){ return false; },
   finishTextImport(ctx, byName, unmatched){},
-  csvFiles(){ return [{ suffix: '_playingcardsio.csv', cards: expandedDeckList() }]; },
   printLead(d){ return []; },
   referencedIds(d){ return []; },
 };
@@ -1456,11 +1410,6 @@ const GenericGame = {
   renderTabs(){},
   renderDeckControlsExtras(){},
   renderViewStats(){},
-  backUrl(card){
-    // One shared back ("back.png"/"back.pdf" etc, uploaded alongside the set's other
-    // card art) for every non-double-sided card, regardless of type.
-    return state.genericBackUrl || '';
-  },
 };
 
 
@@ -1555,12 +1504,6 @@ const EchoGame = {
   removeOne(id){ activeIsSchemeMode() ? removeScheme(id) : removeOneCopy(id); },
   illegalHint: 'Not legal for this deck — wrong aspect for your leader/domination aspect.',
   renderViewStats(){ renderCurrentViewStats(); },
-  backUrl(card){
-    if(card.type === 'O - Scheme') return state.genericBacks.schemeBackUrl || '';
-    if(card.type.startsWith('O -')) return state.genericBacks.overlordBackUrl || '';
-    if(card.type.startsWith('C -')) return state.genericBacks.championBackUrl || '';
-    return '';
-  },
 };
 gameDefinitions.push(EchoGame);
 
@@ -1728,7 +1671,7 @@ function showLoadedCards(rawSetResults){
   state.cards = rows;
   state.byId = new Map(rows.map(r=>[r.id, r]));
   applyModeUI();
-  applyPcioUI();
+  applyRoomUI();
   state.game.afterCardsLoaded();
   computeFieldDefs();
   renderAll();
@@ -1793,10 +1736,8 @@ async function loadData(silent){
     if(!anySetFailed && typeof cardCacheSaveSets==='function') cardCacheSaveSets(rawSetResults);
     if(!keepSavedView) showLoadedCards(rawSetResults);
     // Card text is in and the grid is already rendered and usable — don't make the
-    // user wait on art, or on the game-level assets (card backs/.pcio board), either.
-    // hideLoadingOverlay() happens here; both background passes below pop their own
-    // results in once they finish (see syncAllSetImages/applySetImages and
-    // loadGameAssetsInBackground/applyPcioUI).
+    // user wait on art, either. hideLoadingOverlay() happens here; art pops in per set
+    // once each one's scan finishes (see syncAllSetImages/applySetImages).
     hideLoadingOverlay();
     if(typeof perfMark==='function') perfMark('cards up to date');
     if(state.hasImages && rawSetResults.length){
@@ -1805,7 +1746,6 @@ async function loadData(silent){
     } else {
       setSyncStatus('synced ' + syncTime() + (state.hasImages?'':' — no art columns found yet'));
     }
-    if(state.currentGameFolderId) loadGameAssetsInBackground(state.currentGameFolderId);
     if(state.currentGameFolderId) loadPrecons(true);
   }catch(err){
     console.error(err);
@@ -1853,45 +1793,16 @@ function applySetImages(images){
   if(changed) renderAll();
 }
 
-// Catches up the game-level assets (card backs, .pcio board) a fast=true loadData()
-// skipped — silent and non-blocking: nothing about browsing or deckbuilding depends
-// on this, it just enables Download .pcio / Playtest Room / the CSV export option
-// (via applyPcioUI) and the export card-back URLs once it resolves.
-async function loadGameAssetsInBackground(gameFolderId){
-  try{
-    const assets = await cardSource.loadGameAssets(gameFolderId);
-    state.genericBackUrl = assets.genericBackUrl || '';
-    state.genericBacks = assets.genericBacks || {};
-    state.pcio = assets.pcio || {found:false};
-    applyPcioUI();
-  }catch(e){
-    console.error('Could not load game assets for '+gameFolderId+':', e);
-    // Non-fatal — those buttons just stay hidden and card-back export URLs stay
-    // blank until the next reload; nothing else in the app depends on this.
-  }
-}
 function syncTime(){ return new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}); }
 function setSyncStatus(s){ const el = document.getElementById('sync-status'); el.textContent = s; el.title = s; } // title: the full text when it's cut short
 function showLoadingOverlay(){ document.getElementById('loading-overlay').classList.add('active'); }
 function hideLoadingOverlay(){ document.getElementById('loading-overlay').classList.remove('active'); }
 
-// playingcards.io-flavored features (downloading this game's own .pcio board, the
-// "New Blank Room" link to playingcards.io itself, and the playingcards.io CSV export
-// option) only make sense for a game that actually has a .pcio file in its main
-// folder — never dead buttons/options that just error when used, for a game that
-// isn't set up for playingcards.io at all.
-// A game with one or more room board layouts in its folder (see getPrecons in
-// Code.gs) plays in the game room instead: "Send deck to room" replaces the
-// playingcards.io buttons (its CSV export stays available under Export).
-function applyPcioUI(){
-  const hasPcio = !!(state.pcio && state.pcio.found);
+// Games with room boards play in the game room: "Send deck to room" shows only then.
+function applyRoomUI(){
   const hasBoards = !!(state.precons && state.precons.boards && state.precons.boards.length);
-  document.getElementById('btnDownloadPcio').style.display = (hasPcio && !hasBoards) ? 'inline-flex' : 'none';
-  document.getElementById('btnPlaytestRoom').style.display = (hasPcio && !hasBoards) ? 'inline-flex' : 'none';
   document.getElementById('btnSendToRoom').style.display = hasBoards ? 'inline-flex' : 'none';
-  document.getElementById('optExportCsv').style.display = hasPcio ? '' : 'none';
 }
-
 /* =========================================================================
    GAMES — picking which game to open, and switching between them. Whatever start
    screen the build uses (see cardSource.start) ends up in startWithGames().
@@ -1939,12 +1850,9 @@ function resetGameSpecificState(){
   state.lastClickIndex = null;
   state.visibleCardsOrder = [];
   state.flippedCards = new Set();
-  state.genericBacks = {};
-  state.genericBackUrl = '';
-  state.pcio = {found:false};
   state.precons = {canEdit:false, decks:[], boards:[]};
   applyPreconUI();
-  applyPcioUI(); // reset all three playingcards.io-flavored UI bits until the new game's loadData() re-evaluates them
+  applyRoomUI();
 }
 
 // Switching games mid-session, via the "Game" button — deliberately clears all
@@ -4003,29 +3911,6 @@ dropZone.addEventListener('drop', (e)=>{
 document.getElementById('btnResync').addEventListener('click', ()=> loadData(false));
 
 /* =========================================================================
-   PLAYTEST ROOM LINK + BOARD (.pcio) DOWNLOAD
-   ========================================================================= */
-// This opens the template page with the "Blank Game" button front and center,
-// rather than trying to create a room directly. That button's actual room
-// creation happens through playingcards.io's own backend (looks Firebase-backed,
-// not a plain link or documented API) — nothing externally callable to hook into
-// safely, so one extra click here is the honest, durable tradeoff.
-const PLAYTEST_ROOM_URL = 'https://playingcards.io/@playingcardsio/standard-52-card-deck-game';
-(function wirePlaytestRoomLink(){
-  const el = document.getElementById('btnPlaytestRoom');
-  el.href = PLAYTEST_ROOM_URL;
-})();
-
-// state.pcio is already known (resolved once per game load, from the game's own main
-// folder — see loadData/applyPcioUI) so there's no need for a separate round trip
-// here; the button itself is hidden entirely whenever state.pcio.found is false.
-document.getElementById('btnDownloadPcio').addEventListener('click', ()=>{
-  if(!state.pcio || !state.pcio.found){ toast('No .pcio file found for this game.'); return; }
-  window.open(state.pcio.downloadUrl, '_blank');
-});
-
-
-/* =========================================================================
    ECHO — DECK TABS, SETUP PICKERS AND "REMOVE ILLEGAL CARDS" (private). The
    Overlord/Champion tabs, the Main/Scheme toggle, the leader / Domination /
    Stronghold pickers and the illegal-card clean-up button. Their page markup
@@ -4448,26 +4333,6 @@ const EchoDeckCodec = {
     curDeck().schemeIds = [];
     schemeNames.forEach(n=>{ const c=byName.get(n); c ? curDeck().schemeIds.push(c.id) : unmatched.push(n); });
   },
-  csvFiles(){
-    if(!state.game.structured){
-      // No leader/setup slots to prepend in generic mode — just the deck itself.
-      return [{ suffix: '_playingcardsio.csv', cards: expandedDeckList() }];
-    }
-    const leader = getLeader();
-    if(!leader) return { error: 'Choose a leader first.' };
-    const setupCards = [leader, getBonusCard(), getExtraCard()].filter(Boolean);
-    if(state.deckType==='overlord'){
-      // Two separate files: the Overlord deck (leader, Domination, Stronghold, then the
-      // 50-card deck) and the scheme deck (just the 5 schemes) — matching how you'd
-      // actually build these as two distinct decks on playingcards.io.
-      const schemeList = curDeck().schemeIds.map(id=>state.byId.get(id)).filter(Boolean);
-      return [
-        { suffix: '_overlord_playingcardsio.csv', cards: [...setupCards, ...expandedDeckList()] },
-        { suffix: '_schemes_playingcardsio.csv', cards: schemeList },
-      ];
-    }
-    return [{ suffix: '_playingcardsio.csv', cards: [...setupCards, ...expandedDeckList()] }];
-  },
   printLead(d){
     const lead = [getLeader(), getBonusCard(), getExtraCard()];
     if(state.deckType==='overlord') d.schemeIds.forEach(id=> lead.push(state.byId.get(id)));
@@ -4653,42 +4518,6 @@ function warnAboutMissingCards(){
   toast(`Heads up: ${missing.length} card${missing.length>1?'s':''} in this deck ${missing.length>1?'were':'was'} removed from the game and will NOT appear in this export: ${names.slice(0,3).join(', ')}${names.length>3?'…':''}`);
 }
 
-function backUrlForExport(card){
-  if(card._doubleSided && card._back) return card._back;
-  return state.game.backUrl(card);
-}
-// Strips the internal "#img-src"/"#pdf-src" marker fragment (see sizedUrl()) before
-// a URL leaves the app in an export — playingcards.io would ignore it harmlessly
-// either way (fragments are never sent over the network), but there's no reason to
-// hand external, user-facing data an implementation detail it has no use for.
-function stripArtUrlMarker(url){ return url ? url.split('#')[0] : url; }
-function csvForCardList(cardList){
-  const rows = [['name','front','back']];
-  cardList.forEach(card=> rows.push([card.name, stripArtUrlMarker(card._front), stripArtUrlMarker(backUrlForExport(card))]));
-  return rows.map(r=> r.map(f=>`"${String(f).replace(/"/g,'""')}"`).join(',')).join('\n');
-}
-function expandedDeckList(){
-  // one entry per physical copy, in the deck's stacked order
-  const list = [];
-  curDeck().deckOrder.forEach(id=>{
-    const n = curDeck().deckCards.get(id)||0;
-    const c = state.byId.get(id); if(!c) return;
-    for(let i=0;i<n;i++) list.push(c);
-  });
-  return list;
-}
-
-document.getElementById('optExportCsv').addEventListener('click', ()=>{
-  warnAboutMissingCards();
-  const files = deckCodec().csvFiles();
-  if(files.error){ toast(files.error); return; }
-  files.forEach((f, i)=>{
-    const save = ()=> downloadBlob(csvForCardList(f.cards), deckFileBase()+f.suffix, 'text/csv');
-    if(i===0) save();
-    else setTimeout(save, 200); // small stagger so browsers don't treat the second download as blocked/suspicious
-  });
-});
-
 function buildDecklistTextLines(exportedAtIso){
   const lines = [];
   lines.push(`# ${document.getElementById('deckNameInput').value.trim() || 'Untitled Deck'}`);
@@ -4776,8 +4605,8 @@ async function loadPrecons(notify){
       const res = await cardSource.precons(gameId);
       if(gameId !== state.currentGameFolderId) return; // switched games meanwhile
       state.precons = { canEdit: !!res.canEdit, decks: res.decks || [], boards: res.boards || [] };
-      applyPcioUI(); // a game with room boards plays in the room instead of playingcards.io
       preconsStatus = '';
+      applyRoomUI();
       applyPreconUI();
       const stale = state.precons.decks.filter(p=> p.missing && p.missing.length);
       if(notify && state.precons.canEdit && stale.length){

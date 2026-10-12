@@ -19,11 +19,10 @@
      listCount(id) / removeOne(id)   how many of a card the active list holds / remove one
      illegalHint         tooltip for a card that isn't legal for the deck
      renderTabs() / renderDeckControlsExtras() / renderViewStats()   extra panel UI (optional)
-     backUrl(card)       the card back an export should use
      matches(rawSets)    (optional) true if this definition owns the loaded sets
    ========================================================================= */
 /* ---- DECK CODEC — how a deck is written to / read from a saved deck, a .json or .txt file,
-   a playingcards.io CSV and the print list. The shared code owns the part every game has
+   and the print list. The shared code owns the part every game has
    (name, cards, card order); the codec owns whatever extra a game puts in a deck (leaders,
    side decks…). The plain codec below has no extras, so a free-form game's files hold
    just the cards. Methods (d = the deck slot being read/written):
@@ -33,7 +32,6 @@
      parseTextLine(line, ctx)                  true if the line is a game-specific one
      parseTextItem(ctx, match)                 true if a "3x Name" line belongs to a game-specific section
      finishTextImport(ctx, byName, unmatched)  turn parsed names back into the deck
-     csvFiles()                                [{suffix, cards}], or {error}
      printLead(d)                              cards printed before the deck itself
      referencedIds(d)                          card ids the deck points at besides its main cards */
 const PlainDeckCodec = {
@@ -46,7 +44,6 @@ const PlainDeckCodec = {
   parseTextLine(line, ctx){ return false; },
   parseTextItem(ctx, match){ return false; },
   finishTextImport(ctx, byName, unmatched){},
-  csvFiles(){ return [{ suffix: '_playingcardsio.csv', cards: expandedDeckList() }]; },
   printLead(d){ return []; },
   referencedIds(d){ return []; },
 };
@@ -99,11 +96,6 @@ const GenericGame = {
   renderTabs(){},
   renderDeckControlsExtras(){},
   renderViewStats(){},
-  backUrl(card){
-    // One shared back ("back.png"/"back.pdf" etc, uploaded alongside the set's other
-    // card art) for every non-double-sided card, regardless of type.
-    return state.genericBackUrl || '';
-  },
 };
 
 

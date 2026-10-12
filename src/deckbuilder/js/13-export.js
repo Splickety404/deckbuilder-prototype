@@ -168,42 +168,6 @@ function warnAboutMissingCards(){
   toast(`Heads up: ${missing.length} card${missing.length>1?'s':''} in this deck ${missing.length>1?'were':'was'} removed from the game and will NOT appear in this export: ${names.slice(0,3).join(', ')}${names.length>3?'…':''}`);
 }
 
-function backUrlForExport(card){
-  if(card._doubleSided && card._back) return card._back;
-  return state.game.backUrl(card);
-}
-// Strips the internal "#img-src"/"#pdf-src" marker fragment (see sizedUrl()) before
-// a URL leaves the app in an export — playingcards.io would ignore it harmlessly
-// either way (fragments are never sent over the network), but there's no reason to
-// hand external, user-facing data an implementation detail it has no use for.
-function stripArtUrlMarker(url){ return url ? url.split('#')[0] : url; }
-function csvForCardList(cardList){
-  const rows = [['name','front','back']];
-  cardList.forEach(card=> rows.push([card.name, stripArtUrlMarker(card._front), stripArtUrlMarker(backUrlForExport(card))]));
-  return rows.map(r=> r.map(f=>`"${String(f).replace(/"/g,'""')}"`).join(',')).join('\n');
-}
-function expandedDeckList(){
-  // one entry per physical copy, in the deck's stacked order
-  const list = [];
-  curDeck().deckOrder.forEach(id=>{
-    const n = curDeck().deckCards.get(id)||0;
-    const c = state.byId.get(id); if(!c) return;
-    for(let i=0;i<n;i++) list.push(c);
-  });
-  return list;
-}
-
-document.getElementById('optExportCsv').addEventListener('click', ()=>{
-  warnAboutMissingCards();
-  const files = deckCodec().csvFiles();
-  if(files.error){ toast(files.error); return; }
-  files.forEach((f, i)=>{
-    const save = ()=> downloadBlob(csvForCardList(f.cards), deckFileBase()+f.suffix, 'text/csv');
-    if(i===0) save();
-    else setTimeout(save, 200); // small stagger so browsers don't treat the second download as blocked/suspicious
-  });
-});
-
 function buildDecklistTextLines(exportedAtIso){
   const lines = [];
   lines.push(`# ${document.getElementById('deckNameInput').value.trim() || 'Untitled Deck'}`);

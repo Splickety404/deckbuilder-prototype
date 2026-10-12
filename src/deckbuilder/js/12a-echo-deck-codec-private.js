@@ -95,26 +95,6 @@ const EchoDeckCodec = {
     curDeck().schemeIds = [];
     schemeNames.forEach(n=>{ const c=byName.get(n); c ? curDeck().schemeIds.push(c.id) : unmatched.push(n); });
   },
-  csvFiles(){
-    if(!state.game.structured){
-      // No leader/setup slots to prepend in generic mode — just the deck itself.
-      return [{ suffix: '_playingcardsio.csv', cards: expandedDeckList() }];
-    }
-    const leader = getLeader();
-    if(!leader) return { error: 'Choose a leader first.' };
-    const setupCards = [leader, getBonusCard(), getExtraCard()].filter(Boolean);
-    if(state.deckType==='overlord'){
-      // Two separate files: the Overlord deck (leader, Domination, Stronghold, then the
-      // 50-card deck) and the scheme deck (just the 5 schemes) — matching how you'd
-      // actually build these as two distinct decks on playingcards.io.
-      const schemeList = curDeck().schemeIds.map(id=>state.byId.get(id)).filter(Boolean);
-      return [
-        { suffix: '_overlord_playingcardsio.csv', cards: [...setupCards, ...expandedDeckList()] },
-        { suffix: '_schemes_playingcardsio.csv', cards: schemeList },
-      ];
-    }
-    return [{ suffix: '_playingcardsio.csv', cards: [...setupCards, ...expandedDeckList()] }];
-  },
   printLead(d){
     const lead = [getLeader(), getBonusCard(), getExtraCard()];
     if(state.deckType==='overlord') d.schemeIds.forEach(id=> lead.push(state.byId.get(id)));

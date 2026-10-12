@@ -94,7 +94,7 @@ function showLoadedCards(rawSetResults){
   state.cards = rows;
   state.byId = new Map(rows.map(r=>[r.id, r]));
   applyModeUI();
-  applyPcioUI();
+  applyRoomUI();
   state.game.afterCardsLoaded();
   computeFieldDefs();
   renderAll();
@@ -159,10 +159,8 @@ async function loadData(silent){
     if(!anySetFailed && typeof cardCacheSaveSets==='function') cardCacheSaveSets(rawSetResults);
     if(!keepSavedView) showLoadedCards(rawSetResults);
     // Card text is in and the grid is already rendered and usable — don't make the
-    // user wait on art, or on the game-level assets (card backs/.pcio board), either.
-    // hideLoadingOverlay() happens here; both background passes below pop their own
-    // results in once they finish (see syncAllSetImages/applySetImages and
-    // loadGameAssetsInBackground/applyPcioUI).
+    // user wait on art, either. hideLoadingOverlay() happens here; art pops in per set
+    // once each one's scan finishes (see syncAllSetImages/applySetImages).
     hideLoadingOverlay();
     if(typeof perfMark==='function') perfMark('cards up to date');
     if(state.hasImages && rawSetResults.length){
@@ -171,7 +169,6 @@ async function loadData(silent){
     } else {
       setSyncStatus('synced ' + syncTime() + (state.hasImages?'':' — no art columns found yet'));
     }
-    if(state.currentGameFolderId) loadGameAssetsInBackground(state.currentGameFolderId);
     if(state.currentGameFolderId) loadPrecons(true);
   }catch(err){
     console.error(err);
@@ -219,42 +216,13 @@ function applySetImages(images){
   if(changed) renderAll();
 }
 
-// Catches up the game-level assets (card backs, .pcio board) a fast=true loadData()
-// skipped — silent and non-blocking: nothing about browsing or deckbuilding depends
-// on this, it just enables Download .pcio / Playtest Room / the CSV export option
-// (via applyPcioUI) and the export card-back URLs once it resolves.
-async function loadGameAssetsInBackground(gameFolderId){
-  try{
-    const assets = await cardSource.loadGameAssets(gameFolderId);
-    state.genericBackUrl = assets.genericBackUrl || '';
-    state.genericBacks = assets.genericBacks || {};
-    state.pcio = assets.pcio || {found:false};
-    applyPcioUI();
-  }catch(e){
-    console.error('Could not load game assets for '+gameFolderId+':', e);
-    // Non-fatal — those buttons just stay hidden and card-back export URLs stay
-    // blank until the next reload; nothing else in the app depends on this.
-  }
-}
 function syncTime(){ return new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}); }
 function setSyncStatus(s){ const el = document.getElementById('sync-status'); el.textContent = s; el.title = s; } // title: the full text when it's cut short
 function showLoadingOverlay(){ document.getElementById('loading-overlay').classList.add('active'); }
 function hideLoadingOverlay(){ document.getElementById('loading-overlay').classList.remove('active'); }
 
-// playingcards.io-flavored features (downloading this game's own .pcio board, the
-// "New Blank Room" link to playingcards.io itself, and the playingcards.io CSV export
-// option) only make sense for a game that actually has a .pcio file in its main
-// folder — never dead buttons/options that just error when used, for a game that
-// isn't set up for playingcards.io at all.
-// A game with one or more room board layouts in its folder (see getPrecons in
-// Code.gs) plays in the game room instead: "Send deck to room" replaces the
-// playingcards.io buttons (its CSV export stays available under Export).
-function applyPcioUI(){
-  const hasPcio = !!(state.pcio && state.pcio.found);
+// Games with room boards play in the game room: "Send deck to room" shows only then.
+function applyRoomUI(){
   const hasBoards = !!(state.precons && state.precons.boards && state.precons.boards.length);
-  document.getElementById('btnDownloadPcio').style.display = (hasPcio && !hasBoards) ? 'inline-flex' : 'none';
-  document.getElementById('btnPlaytestRoom').style.display = (hasPcio && !hasBoards) ? 'inline-flex' : 'none';
   document.getElementById('btnSendToRoom').style.display = hasBoards ? 'inline-flex' : 'none';
-  document.getElementById('optExportCsv').style.display = hasPcio ? '' : 'none';
 }
-

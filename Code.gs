@@ -30,7 +30,7 @@
 // =====================================================================
 
 const CARD_FOLDER_ID = '1ooG4YMvcKGzEWdIKDeI2-KvKofJddXTq'; // "Card PNGs" folder
-const ROOT_FOLDER_ID = '1HpQ4c78LqzR_QDK288KMav8wjKSWT9B0'; // "Deckbuilder Assets" — holds Card PDFs, EOO Card Library, and the .pcio board file
+const ROOT_FOLDER_ID = '1HpQ4c78LqzR_QDK288KMav8wjKSWT9B0'; // "Deckbuilder Assets" — holds Card PDFs and the EOO Card Library
 const MAIN_SHEET_NAME = 'Sheet1';
 const PENDING_SHEET_NAME = 'Pending Updates';
 const HISTORY_SHEET_NAME = 'CardHistory';
@@ -590,19 +590,6 @@ function getSetData(folderId, idToken, callback, fast) {
       }
     }
 
-    // Card backs and the .pcio board file all now live in the GAME's own main folder
-    // (the set folder's immediate parent) — not inside this individual set folder —
-    // since a single game can have several sets that all share one board file and one
-    // set of card backs. Resolved live, once per call, from whichever folder actually
-    // contains this set.
-    // Skipped entirely on the fast path: it's its own live Drive folder listing (same
-    // cost profile as the art-folder scan above), and since it reads the GAME's shared
-    // folder, running it once per SET means the exact same scan repeats for every set
-    // in a multi-set game. The client fetches this once per game instead, via the
-    // separate gameAssets endpoint below, after card text is already showing.
-    const gameFolderId = getParentFolderId(folder);
-    const assets = (!fast && gameFolderId) ? scanGameFolderAssets(gameFolderId) : emptyGameFolderAssets();
-
     const data = sheet.getDataRange().getValues();
     const headers = data[0];
     const rows = data.slice(1).map(row => {
@@ -613,14 +600,6 @@ function getSetData(folderId, idToken, callback, fast) {
 
     result = {
       ok: true, setName: setName, sheetId: sheetFile.getId(), rows: rows,
-      // Generic (non-Echo) game-agnostic deckbuilder mode: a single shared card back
-      // for every non-double-sided card in exports.
-      genericBackUrl: assets.genericBackUrl,
-      // Echo mode's own three-way overlord/scheme/champion generic-back mechanism.
-      genericBacks: { overlordBackUrl: assets.overlordBackUrl, schemeBackUrl: assets.schemeBackUrl, championBackUrl: assets.championBackUrl },
-      // Whether this game has a .pcio board file at all — the client only offers to
-      // download one when this says so.
-      pcio: assets.pcio,
     };
   } catch (err) {
     result = { ok: false, error: String((err && err.message) || err) };
@@ -695,35 +674,6 @@ function syncSetImages(folderId, idToken, callback) {
       }));
 
     result = { ok: true, sheetId: sheetFile.getId(), images: images };
-  } catch (err) {
-    result = { ok: false, error: String((err && err.message) || err) };
-  }
-
-  const json = JSON.stringify(result);
-  if (callback) {
-    return ContentService.createTextOutput(callback + '(' + json + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
-  }
-  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
-}
-
-// Game-level assets (card backs, .pcio board) live in the GAME's own main folder and
-// are shared by every set inside it — getSetData(fast=true) skips scanning for them
-// entirely rather than repeat that same folder scan once per set. The client instead
-// calls this ONCE per game (via state.currentGameFolderId), in the background, after
-// card text is already showing. Access is granted if the signed-in user can see at
-// least one SET within this game — the same bar whoAmI() already uses to decide
-// whether to list the game at all.
-function getGameAssets(gameFolderId, idToken, callback) {
-  let result;
-  try {
-    const v = verifyIdToken(idToken);
-    if (!v.email) throw new Error('Not signed in, or your sign-in has expired — please sign in again. [debug: ' + v.reason + ']');
-    const email = v.email;
-    const sets = getSetsForGame({ folderId: gameFolderId, label: '' });
-    if (!sets.some(s => emailCanAccessFolder(email, s.folderId))) {
-      throw new Error('You do not have access to this game.');
-    }
-    result = Object.assign({ ok: true }, scanGameFolderAssets(gameFolderId));
   } catch (err) {
     result = { ok: false, error: String((err && err.message) || err) };
   }
@@ -1103,12 +1053,10 @@ function getOrCreateHistorySheet(currentHeaders, ss) {
 //   ?cardHistory=<id>&idToken=...     -> past versions of one card, for the
 //                                        deckbuilder's version-history view
 //                                        (gated — see getCardHistory)
-//   ?latestPcio=1                     -> info on the current .pcio board file
 //   ?whoami=1&idToken=...             -> the sets THIS signed-in person may open
 //   ?scanSet=<folderId>&idToken=...   -> that set's card data (gated). Add
 //                                        &fast=1 to skip the live Drive art-folder
-//                                        scan AND the game-level asset scan (card
-//                                        backs/.pcio) and return text immediately,
+//                                        scan and return text immediately,
 //                                        using whatever image URLs are already in
 //                                        the sheet from the last sync.
 //   ?syncSetImages=<folderId>&idToken=... -> runs that art-folder scan and returns
@@ -1116,10 +1064,6 @@ function getOrCreateHistorySheet(currentHeaders, ss) {
 //                                        back-image-url triples (gated) — the
 //                                        slow half a &fast=1 scanSet skipped,
 //                                        meant to be called right after it.
-//   ?gameAssets=<gameFolderId>&idToken=... -> runs the game-level asset scan (card
-//                                        backs/.pcio board) a &fast=1 scanSet also
-//                                        skipped (gated) — meant to be called ONCE
-//                                        per game, not once per set within it.
 //   ?cardsForSheet=<sheetId>&idToken=... -> used by room.html (gated — see
 //                                        getCardsBySheetId; an authenticated
 //                                        caller without access to the set
@@ -1144,9 +1088,6 @@ function doGet(e) {
   if (e.parameter.cardHistory) {
     return getCardHistory(e.parameter.cardHistory, e.parameter.idToken, e.parameter.callback, e.parameter.sheetId);
   }
-  if (e.parameter.latestPcio) {
-    return getLatestPcioInfo(e.parameter.folderId, e.parameter.callback);
-  }
   if (e.parameter.help) {
     return getHelpArticles(e.parameter.folderId, e.parameter.callback);
   }
@@ -1158,9 +1099,6 @@ function doGet(e) {
   }
   if (e.parameter.syncSetImages) {
     return syncSetImages(e.parameter.syncSetImages, e.parameter.idToken, e.parameter.callback);
-  }
-  if (e.parameter.gameAssets) {
-    return getGameAssets(e.parameter.gameAssets, e.parameter.idToken, e.parameter.callback);
   }
   if (e.parameter.precons) {
     return getPrecons(e.parameter.precons, e.parameter.idToken, e.parameter.callback);
@@ -1278,8 +1216,8 @@ function getCardHistory(cardId, idToken, callback, sheetId) {
 
 // The immediate parent folder's id, or null if the folder has none (or none the
 // script can see) — used to walk from a SET folder up to its owning GAME folder,
-// since that's now where card backs and the .pcio board file live (one game can have
-// several sets that all share one board and one set of card backs).
+// since that's where card backs live (one game can have several sets that all share
+// one set of card backs).
 function getParentFolderId(folder) {
   try {
     const parents = folder.getParents();
@@ -1308,12 +1246,11 @@ function findCardArtFolder(folder) {
 }
 
 function emptyGameFolderAssets() {
-  return { genericBackUrl: '', overlordBackUrl: '', schemeBackUrl: '', championBackUrl: '', pcio: { found: false } };
+  return { genericBackUrl: '', overlordBackUrl: '', schemeBackUrl: '', championBackUrl: '' };
 }
 
 // One pass over a GAME's own main folder (not any individual set's folder) for
-// everything that lives there rather than inside a specific set: the .pcio board
-// file, the generic (non-Echo) game-agnostic deckbuilder's single shared card back
+// everything that lives there rather than inside a specific set: the generic (non-Echo) game-agnostic deckbuilder's single shared card back
 // ("back.png"/"back.pdf"/etc), and Echo mode's own three-way overlord/scheme/champion
 // generic backs (overlordback / schemeback / championback) — distinct from the unique
 // per-card back a genuinely double-sided card already has via its own -back file.
@@ -1328,14 +1265,9 @@ function scanGameFolderAssets(gameFolderId) {
     return result; // game folder missing/inaccessible to the script itself
   }
   const files = folder.getFiles();
-  let bestPcio = null;
   while (files.hasNext()) {
     const f = files.next();
     const name = f.getName();
-    if (/\.pcio$/i.test(name)) {
-      if (!bestPcio || f.getLastUpdated() > bestPcio.getLastUpdated()) bestPcio = f;
-      continue;
-    }
     const base = name.replace(artExtensionPattern(), '').toLowerCase();
     const url = artUrl(f.getId(), name, f.getLastUpdated());
     if (base === 'back') result.genericBackUrl = url;
@@ -1343,20 +1275,7 @@ function scanGameFolderAssets(gameFolderId) {
     else if (base === 'schemeback') result.schemeBackUrl = url;
     else if (base === 'championback') result.championBackUrl = url;
   }
-  result.pcio = bestPcio
-    ? { found: true, name: bestPcio.getName(), id: bestPcio.getId(), downloadUrl: 'https://drive.google.com/uc?export=download&id=' + bestPcio.getId() }
-    : { found: false };
   return result;
-}
-
-// Thin standalone wrapper around scanGameFolderAssets' .pcio result, kept as its own
-// endpoint for anything that wants just the board file without a full set fetch.
-function getLatestPcioInfo(gameFolderId, callback) {
-  const json = JSON.stringify(scanGameFolderAssets(gameFolderId).pcio);
-  if (callback) {
-    return ContentService.createTextOutput(callback + '(' + json + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
-  }
-  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
 }
 
 // RUN THIS whenever you want the icon-breakdown analysis refreshed. bonus-icons-scripted
@@ -1468,7 +1387,7 @@ function buildAllyLieutenantPairCounts() {
 // (and read out of) Set 1's own bound sheet: a Google Sheet named "Help" (matched by
 // name, same "card" folder-matching approach as findCardArtFolder — case-insensitive,
 // so "Help", "Help.gsheet", "HellBreak Help", etc. all work) sits directly in the
-// game's own main folder, alongside its card backs and .pcio file. Its "Sheet1" tab
+// game's own main folder, alongside its card backs. Its "Sheet1" tab
 // holds the articles: column A = article title, column B = article content, one
 // article per row (row 1 is the header row and is skipped). Blank-title rows are
 // skipped too, so stray formatting/spacer rows don't show up as empty articles.

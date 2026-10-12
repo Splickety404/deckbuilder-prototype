@@ -4,7 +4,7 @@ Browser tools for the Echo of Omens card game (and HellBreak, a second game in t
 
 ## Files
 
-- `deckbuilder.html` — the live deckbuilder app (single self-contained HTML file). Multi-game; Overlord, Champion, and Scheme deck types; print-and-play PDF and playingcards.io export.
+- `deckbuilder.html` — the live deckbuilder app (single self-contained HTML file). Multi-game; Overlord, Champion, and Scheme deck types; print-and-play PDF export.
 - `room.html` — (source in `src/room/`, built the same way as the deckbuilder) 2-player remote play companion (Champion vs Overlord). Syncs only public board actions via the backend event log; hands/decks stay local. A visual aid, not a rules engine.
 - `bagel.html` — separate tool, also served publicly.
 - `src/deckbuilder/` — the source of `deckbuilder.html` (being split into modules). **Edit `src/`, then run `node scripts/build.js`, and commit both** — GitHub Pages serves the built root file. The build must keep the output identical to the live page unless a change is intended.

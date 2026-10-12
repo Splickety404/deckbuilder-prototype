@@ -18,8 +18,8 @@ async function loadPrecons(notify){
       const res = await cardSource.precons(gameId);
       if(gameId !== state.currentGameFolderId) return; // switched games meanwhile
       state.precons = { canEdit: !!res.canEdit, decks: res.decks || [], boards: res.boards || [] };
-      applyPcioUI(); // a game with room boards plays in the room instead of playingcards.io
       preconsStatus = '';
+      applyRoomUI();
       applyPreconUI();
       const stale = state.precons.decks.filter(p=> p.missing && p.missing.length);
       if(notify && state.precons.canEdit && stale.length){

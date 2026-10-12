@@ -5,7 +5,6 @@
      whoAmI(idToken)                    who is signed in + which games/sets they can open
      loadSet(folderId, fast)            one set's rows + art (fast skips the art scan)
      loadSetImages(folderId)            the slower art-link catch-up for one set
-     loadGameAssets(gameFolderId)       card backs + board file shared by a whole game
      loadHelp(folderId)                 the game's help articles
      cardHistory(cardId)                past versions of one card
      precons(gameFolderId)              preconstructed decks + boards
@@ -57,7 +56,7 @@ async function fetchSetData(folderId, fast){
     });
   }
   if(!result.ok) throw new Error(result.error || 'Unknown error scanning that folder.');
-  return result; // {ok:true, setName, sheetId, rows, genericBackUrl, genericBacks, pcio}
+  return result; // {ok:true, setName, sheetId, rows}
 }
 
 // The slow half a fast=true fetchSetData() skipped: runs that set's live Drive
@@ -83,31 +82,6 @@ async function fetchSetImages(folderId){
   }
   if(!result.ok) throw new Error(result.error || 'Unknown error syncing art for that set.');
   return result; // {ok:true, sheetId, images:[{id,'front-image-url','back-image-url'}, ...]}
-}
-
-// Game-level assets (card backs, the .pcio board file) — see the gameAssets endpoint
-// in Code.gs. A fast=true fetchSetData() skips these too (same live-Drive-folder-scan
-// cost as art), so this is called once per GAME (not once per set within it — every
-// set in a game shares the same assets) to catch them up in the background.
-async function fetchGameAssets(gameFolderId){
-  const url = `${WEBAPP_URL}?gameAssets=${encodeURIComponent(gameFolderId)}&idToken=${encodeURIComponent(state.idToken)}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooAssetsCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to load this game\'s shared assets.')); }, 30000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Unknown error loading this game\'s assets.');
-  return result; // {ok:true, genericBackUrl, overlordBackUrl, schemeBackUrl, championBackUrl, pcio}
 }
 
 // Asks the server who this ID token belongs to, and which GAMES (each with only the
@@ -290,14 +264,6 @@ const cardSource = {
   whoAmI: fetchWhoAmI,
   loadSet: fetchSetData,
   loadSetImages: fetchSetImages,
-  loadGameAssets: async (gameFolderId)=>{
-    const a = await fetchGameAssets(gameFolderId);
-    return {
-      genericBackUrl: a.genericBackUrl,
-      genericBacks: { overlordBackUrl: a.overlordBackUrl || '', schemeBackUrl: a.schemeBackUrl || '', championBackUrl: a.championBackUrl || '' },
-      pcio: a.pcio,
-    };
-  },
   loadHelp: fetchHelpFromServer,
   cardHistory: fetchCardHistory,
   precons: fetchPrecons,

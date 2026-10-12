@@ -76,12 +76,6 @@ const EchoGame = {
   removeOne(id){ activeIsSchemeMode() ? removeScheme(id) : removeOneCopy(id); },
   illegalHint: 'Not legal for this deck — wrong aspect for your leader/domination aspect.',
   renderViewStats(){ renderCurrentViewStats(); },
-  backUrl(card){
-    if(card.type === 'O - Scheme') return state.genericBacks.schemeBackUrl || '';
-    if(card.type.startsWith('O -')) return state.genericBacks.overlordBackUrl || '';
-    if(card.type.startsWith('C -')) return state.genericBacks.championBackUrl || '';
-    return '';
-  },
 };
 gameDefinitions.push(EchoGame);
 

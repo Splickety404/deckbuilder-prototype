@@ -45,12 +45,9 @@ function resetGameSpecificState(){
   state.lastClickIndex = null;
   state.visibleCardsOrder = [];
   state.flippedCards = new Set();
-  state.genericBacks = {};
-  state.genericBackUrl = '';
-  state.pcio = {found:false};
   state.precons = {canEdit:false, decks:[], boards:[]};
   applyPreconUI();
-  applyPcioUI(); // reset all three playingcards.io-flavored UI bits until the new game's loadData() re-evaluates them
+  applyRoomUI();
 }
 
 // Switching games mid-session, via the "Game" button — deliberately clears all

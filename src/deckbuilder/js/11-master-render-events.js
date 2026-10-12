@@ -70,26 +70,3 @@ dropZone.addEventListener('drop', (e)=>{
 
 document.getElementById('btnResync').addEventListener('click', ()=> loadData(false));
 
-/* =========================================================================
-   PLAYTEST ROOM LINK + BOARD (.pcio) DOWNLOAD
-   ========================================================================= */
-// This opens the template page with the "Blank Game" button front and center,
-// rather than trying to create a room directly. That button's actual room
-// creation happens through playingcards.io's own backend (looks Firebase-backed,
-// not a plain link or documented API) — nothing externally callable to hook into
-// safely, so one extra click here is the honest, durable tradeoff.
-const PLAYTEST_ROOM_URL = 'https://playingcards.io/@playingcardsio/standard-52-card-deck-game';
-(function wirePlaytestRoomLink(){
-  const el = document.getElementById('btnPlaytestRoom');
-  el.href = PLAYTEST_ROOM_URL;
-})();
-
-// state.pcio is already known (resolved once per game load, from the game's own main
-// folder — see loadData/applyPcioUI) so there's no need for a separate round trip
-// here; the button itself is hidden entirely whenever state.pcio.found is false.
-document.getElementById('btnDownloadPcio').addEventListener('click', ()=>{
-  if(!state.pcio || !state.pcio.found){ toast('No .pcio file found for this game.'); return; }
-  window.open(state.pcio.downloadUrl, '_blank');
-});
-
-
