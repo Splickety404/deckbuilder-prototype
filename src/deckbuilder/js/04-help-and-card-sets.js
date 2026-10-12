@@ -15,24 +15,7 @@ function fetchHelpArticles(){
   if(!helpArticlesPromise){
     helpArticlesPromiseGameFolderId = state.currentGameFolderId;
     const folderId = state.currentGameFolderId;
-    helpArticlesPromise = (async()=>{
-      try{
-        const res = await fetch(`${WEBAPP_URL}?help=1&folderId=${encodeURIComponent(folderId)}&_=${Date.now()}`);
-        if(!res.ok) throw new Error('HTTP '+res.status);
-        return await res.json();
-      }catch(fetchErr){
-        return await new Promise((resolve,reject)=>{
-          const cbName = '__eooHelpCb_' + Math.random().toString(36).slice(2);
-          const script = document.createElement('script');
-          const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
-          function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-          window[cbName] = (data)=>{ cleanup(); resolve(data); };
-          script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-          script.src = `${WEBAPP_URL}?help=1&folderId=${encodeURIComponent(folderId)}&callback=${cbName}&_=${Date.now()}`;
-          document.head.appendChild(script);
-        });
-      }
-    })();
+    helpArticlesPromise = cardSource.loadHelp(folderId);
     helpArticlesPromise.catch(()=>{ helpArticlesPromise = null; }); // let a later call retry instead of staying stuck on a failed fetch
   }
   return helpArticlesPromise;
@@ -151,29 +134,6 @@ function showSigninRequestAccess(show){
 }
 document.getElementById('btnSigninRequestAccess').addEventListener('click', ()=>openRequestAccessModal(noAccessEmail));
 
-// Same fetch-with-timeout-then-JSONP-fallback shape as fetchWhoAmI/fetchSetData/etc
-// above — this endpoint is UNGATED (no idToken), so it works even for someone who
-// isn't signed in to anything yet.
-async function submitAccessRequest(game, setName, email, note){
-  const url = `${WEBAPP_URL}?requestAccess=1&game=${encodeURIComponent(game)}&set=${encodeURIComponent(setName)}&email=${encodeURIComponent(email)}&note=${encodeURIComponent(note)}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooReqAccessCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to send that request. Try again in a moment.')); }, 30000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Unknown error sending that request.');
-  return result;
-}
 document.getElementById('btnSubmitRequestAccess').addEventListener('click', async ()=>{
   const game = document.getElementById('requestAccessGame').value.trim();
   const setName = document.getElementById('requestAccessSet').value.trim();
@@ -193,7 +153,7 @@ document.getElementById('btnSubmitRequestAccess').addEventListener('click', asyn
   const originalText = btn.textContent;
   btn.textContent = 'Sending…';
   try{
-    await submitAccessRequest(game, setName, email, note);
+    await cardSource.submitAccessRequest(game, setName, email, note);
     document.getElementById('requestAccessModal').classList.add('hidden');
     toast('Access request sent — you\'ll hear back once your account has been granted access.');
   }catch(err){

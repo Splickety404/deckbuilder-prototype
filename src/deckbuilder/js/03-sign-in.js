@@ -42,11 +42,11 @@ function initGoogleSignIn(attempt){
 // anything went wrong or click Sign In a second time themselves.
 async function fetchWhoAmIWithRetry(idToken){
   try{
-    return await fetchWhoAmI(idToken);
+    return await cardSource.whoAmI(idToken);
   }catch(firstErr){
     setSigninStatus('Still checking your access — retrying…');
     try{
-      return await fetchWhoAmI(idToken);
+      return await cardSource.whoAmI(idToken);
     }catch(secondErr){
       throw secondErr;
     }

@@ -81,7 +81,7 @@ const removedCardCache = new Map(); // id -> snapshot row | 'loading' | 'not-fou
 function getRemovedCardInfo(id){
   if(removedCardCache.has(id)) return removedCardCache.get(id);
   removedCardCache.set(id, 'loading');
-  fetchCardHistory(id).then(rows=>{
+  cardSource.cardHistory(id).then(rows=>{
     if(!rows.length){ removedCardCache.set(id, 'not-found'); renderAll(); return; }
     rows.sort((a,b)=> new Date(b['archived-at']) - new Date(a['archived-at']));
     removedCardCache.set(id, rows[0]); // most recent snapshot = last known state

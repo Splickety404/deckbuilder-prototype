@@ -261,41 +261,13 @@ function openPreview(c){
 /* =========================================================================
    VERSION HISTORY + DIFF
    ========================================================================= */
-async function fetchCardHistory(cardId){
-  // The card's own set sheet: each set keeps its own change history. A card
-  // that's no longer in any set (removed) could be from any of them, so
-  // every loaded set is asked.
-  const card = state.byId.get(cardId);
-  const sheetIds = card ? [card._sheetId] : [...new Set(state.cards.map(c=> c._sheetId))];
-  const list = sheetIds.filter(Boolean).join(',');
-  const sheetParam = list ? `&sheetId=${encodeURIComponent(list)}` : '';
-  const url = `${WEBAPP_URL}?cardHistory=${encodeURIComponent(cardId)}&idToken=${encodeURIComponent(state.idToken)}${sheetParam}`;
-  try{
-    const res = await fetch(url + '&_=' + Date.now());
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    return await res.json();
-  }catch(fetchErr){
-    // Same fetch-then-JSONP fallback as the main card feed — this endpoint is
-    // subject to the same occasional cross-origin quirks.
-    return await new Promise((resolve,reject)=>{
-      const cbName = '__eooHistCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-}
 
 async function openHistoryModal(card){
   const body = document.getElementById('historyModalBody');
   body.innerHTML = '<p style="color:var(--text-soft);">Loading…</p>';
   document.getElementById('historyModal').classList.remove('hidden');
   try{
-    const rows = await fetchCardHistory(card.id);
+    const rows = await cardSource.cardHistory(card.id);
     if(!rows.length){ body.innerHTML = '<p style="color:var(--text-soft);">No past versions for this card yet.</p>'; return; }
     rows.sort((a,b)=> new Date(b['archived-at']) - new Date(a['archived-at']));
     body.innerHTML = '';

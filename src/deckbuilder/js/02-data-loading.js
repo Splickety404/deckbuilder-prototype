@@ -99,125 +99,10 @@ function mergeCardSets(setCardLists){
   return [...byId.values()];
 }
 
-// A plain fetch() can hang indefinitely if the Apps Script endpoint itself is slow or
-// stuck (it does NOT reject just because the server is taking a long time) — so every
-// call here races the fetch against an AbortController timeout, guaranteeing we fall
-// through to the JSONP fallback (and eventually a visible error) instead of leaving the
-// UI stuck on "Checking your access…"/"loading card data…" forever with nothing to show
-// for it.
-async function fetchWithTimeout(url, ms){
-  const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), ms);
-  try{
-    const res = await fetch(url, {signal: controller.signal});
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
-// Fetches one authorized set's data given its root folder id — the server checks this
-// signed-in user's live Drive permission on that folder before returning anything.
-// `fast`: skips the server's live Drive art-folder scan so this returns as soon as the
-// sheet itself can be read, using whatever image URLs are already sitting in it from
-// the last sync — see fetchSetImages() below for the slower follow-up that catches
-// those URLs up in the background, without blocking on card text.
-async function fetchSetData(folderId, fast){
-  const url = `${WEBAPP_URL}?scanSet=${encodeURIComponent(folderId)}&idToken=${encodeURIComponent(state.idToken)}${fast?'&fast=1':''}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooSetCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to respond scanning that set. It may need to be redeployed as a new version, or Drive is just being slow — try again in a moment.')); }, 30000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Unknown error scanning that folder.');
-  return result; // {ok:true, setName, sheetId, rows, genericBackUrl, genericBacks, pcio}
-}
 
-// The slow half a fast=true fetchSetData() skipped: runs that set's live Drive
-// art-folder scan and returns just the resulting id/front-image-url/back-image-url
-// triples (not full row data — the caller already has everything else). Meant to be
-// called once per set, right after that set's fast card data has already rendered.
-async function fetchSetImages(folderId){
-  const url = `${WEBAPP_URL}?syncSetImages=${encodeURIComponent(folderId)}&idToken=${encodeURIComponent(state.idToken)}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 30000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooImgCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to sync art for that set.')); }, 45000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Unknown error syncing art for that set.');
-  return result; // {ok:true, sheetId, images:[{id,'front-image-url','back-image-url'}, ...]}
-}
 
-// Game-level assets (card backs, the .pcio board file) — see the gameAssets endpoint
-// in Code.gs. A fast=true fetchSetData() skips these too (same live-Drive-folder-scan
-// cost as art), so this is called once per GAME (not once per set within it — every
-// set in a game shares the same assets) to catch them up in the background.
-async function fetchGameAssets(gameFolderId){
-  const url = `${WEBAPP_URL}?gameAssets=${encodeURIComponent(gameFolderId)}&idToken=${encodeURIComponent(state.idToken)}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooAssetsCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to load this game\'s shared assets.')); }, 30000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Unknown error loading this game\'s assets.');
-  return result; // {ok:true, genericBackUrl, overlordBackUrl, schemeBackUrl, championBackUrl, pcio}
-}
 
-// Asks the server who this ID token belongs to, and which GAMES (each with only the
-// sets within it) that email currently has live Drive access to at least one set of.
-// This is the ONLY place the list of available games/sets comes from — nothing about
-// either is ever stored client-side. Returns {ok:true, email, games:[{folderId,label,sets:[{folderId,label}]}]}.
-async function fetchWhoAmI(idToken){
-  const url = `${WEBAPP_URL}?whoami=1&idToken=${encodeURIComponent(idToken)}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooWhoCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to check your access. It may need to be redeployed as a new version, or Drive is just being slow — try again in a moment.')); }, 30000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Could not verify your sign-in.');
-  return result; // {ok:true, email, games:[{folderId,label,sets:[{folderId,label}]}]}
-}
 
 // Echo mode is detected once per load, globally, from the union of every authorized
 // set's RAW rows (before any row-filtering, since that filtering itself needs to know
@@ -251,7 +136,7 @@ async function loadData(silent){
     // to make one set's request wait on another's round trip. A set that fails just
     // toasts and gets skipped, same as the old sequential loop's own error handling.
     const fastResults = await Promise.allSettled(
-      state.authorizedSets.map(entry => fetchSetData(entry.folderId, true))
+      state.authorizedSets.map(entry => cardSource.loadSet(entry.folderId, true))
     );
     fastResults.forEach((res, i)=>{
       const entry = state.authorizedSets[i];
@@ -320,7 +205,7 @@ function syncAllSetImages(rawSetResults){
   let pending = rawSetResults.length;
   rawSetResults.forEach(async (s)=>{
     try{
-      const result = await fetchSetImages(s.folderId);
+      const result = await cardSource.loadSetImages(s.folderId);
       applySetImages(result.images || []);
     }catch(e){
       console.error('Could not sync art for set '+s.folderId+':', e);
@@ -354,7 +239,7 @@ function applySetImages(images){
 // (via applyPcioUI) and the export card-back URLs once it resolves.
 async function loadGameAssetsInBackground(gameFolderId){
   try{
-    const assets = await fetchGameAssets(gameFolderId);
+    const assets = await cardSource.loadGameAssets(gameFolderId);
     state.genericBackUrl = assets.genericBackUrl || '';
     state.genericBacks = {
       overlordBackUrl: assets.overlordBackUrl || '',

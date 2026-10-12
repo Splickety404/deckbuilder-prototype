@@ -973,106 +973,20 @@ function activeFilterKey(){ return activeIsSchemeMode() ? 'scheme' : activeDeckK
 function curFilters(){ return state.filtersByType[activeFilterKey()]; }
 
 /* =========================================================================
-   DATA LOADING
-   ========================================================================= */
-// Filters + tags a raw set of sheet rows into real card objects, exactly the same way
-// regardless of which set they came from — reused for Set 1's own feed and for every
-// additionally imported set, so behavior stays identical either way.
-function processRawRows(rawRows, setName, sheetId, isEchoMode){
-  const rows = rawRows.filter(r=>{
-    if(!isEchoMode){
-      // Generic mode has no fixed type-prefix convention to filter rows by — the only
-      // required column for ANY game is "id", so that's the only hard requirement.
-      return String(r.id||'').trim() !== '';
-    }
-    const t = (r.type||'').trim();
-    if(!t) return false;
-    // "C - Quest" cards are now used for the Champion's Quest-card slot — no longer
-    // excluded. "Q - Quest" is kept excluded defensively in case that convention is
-    // ever used for something unrelated.
-    if(t.startsWith('Q - ')) return false;
-    if(t.startsWith('Z - ')){
-      // Z - Custom is still junk/reference-card clutter in general, EXCEPT the two
-      // named placeholders standing in for the not-yet-created O - Stronghold /
-      // C - Resistance cards. The moment real cards of those types exist, the pool
-      // logic below prefers them automatically and these placeholders stop mattering.
-      const isPlaceholder = t==='Z - Custom' && (r.name==='Resistance' || r.name==='Stronghold');
-      if(!isPlaceholder) return false;
-    }
-    return true;
-  });
-
-  rows.forEach(r=>{
-    // Kept unconditional (not Echo-only): everything downstream assumes these three
-    // are always defined, trimmed strings — including generic-mode cards, whose sheet
-    // may have no type/aspect/loyalty columns at all (they just come out as '').
-    r.type = (r.type||'').trim();
-    r.aspect = (r.aspect||'').trim();
-    r.loyalty = (r.loyalty||'').trim();
-    r._front = (r['front-image-url']||'').trim();
-    r._back = (r['back-image-url']||'').trim();
-    noteSmallImage(r._front, r['front-image-sm-url']);
-    noteSmallImage(r._back, r['back-image-sm-url']);
-
-    if(isEchoMode){
-      r._doubleSided = String(r.is_double_sided).trim().toUpperCase()==='TRUE';
-      r._isScheme = r.type==='O - Scheme';
-      // These 4 are physically the same portrait-cut card as everything else, with
-      // content printed sideways — same treatment as schemes: rotated on screen for
-      // readability, printed at their native orientation (exports never rotate at all,
-      // so nothing extra is needed there).
-      r._isHorizontal = r._isScheme || HORIZONTAL_TYPES.has(r.type) ||
-        (r.type==='Z - Custom' && Object.values(EXTRA_CARD_PLACEHOLDER_NAME).includes(r.name)); // the Stronghold/Resistance placeholders are horizontal too
-      r._rotate = r._isHorizontal ? 90 : 0; // Echo mode always rotates its horizontal cards the same way it always has
-    } else {
-      // Generic mode: a required "is-double-sided" column (TRUE/FALSE) and a required
-      // "rotate" column (0/90/180/270, defaulting to 0) — the data-driven equivalent
-      // of Echo's hardcoded scheme/domination/stronghold rotation rules.
-      r._doubleSided = String(r['is-double-sided']).trim().toUpperCase()==='TRUE';
-      const rot = parseInt(r.rotate, 10);
-      r._rotate = [90,180,270].includes(rot) ? rot : 0;
-      r._isScheme = false;
-      r._isHorizontal = (r._rotate===90 || r._rotate===270);
-    }
-    r._setName = setName;
-    r._sheetId = sheetId; // carried into deck exports so the game room app can resolve cards without any sheet id hardcoded in its own source
-  });
-  return rows;
-}
-
-// Merges multiple sets' processed card lists into one, keeping exactly one entry per
-// id. When the same id appears in more than one set, the card with the NEWER
-// last-updated value wins (a missing/invalid last-updated loses to any real one) and
-// becomes the displayed row (its own art, text, etc.) — but every set that id actually
-// appeared under is still recorded on _setNames (see below), not just the winner's.
-function mergeCardSets(setCardLists){
-  const byId = new Map();
-  const setNamesById = new Map(); // id -> Set of every _setName this id appears under, across ALL loaded sets — not just whichever copy "wins" as the displayed row
-  setCardLists.forEach(cards=>{
-    cards.forEach(card=>{
-      if(!setNamesById.has(card.id)) setNamesById.set(card.id, new Set());
-      setNamesById.get(card.id).add(card._setName);
-
-      const existing = byId.get(card.id);
-      if(!existing){ byId.set(card.id, card); return; }
-      const existingDate = new Date(existing['last-updated']);
-      const newDate = new Date(card['last-updated']);
-      const existingValid = !isNaN(existingDate);
-      const newValid = !isNaN(newDate);
-      if(!existingValid || (newValid && newDate.getTime() >= existingDate.getTime())){
-        byId.set(card.id, card);
-      }
-    });
-  });
-  // A card that's the same id in more than one set (e.g. reprinted/shared into a
-  // later set) should stay visible under ANY of its sets' filters, not just whichever
-  // set's copy happened to win as the displayed row above — see cardMatchesFilters
-  // and generateSealedDecks's bySet(), both of which check the full list here rather
-  // than just the single primary _setName.
-  byId.forEach((card, id)=>{ card._setNames = [...setNamesById.get(id)]; });
-  return [...byId.values()];
-}
-
+   CARD SOURCE (private build) — every call the deckbuilder makes to a card
+   backend goes through `cardSource`, never straight to a URL, so another build
+   can supply its own object with the same methods and nothing else changes:
+     whoAmI(idToken)                    who is signed in + which games/sets they can open
+     loadSet(folderId, fast)            one set's rows + art (fast skips the art scan)
+     loadSetImages(folderId)            the slower art-link catch-up for one set
+     loadGameAssets(gameFolderId)       card backs + board file shared by a whole game
+     loadHelp(folderId)                 the game's help articles
+     cardHistory(cardId)                past versions of one card
+     precons(gameFolderId)              preconstructed decks + boards
+     savePrecon(fileId, deck, replace)  add/replace a preconstructed deck
+     submitAccessRequest(game, set, email, note)
+   This is the Google Apps Script / Drive implementation — unchanged behavior,
+   moved here from the files that used to hold each function. */
 // A plain fetch() can hang indefinitely if the Apps Script endpoint itself is slow or
 // stuck (it does NOT reject just because the server is taking a long time) — so every
 // call here races the fetch against an AbortController timeout, guaranteeing we fall
@@ -1193,6 +1107,227 @@ async function fetchWhoAmI(idToken){
   return result; // {ok:true, email, games:[{folderId,label,sets:[{folderId,label}]}]}
 }
 
+// Same fetch-with-timeout-then-JSONP-fallback shape as fetchWhoAmI/fetchSetData/etc
+// above — this endpoint is UNGATED (no idToken), so it works even for someone who
+// isn't signed in to anything yet.
+async function submitAccessRequest(game, setName, email, note){
+  const url = `${WEBAPP_URL}?requestAccess=1&game=${encodeURIComponent(game)}&set=${encodeURIComponent(setName)}&email=${encodeURIComponent(email)}&note=${encodeURIComponent(note)}`;
+  let result;
+  try{
+    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
+  }catch(fetchErr){
+    result = await new Promise((resolve,reject)=>{
+      const cbName = '__eooReqAccessCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to send that request. Try again in a moment.')); }, 30000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+  if(!result.ok) throw new Error(result.error || 'Unknown error sending that request.');
+  return result;
+}
+
+async function fetchCardHistory(cardId){
+  // The card's own set sheet: each set keeps its own change history. A card
+  // that's no longer in any set (removed) could be from any of them, so
+  // every loaded set is asked.
+  const card = state.byId.get(cardId);
+  const sheetIds = card ? [card._sheetId] : [...new Set(state.cards.map(c=> c._sheetId))];
+  const list = sheetIds.filter(Boolean).join(',');
+  const sheetParam = list ? `&sheetId=${encodeURIComponent(list)}` : '';
+  const url = `${WEBAPP_URL}?cardHistory=${encodeURIComponent(cardId)}&idToken=${encodeURIComponent(state.idToken)}${sheetParam}`;
+  try{
+    const res = await fetch(url + '&_=' + Date.now());
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    return await res.json();
+  }catch(fetchErr){
+    // Same fetch-then-JSONP fallback as the main card feed — this endpoint is
+    // subject to the same occasional cross-origin quirks.
+    return await new Promise((resolve,reject)=>{
+      const cbName = '__eooHistCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+}
+
+async function fetchPrecons(gameFolderId){
+  const url = `${WEBAPP_URL}?precons=${encodeURIComponent(gameFolderId)}&idToken=${encodeURIComponent(state.idToken)}`;
+  let result;
+  try{
+    result = await fetchWithTimeout(url + '&_=' + Date.now(), 30000);
+  }catch(fetchErr){
+    result = await new Promise((resolve,reject)=>{
+      const cbName = '__eooPreconCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to list preconstructed decks.')); }, 40000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+  if(!result.ok) throw new Error(result.error || 'Could not list preconstructed decks.');
+  return result; // {ok, canEdit, decks:[{fileId, fileName, name, updated, deck, missing:[ids]}]}
+}
+
+// Fetches the game's help articles from the server (the caching/retry wrapper lives in fetchHelpArticles).
+async function fetchHelpFromServer(folderId){
+  try{
+    const res = await fetch(`${WEBAPP_URL}?help=1&folderId=${encodeURIComponent(folderId)}&_=${Date.now()}`);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    return await res.json();
+  }catch(fetchErr){
+    return await new Promise((resolve,reject)=>{
+      const cbName = '__eooHelpCb_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+      window[cbName] = (data)=>{ cleanup(); resolve(data); };
+      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+      script.src = `${WEBAPP_URL}?help=1&folderId=${encodeURIComponent(folderId)}&callback=${cbName}&_=${Date.now()}`;
+      document.head.appendChild(script);
+    });
+  }
+}
+
+// Saves (or replaces) one preconstructed deck file in the game's folder; throws on any failure.
+async function savePreconToServer(fileId, deck, replace){
+  const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body: JSON.stringify({ action:'precSave', idToken: state.idToken, gameFolderId: state.currentGameFolderId, fileId, deck, replace }) });
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  const j = await res.json();
+  if(!j.ok) throw new Error(j.error || 'Unknown error');
+  return j;
+}
+
+const cardSource = {
+  whoAmI: fetchWhoAmI,
+  loadSet: fetchSetData,
+  loadSetImages: fetchSetImages,
+  loadGameAssets: fetchGameAssets,
+  loadHelp: fetchHelpFromServer,
+  cardHistory: fetchCardHistory,
+  precons: fetchPrecons,
+  savePrecon: savePreconToServer,
+  submitAccessRequest: submitAccessRequest,
+};
+/* =========================================================================
+   DATA LOADING
+   ========================================================================= */
+// Filters + tags a raw set of sheet rows into real card objects, exactly the same way
+// regardless of which set they came from — reused for Set 1's own feed and for every
+// additionally imported set, so behavior stays identical either way.
+function processRawRows(rawRows, setName, sheetId, isEchoMode){
+  const rows = rawRows.filter(r=>{
+    if(!isEchoMode){
+      // Generic mode has no fixed type-prefix convention to filter rows by — the only
+      // required column for ANY game is "id", so that's the only hard requirement.
+      return String(r.id||'').trim() !== '';
+    }
+    const t = (r.type||'').trim();
+    if(!t) return false;
+    // "C - Quest" cards are now used for the Champion's Quest-card slot — no longer
+    // excluded. "Q - Quest" is kept excluded defensively in case that convention is
+    // ever used for something unrelated.
+    if(t.startsWith('Q - ')) return false;
+    if(t.startsWith('Z - ')){
+      // Z - Custom is still junk/reference-card clutter in general, EXCEPT the two
+      // named placeholders standing in for the not-yet-created O - Stronghold /
+      // C - Resistance cards. The moment real cards of those types exist, the pool
+      // logic below prefers them automatically and these placeholders stop mattering.
+      const isPlaceholder = t==='Z - Custom' && (r.name==='Resistance' || r.name==='Stronghold');
+      if(!isPlaceholder) return false;
+    }
+    return true;
+  });
+
+  rows.forEach(r=>{
+    // Kept unconditional (not Echo-only): everything downstream assumes these three
+    // are always defined, trimmed strings — including generic-mode cards, whose sheet
+    // may have no type/aspect/loyalty columns at all (they just come out as '').
+    r.type = (r.type||'').trim();
+    r.aspect = (r.aspect||'').trim();
+    r.loyalty = (r.loyalty||'').trim();
+    r._front = (r['front-image-url']||'').trim();
+    r._back = (r['back-image-url']||'').trim();
+    noteSmallImage(r._front, r['front-image-sm-url']);
+    noteSmallImage(r._back, r['back-image-sm-url']);
+
+    if(isEchoMode){
+      r._doubleSided = String(r.is_double_sided).trim().toUpperCase()==='TRUE';
+      r._isScheme = r.type==='O - Scheme';
+      // These 4 are physically the same portrait-cut card as everything else, with
+      // content printed sideways — same treatment as schemes: rotated on screen for
+      // readability, printed at their native orientation (exports never rotate at all,
+      // so nothing extra is needed there).
+      r._isHorizontal = r._isScheme || HORIZONTAL_TYPES.has(r.type) ||
+        (r.type==='Z - Custom' && Object.values(EXTRA_CARD_PLACEHOLDER_NAME).includes(r.name)); // the Stronghold/Resistance placeholders are horizontal too
+      r._rotate = r._isHorizontal ? 90 : 0; // Echo mode always rotates its horizontal cards the same way it always has
+    } else {
+      // Generic mode: a required "is-double-sided" column (TRUE/FALSE) and a required
+      // "rotate" column (0/90/180/270, defaulting to 0) — the data-driven equivalent
+      // of Echo's hardcoded scheme/domination/stronghold rotation rules.
+      r._doubleSided = String(r['is-double-sided']).trim().toUpperCase()==='TRUE';
+      const rot = parseInt(r.rotate, 10);
+      r._rotate = [90,180,270].includes(rot) ? rot : 0;
+      r._isScheme = false;
+      r._isHorizontal = (r._rotate===90 || r._rotate===270);
+    }
+    r._setName = setName;
+    r._sheetId = sheetId; // carried into deck exports so the game room app can resolve cards without any sheet id hardcoded in its own source
+  });
+  return rows;
+}
+
+// Merges multiple sets' processed card lists into one, keeping exactly one entry per
+// id. When the same id appears in more than one set, the card with the NEWER
+// last-updated value wins (a missing/invalid last-updated loses to any real one) and
+// becomes the displayed row (its own art, text, etc.) — but every set that id actually
+// appeared under is still recorded on _setNames (see below), not just the winner's.
+function mergeCardSets(setCardLists){
+  const byId = new Map();
+  const setNamesById = new Map(); // id -> Set of every _setName this id appears under, across ALL loaded sets — not just whichever copy "wins" as the displayed row
+  setCardLists.forEach(cards=>{
+    cards.forEach(card=>{
+      if(!setNamesById.has(card.id)) setNamesById.set(card.id, new Set());
+      setNamesById.get(card.id).add(card._setName);
+
+      const existing = byId.get(card.id);
+      if(!existing){ byId.set(card.id, card); return; }
+      const existingDate = new Date(existing['last-updated']);
+      const newDate = new Date(card['last-updated']);
+      const existingValid = !isNaN(existingDate);
+      const newValid = !isNaN(newDate);
+      if(!existingValid || (newValid && newDate.getTime() >= existingDate.getTime())){
+        byId.set(card.id, card);
+      }
+    });
+  });
+  // A card that's the same id in more than one set (e.g. reprinted/shared into a
+  // later set) should stay visible under ANY of its sets' filters, not just whichever
+  // set's copy happened to win as the displayed row above — see cardMatchesFilters
+  // and generateSealedDecks's bySet(), both of which check the full list here rather
+  // than just the single primary _setName.
+  byId.forEach((card, id)=>{ card._setNames = [...setNamesById.get(id)]; });
+  return [...byId.values()];
+}
+
+
+
+
+
+
 // Echo mode is detected once per load, globally, from the union of every authorized
 // set's RAW rows (before any row-filtering, since that filtering itself needs to know
 // the mode first): if any loaded card is presented the way Echo of Omens presents
@@ -1225,7 +1360,7 @@ async function loadData(silent){
     // to make one set's request wait on another's round trip. A set that fails just
     // toasts and gets skipped, same as the old sequential loop's own error handling.
     const fastResults = await Promise.allSettled(
-      state.authorizedSets.map(entry => fetchSetData(entry.folderId, true))
+      state.authorizedSets.map(entry => cardSource.loadSet(entry.folderId, true))
     );
     fastResults.forEach((res, i)=>{
       const entry = state.authorizedSets[i];
@@ -1294,7 +1429,7 @@ function syncAllSetImages(rawSetResults){
   let pending = rawSetResults.length;
   rawSetResults.forEach(async (s)=>{
     try{
-      const result = await fetchSetImages(s.folderId);
+      const result = await cardSource.loadSetImages(s.folderId);
       applySetImages(result.images || []);
     }catch(e){
       console.error('Could not sync art for set '+s.folderId+':', e);
@@ -1328,7 +1463,7 @@ function applySetImages(images){
 // (via applyPcioUI) and the export card-back URLs once it resolves.
 async function loadGameAssetsInBackground(gameFolderId){
   try{
-    const assets = await fetchGameAssets(gameFolderId);
+    const assets = await cardSource.loadGameAssets(gameFolderId);
     state.genericBackUrl = assets.genericBackUrl || '';
     state.genericBacks = {
       overlordBackUrl: assets.overlordBackUrl || '',
@@ -1409,11 +1544,11 @@ function initGoogleSignIn(attempt){
 // anything went wrong or click Sign In a second time themselves.
 async function fetchWhoAmIWithRetry(idToken){
   try{
-    return await fetchWhoAmI(idToken);
+    return await cardSource.whoAmI(idToken);
   }catch(firstErr){
     setSigninStatus('Still checking your access — retrying…');
     try{
-      return await fetchWhoAmI(idToken);
+      return await cardSource.whoAmI(idToken);
     }catch(secondErr){
       throw secondErr;
     }
@@ -1581,24 +1716,7 @@ function fetchHelpArticles(){
   if(!helpArticlesPromise){
     helpArticlesPromiseGameFolderId = state.currentGameFolderId;
     const folderId = state.currentGameFolderId;
-    helpArticlesPromise = (async()=>{
-      try{
-        const res = await fetch(`${WEBAPP_URL}?help=1&folderId=${encodeURIComponent(folderId)}&_=${Date.now()}`);
-        if(!res.ok) throw new Error('HTTP '+res.status);
-        return await res.json();
-      }catch(fetchErr){
-        return await new Promise((resolve,reject)=>{
-          const cbName = '__eooHelpCb_' + Math.random().toString(36).slice(2);
-          const script = document.createElement('script');
-          const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
-          function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-          window[cbName] = (data)=>{ cleanup(); resolve(data); };
-          script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-          script.src = `${WEBAPP_URL}?help=1&folderId=${encodeURIComponent(folderId)}&callback=${cbName}&_=${Date.now()}`;
-          document.head.appendChild(script);
-        });
-      }
-    })();
+    helpArticlesPromise = cardSource.loadHelp(folderId);
     helpArticlesPromise.catch(()=>{ helpArticlesPromise = null; }); // let a later call retry instead of staying stuck on a failed fetch
   }
   return helpArticlesPromise;
@@ -1717,29 +1835,6 @@ function showSigninRequestAccess(show){
 }
 document.getElementById('btnSigninRequestAccess').addEventListener('click', ()=>openRequestAccessModal(noAccessEmail));
 
-// Same fetch-with-timeout-then-JSONP-fallback shape as fetchWhoAmI/fetchSetData/etc
-// above — this endpoint is UNGATED (no idToken), so it works even for someone who
-// isn't signed in to anything yet.
-async function submitAccessRequest(game, setName, email, note){
-  const url = `${WEBAPP_URL}?requestAccess=1&game=${encodeURIComponent(game)}&set=${encodeURIComponent(setName)}&email=${encodeURIComponent(email)}&note=${encodeURIComponent(note)}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 20000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooReqAccessCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to send that request. Try again in a moment.')); }, 30000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Unknown error sending that request.');
-  return result;
-}
 document.getElementById('btnSubmitRequestAccess').addEventListener('click', async ()=>{
   const game = document.getElementById('requestAccessGame').value.trim();
   const setName = document.getElementById('requestAccessSet').value.trim();
@@ -1759,7 +1854,7 @@ document.getElementById('btnSubmitRequestAccess').addEventListener('click', asyn
   const originalText = btn.textContent;
   btn.textContent = 'Sending…';
   try{
-    await submitAccessRequest(game, setName, email, note);
+    await cardSource.submitAccessRequest(game, setName, email, note);
     document.getElementById('requestAccessModal').classList.add('hidden');
     toast('Access request sent — you\'ll hear back once your account has been granted access.');
   }catch(err){
@@ -2102,7 +2197,7 @@ const removedCardCache = new Map(); // id -> snapshot row | 'loading' | 'not-fou
 function getRemovedCardInfo(id){
   if(removedCardCache.has(id)) return removedCardCache.get(id);
   removedCardCache.set(id, 'loading');
-  fetchCardHistory(id).then(rows=>{
+  cardSource.cardHistory(id).then(rows=>{
     if(!rows.length){ removedCardCache.set(id, 'not-found'); renderAll(); return; }
     rows.sort((a,b)=> new Date(b['archived-at']) - new Date(a['archived-at']));
     removedCardCache.set(id, rows[0]); // most recent snapshot = last known state
@@ -3100,41 +3195,13 @@ function openPreview(c){
 /* =========================================================================
    VERSION HISTORY + DIFF
    ========================================================================= */
-async function fetchCardHistory(cardId){
-  // The card's own set sheet: each set keeps its own change history. A card
-  // that's no longer in any set (removed) could be from any of them, so
-  // every loaded set is asked.
-  const card = state.byId.get(cardId);
-  const sheetIds = card ? [card._sheetId] : [...new Set(state.cards.map(c=> c._sheetId))];
-  const list = sheetIds.filter(Boolean).join(',');
-  const sheetParam = list ? `&sheetId=${encodeURIComponent(list)}` : '';
-  const url = `${WEBAPP_URL}?cardHistory=${encodeURIComponent(cardId)}&idToken=${encodeURIComponent(state.idToken)}${sheetParam}`;
-  try{
-    const res = await fetch(url + '&_=' + Date.now());
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    return await res.json();
-  }catch(fetchErr){
-    // Same fetch-then-JSONP fallback as the main card feed — this endpoint is
-    // subject to the same occasional cross-origin quirks.
-    return await new Promise((resolve,reject)=>{
-      const cbName = '__eooHistCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-}
 
 async function openHistoryModal(card){
   const body = document.getElementById('historyModalBody');
   body.innerHTML = '<p style="color:var(--text-soft);">Loading…</p>';
   document.getElementById('historyModal').classList.remove('hidden');
   try{
-    const rows = await fetchCardHistory(card.id);
+    const rows = await cardSource.cardHistory(card.id);
     if(!rows.length){ body.innerHTML = '<p style="color:var(--text-soft);">No past versions for this card yet.</p>'; return; }
     rows.sort((a,b)=> new Date(b['archived-at']) - new Date(a['archived-at']));
     body.innerHTML = '';
@@ -4001,26 +4068,6 @@ document.getElementById('optExportJson').addEventListener('click', ()=>{
    get the Precon button (add the open deck as one, or update the one it was
    loaded from) and a heads-up when a deck has cards that no longer exist.
    ========================================================================= */
-async function fetchPrecons(gameFolderId){
-  const url = `${WEBAPP_URL}?precons=${encodeURIComponent(gameFolderId)}&idToken=${encodeURIComponent(state.idToken)}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 30000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooPreconCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to list preconstructed decks.')); }, 40000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Could not list preconstructed decks.');
-  return result; // {ok, canEdit, decks:[{fileId, fileName, name, updated, deck, missing:[ids]}]}
-}
 let preconsLoading = null;
 let preconsStatus = ''; // 'loading' | 'error' | '' — shown in the Load window
 function preconModalOpen(){ return !document.getElementById('loadModal').classList.contains('hidden'); }
@@ -4031,7 +4078,7 @@ async function loadPrecons(notify){
   preconsStatus = 'loading';
   preconsLoading = (async ()=>{
     try{
-      const res = await fetchPrecons(gameId);
+      const res = await cardSource.precons(gameId);
       if(gameId !== state.currentGameFolderId) return; // switched games meanwhile
       state.precons = { canEdit: !!res.canEdit, decks: res.decks || [], boards: res.boards || [] };
       applyPcioUI(); // a game with room boards plays in the room instead of playingcards.io
@@ -4139,14 +4186,7 @@ async function savePreconDeck(fileId){
   if(!ids.length){ toast('This deck is empty.'); return; }
   const gone = [...new Set(ids)].filter(id=> !state.byId.has(id));
   if(gone.length && !confirm(`This deck still has ${gone.length} card${gone.length>1?'s':''} that no longer exist${gone.length>1?'':'s'}. Save it anyway?`)) return;
-  const send = async (replace)=>{
-    const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({ action:'precSave', idToken: state.idToken, gameFolderId: state.currentGameFolderId, fileId, deck, replace }) });
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const j = await res.json();
-    if(!j.ok) throw new Error(j.error || 'Unknown error');
-    return j;
-  };
+  const send = (replace)=> cardSource.savePrecon(fileId, deck, replace);
   try{
     toast('Saving the preconstructed deck…');
     let res = await send(false);

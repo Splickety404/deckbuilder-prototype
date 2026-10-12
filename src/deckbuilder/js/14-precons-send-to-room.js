@@ -5,26 +5,6 @@
    get the Precon button (add the open deck as one, or update the one it was
    loaded from) and a heads-up when a deck has cards that no longer exist.
    ========================================================================= */
-async function fetchPrecons(gameFolderId){
-  const url = `${WEBAPP_URL}?precons=${encodeURIComponent(gameFolderId)}&idToken=${encodeURIComponent(state.idToken)}`;
-  let result;
-  try{
-    result = await fetchWithTimeout(url + '&_=' + Date.now(), 30000);
-  }catch(fetchErr){
-    result = await new Promise((resolve,reject)=>{
-      const cbName = '__eooPreconCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to list preconstructed decks.')); }, 40000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-  if(!result.ok) throw new Error(result.error || 'Could not list preconstructed decks.');
-  return result; // {ok, canEdit, decks:[{fileId, fileName, name, updated, deck, missing:[ids]}]}
-}
 let preconsLoading = null;
 let preconsStatus = ''; // 'loading' | 'error' | '' — shown in the Load window
 function preconModalOpen(){ return !document.getElementById('loadModal').classList.contains('hidden'); }
@@ -35,7 +15,7 @@ async function loadPrecons(notify){
   preconsStatus = 'loading';
   preconsLoading = (async ()=>{
     try{
-      const res = await fetchPrecons(gameId);
+      const res = await cardSource.precons(gameId);
       if(gameId !== state.currentGameFolderId) return; // switched games meanwhile
       state.precons = { canEdit: !!res.canEdit, decks: res.decks || [], boards: res.boards || [] };
       applyPcioUI(); // a game with room boards plays in the room instead of playingcards.io
@@ -143,14 +123,7 @@ async function savePreconDeck(fileId){
   if(!ids.length){ toast('This deck is empty.'); return; }
   const gone = [...new Set(ids)].filter(id=> !state.byId.has(id));
   if(gone.length && !confirm(`This deck still has ${gone.length} card${gone.length>1?'s':''} that no longer exist${gone.length>1?'':'s'}. Save it anyway?`)) return;
-  const send = async (replace)=>{
-    const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify({ action:'precSave', idToken: state.idToken, gameFolderId: state.currentGameFolderId, fileId, deck, replace }) });
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const j = await res.json();
-    if(!j.ok) throw new Error(j.error || 'Unknown error');
-    return j;
-  };
+  const send = (replace)=> cardSource.savePrecon(fileId, deck, replace);
   try{
     toast('Saving the preconstructed deck…');
     let res = await send(false);
