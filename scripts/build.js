@@ -11,6 +11,10 @@
 // rebuilding gives back the identical file. The joined script is syntax-checked first.
 // `--check` verifies without writing.
 //
+// Page markup that only the private build needs is wrapped in marker lines in index.html:
+//     <!--PRIVATE-BEGIN-->  …  <!--PRIVATE-END-->
+// The private build just drops the two marker lines; the public build drops everything between them.
+//
 // `--public` builds the version without anything private: files named *-private.js /
 // *-private.css are left out, output goes to dist/public/ instead of the repo root, and a
 // LEAK CHECK fails the build if any private vocabulary (a game's own card types, Google/Drive
@@ -58,6 +62,11 @@ function leakHits(files){
   return hits;
 }
 
+function stripPrivateMarkup(text){
+  const block = /^[ \t]*<!--PRIVATE-BEGIN-->[ \t]*\n([\s\S]*?)^[ \t]*<!--PRIVATE-END-->[ \t]*\n/gm;
+  return publicBuild ? text.replace(block, '') : text.replace(block, (m, inner) => inner);
+}
+
 let failed = false;
 const apps = fs.readdirSync(srcDir).filter(d => fs.existsSync(path.join(srcDir, d, 'index.html')));
 for(const app of apps){
@@ -68,11 +77,11 @@ for(const app of apps){
   const js = joinFiles(jsFiles);
   try{ new vm.Script(js, { filename: `${app} (joined script)` }); }
   catch(e){ console.error(`✗ ${app}: JavaScript syntax error — ${e.message}`); failed = true; continue; }
-  const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8')
+  const html = stripPrivateMarkup(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'))
     .replace('<!--STYLES-->\n', () => `<style>\n${css}</style>\n`)
     .replace('<!--SCRIPTS-->\n', () => `<script>\n${js}</script>\n`);
   if(publicBuild){
-    const hits = leakHits([...jsFiles, ...cssFiles, { name: 'index.html', text: fs.readFileSync(path.join(dir, 'index.html'), 'utf8') }]);
+    const hits = leakHits([...jsFiles, ...cssFiles, { name: 'index.html', text: stripPrivateMarkup(fs.readFileSync(path.join(dir, 'index.html'), 'utf8')) }]);
     if(hits.length){
       const total = hits.reduce((n, h) => n + h.count, 0);
       console.error(`${reportOnly ? '•' : '✗'} ${app}: ${total} private-vocabulary line(s) would ship in the public build:`);

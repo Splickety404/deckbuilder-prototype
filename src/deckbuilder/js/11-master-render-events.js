@@ -168,26 +168,6 @@ document.getElementById('btnNewDeck').addEventListener('click', ()=>{
   state.decks[activeDeckKey()] = freshDeckSlot();
   renderAll();
 });
-document.getElementById('btnSealedDecks').addEventListener('click', ()=>{
-  if(!confirm('Generate sealed Overlord AND Champion decks (plus the scheme deck) from one shared pool? This replaces BOTH your current Overlord and Champion decks — unsaved changes will be lost.')) return;
-  openSealedSetPicker(generateSealedDecks);
-});
-// generatorFn is whichever set-picker consumer wants to run once a set is chosen —
-// only generateSealedDecks today, but left generic rather than inlined in case a
-// second sealed-generation entry point returns later.
-function openSealedSetPicker(generatorFn){
-  const listEl = document.getElementById('sealedSetList');
-  listEl.innerHTML = allSetNames().map(n=>`<div class="row-item" data-set="${escapeHtml(n)}">${escapeHtml(n)}</div>`).join('');
-  listEl.querySelectorAll('[data-set]').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      document.getElementById('sealedSetModal').classList.add('hidden');
-      generatorFn(el.dataset.set);
-      openHelpModal('Sealed Deck Construction');
-    });
-  });
-  document.getElementById('sealedSetModal').classList.remove('hidden');
-}
-
 /* deck drop zone: only fires for drops NOT on a specific row (row handlers stopPropagation) */
 const dropZone = document.getElementById('deck-drop-zone');
 dropZone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropZone.classList.add('dragover'); showReorderIndicatorAt(dropZone, null); });
