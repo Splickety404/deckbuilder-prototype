@@ -1,0 +1,761 @@
+:root{
+  --bg:#14161b; --surface:#1c1f26; --surface-2:#242830; --border:#333844;
+  --text:#e7e9ee; --text-soft:#9aa1ae; --accent:#8385f5; --accent-contrast:#12131a;
+  --accent-soft:#292a4a; --danger:#f87171; --danger-bg:#3a1a1a; --ok:#4ade80;
+  --radius:18px; --radius-sm:12px; --radius-lg:24px; --radius-pill:999px;
+  --shadow:0 2px 10px rgba(0,0,0,.4);
+  --font:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --bounce:cubic-bezier(.34,1.56,.64,1); /* playful overshoot easing used throughout */
+}
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font);}
+.btn{font-family:var(--font);font-weight:600;font-size:13px;padding:8px 13px;cursor:pointer;color:var(--text);
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);user-select:none;
+  display:inline-flex;align-items:center;gap:6px;transition:transform .15s var(--bounce),background .15s,box-shadow .15s;}
+.btn:hover{background:var(--surface-2);transform:translateY(-1px);box-shadow:0 3px 10px rgba(0,0,0,.3);}
+.btn:active{transform:scale(.94);}
+.btn-accent{color:var(--accent-contrast);background:var(--accent);border-color:var(--accent);}
+.btn-sm{padding:4px 9px;font-size:12px;}
+input,select{font-family:var(--font);font-size:13px;padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);}
+input[type="range"]{accent-color:var(--accent);}
+@keyframes bouncePopIn{
+  0%{transform:scale(.6);opacity:0;}
+  65%{transform:scale(1.06);opacity:1;}
+  100%{transform:scale(1);opacity:1;}
+}
+@keyframes popIn{
+  0%{transform:scale(.4);opacity:0;}
+  60%{transform:scale(1.08);opacity:1;}
+  100%{transform:scale(1);opacity:1;}
+}
+.pop-in{animation:popIn .35s var(--bounce);}
+
+@keyframes eoo-spin{ to{ transform:rotate(360deg); } }
+
+/* ---------- Sign-in gate ---------- */
+/* Same lockdown as the deckbuilder: nothing (not even the "enter the room"
+   setup screen) shows until Google sign-in succeeds. The room doesn't need a
+   server round-trip at sign-in time the way the deckbuilder does (there's no
+   fixed set of "games" to check access to up front) — access is instead
+   checked per-sheet, lazily, the first time a card from that sheet is needed
+   (see fetchSheetCards/getCardsBySheetId) — so this gate just needs a valid
+   Google identity to exist before letting anyone in. */
+#signin-gate .signin-handoff{margin:0 0 12px;padding:9px 12px;border-radius:8px;background:var(--accent-soft, rgba(124,108,255,.15));font-size:13px;font-weight:600;}
+#signin-gate{
+  position:fixed;inset:0;z-index:300;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg);
+}
+#signin-gate.hidden{display:none;}
+#signin-gate .signin-box{
+  width:min(360px,90vw);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:16px;
+}
+#signin-gate h1{font-size:20px;font-weight:700;margin:0;}
+#signin-gate p{font-size:13px;color:var(--text-soft);margin:0;}
+#signin-gate .signin-error{font-size:13px;color:var(--danger);min-height:1.2em;}
+#signin-gate .signin-status{font-size:13px;color:var(--text-soft);min-height:1.2em;}
+.signin-spinner{
+  width:26px;height:26px;border-radius:50%;
+  border:3px solid var(--border);border-top-color:var(--accent);
+  animation:eoo-spin 0.9s linear infinite;
+  margin:2px auto 0;
+}
+
+
+/* ---------- Setup screen ---------- */
+#setup-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:50;}
+#setup-screen.hidden{display:none;}
+.setup-box{width:min(440px,92vw);padding:26px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);animation:bouncePopIn .3s var(--bounce);}
+.setup-box h1{font-size:18px;margin:0 0 4px 0;}
+.setup-box p{font-size:13px;color:var(--text-soft);margin:0 0 16px 0;}
+.setup-row{margin-bottom:14px;}
+.setup-row label{display:block;font-size:12px;font-weight:600;color:var(--text-soft);margin-bottom:6px;}
+.setup-row input{width:100%;}
+.session-tabs{display:flex;gap:2px;background:var(--surface-2);padding:3px;border-radius:var(--radius-pill);margin-bottom:10px;}
+.session-tabs .tab{flex:1;text-align:center;padding:7px;border-radius:var(--radius-pill);cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text-soft);transition:background .15s,transform .15s var(--bounce);}
+.session-tabs .tab:hover{transform:scale(1.03);}
+.session-tabs .tab.active{background:var(--surface);color:var(--text);}
+#setupError{color:var(--danger);font-size:12.5px;margin-top:8px;min-height:1em;}
+#rejoinFields.hidden{display:none;}
+
+/* ---------- Game screen ---------- */
+#game-screen{display:none;height:100vh;flex-direction:column;}
+#game-screen.active{display:flex;}
+#topbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface);flex-wrap:wrap;z-index:10;}
+#topbar h1{font-size:13px;font-weight:700;margin:0;white-space:nowrap;}
+/* Related top-bar controls sit snug together, with the normal gap between groups. */
+.topbar-group{display:flex;align-items:center;gap:3px;}
+#connStatus{font-size:12px;font-weight:600;}
+#connStatus.ok{color:var(--ok);}
+#connStatus.warn{color:var(--danger);}
+
+/* --board-bg/--hand-bg are the "table theme" — shared, synced colors (see THEME in the
+   script), so every player at the table sees the same felt. Defaults match the app's
+   original fixed colors. */
+:root{ --board-bg:#1a1c22; --hand-bg:#1c1f26; }
+#boardViewport{flex:1;position:relative;overflow:hidden;cursor:default;
+  background-image:radial-gradient(circle, rgba(255,255,255,.08) 1px, transparent 1px);background-size:32px 32px;background-color:var(--board-bg);}
+#boardViewport.panning{cursor:grabbing;}
+/* Locks the cursor to a resize arrow for the whole page while an edge-splay
+   drag is in progress (see wireStackInteraction) — the !important + `*`
+   selector is what makes it stick regardless of which element the cursor
+   happens to be over mid-drag, instead of flickering to whatever that
+   element's own `cursor` CSS says. */
+body.force-cursor-ew, body.force-cursor-ew *{cursor:ew-resize!important;}
+body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
+#boardRotate{width:100%;height:100%;transform-origin:center center;transition:transform .35s var(--bounce);}
+#boardWorld{position:absolute;top:0;left:0;transform-origin:0 0;}
+
+.piece{position:absolute;cursor:grab;user-select:none;touch-action:none;width:140px;transform-origin:center center;
+  transition:filter .15s var(--bounce);z-index:1;}
+.piece:hover{filter:brightness(1.08) drop-shadow(0 8px 14px rgba(0,0,0,.5));}
+.piece.selected{filter:brightness(1.04);}
+/* While a piece is actively being dragged, it normally floats above everything
+   (z-index:50) — except when it's hovering the bottom third of a valid merge
+   target, where it should visually slide UNDER that target instead, previewing
+   that it'll land at the bottom of the pile rather than the top (z-index:0,
+   below every piece's z-index:1 baseline). See shouldInsertBelow. */
+.piece.dragging-piece{z-index:50;}
+.piece.dragging-piece.insert-below{z-index:0;}
+.piece .piece-face{width:140px;height:196px;border-radius:var(--radius-sm);border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden;background:var(--surface-2);position:relative;}
+.piece img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;}
+.piece .cardback,.hand-card .cardback{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  background:repeating-linear-gradient(45deg,var(--accent-soft),var(--accent-soft) 8px,var(--surface-2) 8px,var(--surface-2) 16px);
+  color:var(--accent);font-size:11px;font-weight:700;text-align:center;padding:8px;}
+/* A card whose set you're not authorized to see — the piece is still fully real
+   (real id, movable, stackable, countable), only its face is withheld. Styled
+   distinctly from an ordinary face-down "cardback" so it reads as "restricted",
+   not just "unrevealed". */
+.cardback.classified-face,.classified-face{
+  background:repeating-linear-gradient(45deg,var(--danger-bg),var(--danger-bg) 8px,var(--surface-2) 8px,var(--surface-2) 16px) !important;
+  color:var(--danger) !important;font-size:11px;font-weight:700;text-align:center;
+  width:100%;height:100%;box-sizing:border-box;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:8px;}
+/* A card whose sheet's access check hasn't come back yet — genuinely unknown,
+   not yet "restricted" (classified) or "unrevealed" (an ordinary cardback).
+   Placed immediately by registerPendingCards the instant a piece referencing
+   an unfetched sheet appears (deck import, or a synced PLACE_PIECE/MERGE_PIECES
+   from another client), so nothing ever blocks on the network round-trip —
+   this is what's shown in the meantime, and it's swapped for the real face (or
+   "Classified") the moment that sheet's fetchSheetCards call resolves and
+   triggers a re-render. Pulses gently to read as "still checking", never a
+   static/stuck state. */
+.cardback.pending-face,.pending-face{
+  background:var(--surface-2) !important;
+  color:var(--text-soft) !important;font-size:11px;font-weight:700;text-align:center;
+  width:100%;height:100%;box-sizing:border-box;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:8px;
+  animation:pendingFacePulse 1.6s ease-in-out infinite;}
+@keyframes pendingFacePulse{0%,100%{opacity:.5;}50%{opacity:1;}}
+/* Live "you're about to place this card on that deck" feedback while dragging
+   a single card or a whole pile over another pile — shown for exactly as long
+   as dropping right now would trigger mergePieceOntoTarget (see
+   showMergeHighlight/clearMergeHighlight), never a separate/delayed state. */
+.piece.merge-target{outline:3px solid var(--ok);outline-offset:3px;box-shadow:0 0 0 7px rgba(74,222,128,.22),var(--shadow);}
+.piece.merge-target .piece-label{background:var(--ok);color:#0a2a12;}
+
+/* Anti-cheat visibility: a peek or an in-progress search is never a quiet,
+   local-only thing — everyone at the table sees exactly which pile someone
+   looked at or is currently rifling through. peek-alert is brief (self-clears,
+   see PEEK_ALERT_MS) and pulses like an alarm; search-alert is persistent for
+   as long as SEARCH_START/SEARCH_END says that pile is being searched, and
+   dashed rather than solid to read as "ongoing" rather than "just happened". */
+.piece.peek-alert{outline:3px solid var(--danger);outline-offset:3px;box-shadow:0 0 0 7px rgba(248,113,113,.28),var(--shadow);animation:peekAlertPulse 0.8s ease-in-out 3;}
+@keyframes peekAlertPulse{0%,100%{box-shadow:0 0 0 7px rgba(248,113,113,.28),var(--shadow);}50%{box-shadow:0 0 0 13px rgba(248,113,113,.06),var(--shadow);}}
+.piece.search-alert{outline:3px dashed var(--danger);outline-offset:3px;box-shadow:0 0 0 7px rgba(248,113,113,.18),var(--shadow);}
+.search-alert-badge{position:absolute;top:-26px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;
+  color:#fff;background:var(--danger);border-radius:var(--radius-pill);padding:2px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  transform:rotate(var(--counter-rotate,0deg));pointer-events:none;}
+.piece .piece-label{position:absolute;bottom:-22px;left:0;right:0;text-align:center;font-size:11px;font-weight:700;
+  color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);padding:2px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  transition:background .1s,color .1s,transform .35s var(--bounce);
+  /* Counter-rotates against the whole board's own rotation (#boardRotate — see
+     applyRotation, which keeps --counter-rotate updated on it) so the label's TEXT
+     always faces the viewer upright, independent of how the table is turned. This
+     only touches the label's own orientation, not its position — it's still placed
+     exactly where it always was (bottom-center of its card), which is what actually
+     keeps it "attached" as the board spins; only which way the text reads changes. */
+  transform:rotate(var(--counter-rotate,0deg));}
+.piece.image-piece .piece-face{width:100%;height:100%;border-radius:var(--radius);background:transparent;box-shadow:none;}
+.piece.image-piece img{border-radius:var(--radius);box-shadow:var(--shadow);object-fit:contain;}
+
+/* "Move whole stack" handle — the pile's label doubles as its whole-stack drag
+   handle AND carries the card count baked into its text ("Deck (41)", or just
+   "(41)") — see pieceLabelText(). Always rendered for a multi-card pile, so
+   there's always something to grab. */
+.piece .piece-label.stack-handle{cursor:move;min-width:26px;min-height:14px;
+  transition:filter .15s var(--bounce),transform .15s var(--bounce),background .1s,color .1s;}
+/* Viewer-relative ("POV") placement for everything that hangs off a card or
+   zone: labels, lock badges, search badges. renderBoard/renderZones work out,
+   for the current board + piece rotation, which edge of the card is nearest
+   the viewer and set left/top to that spot (see placePieceBadges); the element
+   is centered on that point and counter-rotated so its text reads upright. */
+.pov{position:absolute;right:auto;bottom:auto;width:max-content;
+  transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1)) translateY(var(--pov-dy,0px));}
+.piece .piece-label.pov, .lock-badge.pov{right:auto;bottom:auto;width:max-content;
+  transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1)) translateY(var(--pov-dy,0px));}
+.piece .piece-label.pov{max-width:260px;
+  transition:filter .15s var(--bounce),background .1s,color .1s; /* no transform transition: it would make labels lag behind zooming */}
+.lock-badge.pov{width:20px;}
+.piece .piece-label.stack-handle.pov:hover{filter:brightness(1.35);transform:translate(-50%,-50%) rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1)) translateY(var(--pov-dy,0px)) scale(1.16);}
+
+/* Ghost/silhouette preview shown while dragging a piece or token — a faint
+   outline at the snapped position it will actually land at if released right
+   now (grid-snap and zone-snap included), computed live from the same
+   snapCoord/applyZoneSnap math the drop itself uses. Purely visual. */
+.drag-ghost{position:absolute;border:2px dashed rgba(255,255,255,.55);border-radius:var(--radius-sm);
+  background:rgba(255,255,255,.08);pointer-events:none;z-index:1;}
+
+/* Highlights outline each CARD in a pile rather than one box around the
+   whole pile. A single box can't follow a splay whose cards are individually
+   rotated, or a pile rotated around its anchor, while each card's own element
+   is already exactly where it's drawn — so an outline on it can't go wrong.
+   Covers: hovering a stack's label (stack-hover), a selected splayed pile,
+   and a pinged splayed pile (see flashPingHighlight). */
+.piece.stack-hover > .splay-card:not(.splay-gap), .piece.stack-hover > .piece-face{
+  outline:3px solid var(--accent);outline-offset:2px;
+  box-shadow:0 0 0 4px rgba(131,133,245,.35), 0 0 18px 3px rgba(131,133,245,.5);}
+.piece.splayed.selected{outline:none;box-shadow:none;animation:none;}
+.piece.splayed.selected > .splay-card:not(.splay-gap){outline:2px solid var(--accent);outline-offset:3px;
+  animation:selectedGlow 1.8s ease-in-out infinite;}
+.piece.splayed.ping-highlight{animation:none;}
+.piece.splayed.ping-highlight > .splay-card:not(.splay-gap){animation:pingGlow .7s ease-in-out infinite alternate;}
+/* Drag silhouette for a pile: one dashed outline per card, laid out exactly
+   like the real cards (see updatePieceDragGhost). */
+.drag-ghost.piece-ghost{border:none;background:none;}
+.drag-ghost .ghost-card{position:absolute;border:2px dashed rgba(255,255,255,.55);border-radius:var(--radius-sm);
+  background:rgba(255,255,255,.08);}
+
+/* Token color comes entirely from its user-defined type (state.tokenTypes) and is
+   applied inline per-instance in renderTokens() — there are no more fixed built-in
+   token colors/types. */
+/* z-index:2 (above .piece's own baseline z-index:1 below) is what keeps a
+   token from ever being buried under an ordinary card on the table — tokens
+   are rendered into #boardWorld AFTER every piece (see renderBoard calling
+   renderTokens() last), so DOM order alone would already put them on top,
+   but .piece's explicit z-index:1 otherwise beats that regardless of order
+   (an element with a higher z-index always paints above one with a lower/
+   auto z-index, no matter which comes later in the DOM) — that mismatch was
+   the actual bug: an ordinary card sat on top of any token underneath it.
+   Still correctly loses to .piece.dragging-piece's z-index:50 (see below),
+   which is exactly the one case a card SHOULD paint over a token — the card
+   the player is actively holding/dragging right now. A splay-preview slot
+   (.splay-card.splay-gap) is a plain child of its target .piece, never
+   promoted to dragging-piece, so it stays under this z-index too, matching
+   the "unless simultaneously shown as part of a stack-splay preview"
+   exception. Hand cards (.hand-card) live in a completely different part of
+   the DOM (#hand-panel, not #boardWorld) so they're never in this stacking
+   contest at all — that's the other stated exception, satisfied for free. */
+.token{position:absolute;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:14px;color:#fff;cursor:grab;user-select:none;
+  transition:transform .15s var(--bounce),filter .15s;z-index:2;
+  /* A token is a circle, so counter-rotating the whole thing against the board
+     keeps its letter upright and its count bubble at the viewer's top-right.
+     --tok-boost keeps it at least 32px across on screen however far the
+     board is zoomed out (1 = its normal size; --inv-zoom is set on #boardWorld). */
+  --tok-boost:max(1, calc(32 / 44 * var(--inv-zoom,1)));
+  transform:rotate(var(--counter-rotate,0deg)) scale(var(--tok-boost));}
+.token:hover{transform:rotate(var(--counter-rotate,0deg)) scale(calc(var(--tok-boost) * 1.18));filter:brightness(1.1);}
+.token.attached{width:28px;height:28px;font-size:11px;}
+/* A token's look (color, symbol/emoji, image, shape — see tokenFaceMarkup).
+   The shape lives on this inner face, not the token itself, so a hexagon's
+   clip never cuts off the count bubble. */
+.token .token-face{position:absolute;inset:0;}
+.tface{display:inline-flex;align-items:center;justify-content:center;flex:none;overflow:hidden;color:#fff;font-weight:700;line-height:1;
+  border-radius:50%;border:2px solid rgba(255,255,255,.3);box-shadow:var(--shadow);background-size:cover;background-position:center;
+  text-shadow:0 1px 2px rgba(0,0,0,.45);box-sizing:border-box;}
+.tface.shape-square{border-radius:22%;}
+.tface.shape-hex{border-radius:0;border:none;clip-path:polygon(25% 4%,75% 4%,100% 50%,75% 96%,25% 96%,0 50%);}
+/* Token type editor (see openTokenTypeEditor). */
+.tt-editor{width:250px;}
+/* Token chips inside a card/stack label (see attachedTokenChipsHtml). */
+.label-token{display:inline-flex;align-items:center;gap:2px;margin-left:6px;cursor:grab;vertical-align:middle;}
+.label-token:first-child{margin-left:0;}
+.label-token b{font-size:10px;}
+.label-token .lt-face{width:16px;height:16px;font-size:8.5px;border-width:1px;box-shadow:none;}
+.label-token:hover .lt-face{filter:brightness(1.2);transform:scale(1.15);}
+.lt-ghost{width:28px;height:28px;font-size:12px;}
+.tt-top{display:flex;align-items:center;gap:8px;padding:10px 10px 4px;}
+.tt-top input{flex:1;min-width:0;}
+.tt-preview{width:40px;height:40px;font-size:16px;}
+.tt-choices{display:flex;gap:4px;}
+.tt-choice{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:1px solid var(--border);cursor:pointer;}
+.tt-choice.on{border-color:var(--accent);background:var(--accent-soft);}
+.tt-choice .tface{width:18px;height:18px;border-width:1px;}
+.tt-emojis{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;padding:2px 10px 6px;}
+.tt-emoji{cursor:pointer;text-align:center;font-size:15px;border-radius:5px;padding:2px 0;}
+.tt-emoji:hover{background:var(--surface-2);}
+.tt-error{color:var(--danger);font-size:11.5px;padding:0 10px;min-height:0;}
+.tt-error:empty{display:none;}
+/* The type letter never changes; a stack's quantity (when >1) shows as its
+   own small bubble instead of replacing the letter (unlike a card pile,
+   whose count now lives right inside its label text — see pieceLabelText).
+   Always shown, even on a splayed stack, since a token pile has no label to
+   fall back on as a whole-move handle — the count bubble IS that handle. */
+.token .token-count{position:absolute;left:calc(100% - 9px);bottom:calc(100% - 9px);background:var(--accent);color:var(--accent-contrast);
+  font-weight:700;font-size:10px;line-height:1;padding:3px 5px;border-radius:var(--radius-pill);box-shadow:var(--shadow);
+  transition:background .1s,color .1s;cursor:grab;z-index:1;white-space:nowrap;
+  /* Same size on screen at any zoom (undoing the token's own --tok-boost too),
+     and anchored by its bottom-left just inside the token's top-right corner,
+     so a long count grows up and outward — never over the letter or emoji. */
+  transform:scale(calc(var(--inv-zoom,1) / var(--tok-boost,1)));transform-origin:0 100%;}
+.token .token-count:hover{filter:brightness(1.15);}
+.token.merge-target{outline:3px solid var(--ok);outline-offset:3px;box-shadow:0 0 0 7px rgba(74,222,128,.22),var(--shadow);}
+.token.merge-target .token-count{background:var(--ok);color:#0a2a12;}
+
+/* ---------- Zones — colored/labeled board regions, optionally snapping objects
+   inside or outside their bounds. Rendered behind pieces/tokens. ---------- */
+.zone{position:absolute;border-radius:var(--radius);box-sizing:border-box;}
+.zone.zone-editable{cursor:move;}
+.zone-label{position:absolute;top:0;left:0;transform-origin:0 0;transform:rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1)) translate(6px,4px);font-size:11px;font-weight:700;color:var(--text);
+  background:rgba(20,22,27,.55);border-radius:var(--radius-pill);padding:2px 10px;pointer-events:none;white-space:nowrap;
+  line-height:1.25; /* the font size is set to fit the zone — see fitZoneLabel */}
+.zone-handle{position:absolute;width:16px;height:16px;background:var(--accent);border:2px solid var(--accent-contrast);
+  border-radius:6px;transition:transform .15s var(--bounce);}
+.zone-handle:hover{transform:scale(1.2);}
+/* One handle per edge/corner (see renderZones/wireZoneResize) — corner
+   handles resize both dimensions from that corner, edge handles (centered
+   along their own edge, via the 50% + negative margin centering trick,
+   same idea as .zone-label's own centering) resize just the one dimension
+   perpendicular to that edge. Cursor per handle matches the physical
+   direction it drags in, same convention as the splay-edge cursors
+   (cursorForSplayEdge) elsewhere in this file. */
+.zone-handle.nw{left:-8px;top:-8px;cursor:nwse-resize;}
+.zone-handle.n{left:50%;top:-8px;margin-left:-8px;cursor:ns-resize;}
+.zone-handle.ne{right:-8px;top:-8px;cursor:nesw-resize;}
+.zone-handle.e{right:-8px;top:50%;margin-top:-8px;cursor:ew-resize;}
+.zone-handle.se{right:-8px;bottom:-8px;cursor:nwse-resize;}
+.zone-handle.s{left:50%;bottom:-8px;margin-left:-8px;cursor:ns-resize;}
+.zone-handle.sw{left:-8px;bottom:-8px;cursor:nesw-resize;}
+.zone-handle.w{left:-8px;top:50%;margin-top:-8px;cursor:ew-resize;}
+
+/* ---------- Hand resize handle — drag the seam between the board and the hand ---------- */
+#handResizeHandle{flex:none;height:9px;cursor:row-resize;background:var(--surface-2);
+  border-top:1px solid var(--border);border-bottom:1px solid var(--border);position:relative;touch-action:none;}
+#handResizeHandle:hover, #handResizeHandle.active{background:var(--accent-soft);}
+#handResizeHandle::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:36px;height:4px;border-radius:var(--radius-pill);background:var(--text-soft);}
+
+/* ---------- Private hand ---------- */
+#hand-panel{flex:none;border-top:1px solid var(--border);background:var(--hand-bg);padding:8px 12px;
+  display:flex;flex-direction:column;gap:6px;min-height:110px;overflow:hidden;transition:background .12s,box-shadow .12s;}
+/* Live feedback while a board card is being dragged over the hand: a clear
+   glow on the panel itself plus the floating ghost card (.hand-drop-ghost,
+   below) riding the cursor above everything else — see showHandDropFeedback. */
+#hand-panel.hand-drop-target{background:var(--accent-soft);box-shadow:inset 0 0 0 3px var(--accent);}
+#hand-panel .hand-label{flex:none;font-size:12px;font-weight:700;color:var(--text-soft);}
+#handCards{display:flex;align-items:flex-start;gap:8px;overflow-x:auto;overflow-y:hidden;flex:1;}
+.hand-row{display:flex;gap:10px;flex:1;min-height:0;}
+#handTokens{flex:none;display:flex;flex-direction:column;flex-wrap:wrap;align-content:flex-start;gap:6px;
+  padding-right:10px;border-right:1px solid var(--border);}
+#handTokens:empty{display:none;}
+.hand-token{display:flex;align-items:center;gap:6px;cursor:grab;user-select:none;font-size:12px;font-weight:700;color:var(--text);}
+.hand-token .dot, .chip-token{color:#fff;font-weight:700;} /* shape/look: see .tface */
+.hand-token .dot{width:28px;height:28px;font-size:11px;box-shadow:var(--shadow);}
+.hand-token-ghost{position:fixed;pointer-events:none;z-index:200;opacity:.9;}
+.hand-token .dot, .hand-token .qty{cursor:grab;}
+.hand-token .qty{padding:2px 6px;border-radius:var(--radius-pill);background:var(--surface-2);border:1px solid var(--border);}
+.hand-token .qty:hover{border-color:var(--accent);}
+.hand-token-ghost .ghost-qty{position:absolute;top:-7px;right:-9px;background:var(--accent);color:var(--accent-contrast);
+  font-size:10px;padding:2px 5px;border-radius:var(--radius-pill);}
+.chip-token{width:15px;height:15px;font-size:8.5px;border-width:1px;margin:0 2px 0 6px;vertical-align:-3px;}
+.hand-card{flex:none;width:var(--hand-card-width, 70px);cursor:grab;transition:transform .15s var(--bounce);}
+.hand-card:hover{transform:translateY(-6px) scale(1.04);}
+.hand-card .face{width:var(--hand-card-width, 70px);height:calc(var(--hand-card-width, 70px) * 1.4);border-radius:var(--radius-sm);border:1px solid var(--border);overflow:hidden;box-shadow:var(--shadow);}
+.hand-card img{width:100%;height:100%;object-fit:cover;display:block;}
+/* Fixed-position, always-on-top ghost used both by a hand card being dragged
+   out (wireHandCardDrag) and a board card being dragged in (see
+   showHandDropFeedback) — position:fixed + a z-index above every other layer
+   in the app (the highest elsewhere is #diceResult at 97) is what keeps it
+   floating above the hand panel instead of being clipped by the board
+   viewport or painted underneath the panel's own background. */
+.hand-drop-ghost{position:fixed;pointer-events:none;z-index:200;opacity:.85;}
+/* Rides under a card being dragged out of the hand: press F to flip it before
+   it lands (see wireHandCardDrag). */
+.hand-drop-ghost .ghost-hint{position:absolute;left:50%;top:100%;margin-top:5px;transform:translateX(-50%);white-space:nowrap;
+  font-size:10.5px;font-weight:700;color:var(--text);background:rgba(20,22,27,.9);border:1px solid var(--border);
+  border-radius:var(--radius-pill);padding:2px 8px;}
+
+#toast{position:fixed;bottom:120px;left:50%;transform:translateX(-50%);background:var(--surface);color:var(--text);
+  border:1px solid var(--border);padding:10px 18px;font-size:13px;z-index:100;border-radius:var(--radius-pill);
+  display:none;max-width:70vw;box-shadow:var(--shadow);}
+/* ---------- Generic modals ---------- */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:80;}
+.modal-overlay.hidden{display:none;}
+.modal-box{width:min(560px,92vw);max-height:82vh;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);animation:bouncePopIn .28s var(--bounce);}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border);}
+.modal-header h2{font-size:15px;margin:0;}
+.modal-body{padding:16px;overflow-y:auto;}
+.btn-icon{padding:6px 9px;border-radius:50%;}
+
+/* ---------- Radial menu (cards + tokens) ---------- */
+#radialMenu{position:fixed;z-index:90;width:0;height:0;}
+#radialMenu.hidden{display:none;}
+.radial-item{position:absolute;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;
+  background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  cursor:pointer;text-align:center;padding:2px;transition:background .12s,border-color .12s,transform .15s var(--bounce);
+  animation:radialPop .3s var(--bounce) backwards;}
+.radial-item:hover{background:var(--surface-2);border-color:var(--accent);transform:translate(-50%,-50%) scale(1.1);}
+.radial-item .radial-icon{font-size:18px;line-height:1;}
+.radial-item .radial-label{font-size:9.5px;font-weight:600;color:var(--text-soft);line-height:1.15;max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* A STACK-scoped action (Lock Stack, Remove Stack, etc. — see
+   openPieceRadialMenu) gets a permanent accent tint instead of the plain
+   neutral chip a single-card action uses, so the two groups read as visually
+   distinct at a glance, not just by their (also-grouped) position in the
+   ring — see .radial-divider below for how they're kept physically apart. */
+.radial-item.stack-action{background:var(--accent-soft);border-color:var(--accent);}
+.radial-item.stack-action .radial-label{color:var(--accent);}
+.radial-item.stack-action:hover{background:var(--accent-soft);transform:translate(-50%,-50%) scale(1.1);}
+/* A non-interactive placeholder slot in the ring (see openRadialMenu's
+   `{divider:true}` items) — just a small dot marking a deliberate gap, so
+   the card-action and stack-action clusters read as two separate groups
+   with visible breathing room between them, rather than one continuous
+   ring the eye has to parse by color alone. */
+.radial-divider{position:absolute;transform:translate(-50%,-50%);width:7px;height:7px;border-radius:50%;background:var(--border);pointer-events:none;animation:radialPop .3s var(--bounce) backwards;}
+@keyframes radialPop{
+  0%{transform:translate(-50%,-50%) scale(.3);opacity:0;}
+  70%{transform:translate(-50%,-50%) scale(1.12);opacity:1;}
+  100%{transform:translate(-50%,-50%) scale(1);opacity:1;}
+}
+
+/* ---------- Image scale popover ---------- */
+#imageScalePopover{position:fixed;z-index:91;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);width:190px;overflow:hidden;animation:bouncePopIn .22s var(--bounce);}
+#imageScalePopover.hidden{display:none;}
+.splay-title{font-size:11px;font-weight:700;color:var(--text-soft);text-transform:uppercase;letter-spacing:.03em;padding:9px 10px 0;}
+
+/* ---------- Table theme (topbar dropdown, anchored like tokenMenu/focusMenu) and
+   zone-edit (coordinate-anchored like imageScalePopover) popovers — same form look. ---------- */
+#themePopover{position:absolute;z-index:91;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);box-shadow:var(--shadow);width:220px;overflow:hidden;margin-top:4px;animation:bouncePopIn .22s var(--bounce);}
+#zonePopover{position:fixed;z-index:91;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);box-shadow:var(--shadow);width:220px;overflow:hidden;animation:bouncePopIn .22s var(--bounce);}
+#themePopover.hidden, #zonePopover.hidden{display:none;}
+.popover-drag{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;cursor:move;user-select:none;
+  font-size:11.5px;font-weight:700;color:var(--text-soft);background:var(--surface-2);border-bottom:1px solid var(--border);}
+.popover-drag .grip{letter-spacing:-2px;opacity:.7;}
+.popover-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;}
+.popover-row label{font-size:12px;color:var(--text-soft);flex:none;}
+.popover-row input[type="text"]{flex:1;min-width:0;}
+.popover-row input[type="color"]{width:40px;height:28px;padding:2px;flex:none;cursor:pointer;border-radius:var(--radius-sm);}
+.popover-row select{flex:1;}
+.popover-actions{display:flex;gap:8px;padding:2px 10px 10px;}
+
+/* ---------- Add Token / Focus dropdowns (still simple lists) ---------- */
+#tokenMenu, #focusMenu, #boardMenu, #gridMenu{position:fixed;z-index:90;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);min-width:190px;max-width:260px;overflow:hidden;animation:bouncePopIn .2s var(--bounce);}
+#tokenMenu.hidden, #focusMenu.hidden, #boardMenu.hidden, #gridMenu.hidden{display:none;}
+.token-type-item, .focus-item{padding:9px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .12s;}
+.token-type-item:hover, .focus-item:hover{background:var(--surface-2);}
+.token-dot{width:18px;height:18px;border-radius:50%;flex:none;font-size:9px;border-width:1px;}
+/* Edit affordance on an existing token type row (see openTokenTypeMenu) —
+   pushed to the far right via margin-left:auto in the row's own flex layout,
+   dimmed until hovered so the row doesn't look cluttered at rest, and its
+   own click target so it never fights with the row's "place a token" click. */
+.token-swap-title{padding:9px 14px 5px;font-size:12px;font-weight:700;color:var(--text-soft);display:flex;align-items:center;gap:6px;}
+.token-type-edit{margin-left:auto;flex:none;opacity:.55;padding:2px 5px;border-radius:6px;font-size:12px;}
+.token-type-edit:hover{opacity:1;background:var(--surface);}
+#tokenMenu input{width:100%;margin:6px 10px 10px 10px;width:calc(100% - 20px);}
+/* The generic rule above was meant for the plain-text name field, but its
+   bare `input` selector also matches the color swatch in the very same
+   popover (see openTokenTypeEditor) — stretching it
+   to nearly the whole popover's width and overflowing outside it, instead of
+   the small square swatch `.popover-row input[type="color"]` already
+   describes elsewhere. `#tokenMenu input[type="color"]` is more specific
+   than that generic rule (an id beats any number of plain classes/
+   attributes), so this is what actually wins and keeps the swatch small and
+   inside the popover. */
+#tokenMenu input[type="color"]{width:40px;height:28px;margin:0;flex:none;}
+
+/* ---------- Hover preview ---------- */
+#hoverPreview{position:fixed;z-index:95;pointer-events:none;bottom:130px;right:20px;box-shadow:var(--shadow);border-radius:var(--radius);overflow:hidden;}
+#hoverPreview.hidden{display:none;}
+#hoverPreview.flip-left{right:auto;left:20px;}
+#hoverPreviewFrame{position:relative;overflow:hidden;border-radius:var(--radius);}
+/* Centered and turned by showHoverPreview (sideways art is rotated upright). */
+#hoverPreview img{position:absolute;left:50%;top:50%;display:block;object-fit:cover;}
+#hoverPreviewBack{position:absolute;left:0;top:0;}
+
+/* ---------- Hotkey hint — reminds you of the flip/rotate/draw keys while
+   hovering a pile on the board (desktop only; keys are ignored otherwise). ---------- */
+#hotkeyHint{position:fixed;z-index:95;pointer-events:none;background:rgba(20,22,27,.9);
+  border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow);
+  padding:5px 9px;display:flex;gap:9px;white-space:nowrap;}
+#hotkeyHint.hidden{display:none;}
+/* Keyboard-drawing hints (see keyboardHintHtml / tokenKeyboardHintHtml). */
+#hotkeyHint .kb{display:flex;flex-direction:column;gap:3px;}
+#hotkeyHint .kb-row{display:flex;gap:3px;}
+#hotkeyHint .kb-row.r1{margin-left:13px;}
+#hotkeyHint .kb-key{width:30px;height:30px;border-radius:5px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:var(--surface);border:1px solid var(--border);border-bottom-width:2px;color:var(--text-soft);opacity:.45;}
+#hotkeyHint .kb-key b{font-size:10.5px;line-height:1;}
+#hotkeyHint .kb-key span{font-size:7px;font-weight:700;line-height:1.1;margin-top:2px;text-align:center;letter-spacing:-.1px;}
+#hotkeyHint .kb-key.on{opacity:1;background:var(--accent-soft);border-color:var(--accent);color:var(--text);}
+#hotkeyHint .kb-key.on b{color:#fff;}
+#hotkeyHint .kb-note{font-size:9.5px;color:var(--text-soft);margin-top:2px;}
+#hotkeyHint .kb-wrap{display:flex;align-items:flex-end;gap:12px;}
+#hotkeyHint .kb-mouse{display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--text-soft);font-size:8.5px;font-weight:700;}
+#hotkeyHint .kb-wheel{fill:var(--accent);}
+#hotkeyHint .hk-item{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-soft);}
+#hotkeyHint kbd{display:inline-block;min-width:14px;text-align:center;font-family:var(--font);font-size:10.5px;font-weight:700;
+  color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-bottom-width:2px;
+  border-radius:6px;padding:1px 5px;}
+
+/* ---------- Dice popover (anchored under its button, like themePopover) ---------- */
+#dicePopover{position:absolute;z-index:91;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);box-shadow:var(--shadow);width:230px;overflow:hidden;margin-top:4px;animation:bouncePopIn .22s var(--bounce);}
+#dicePopover.hidden{display:none;}
+.dice-presets{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:8px 10px;}
+.dice-preset-btn{display:flex;align-items:center;justify-content:center;height:32px;border:1px solid var(--border);
+  border-radius:var(--radius-pill);cursor:pointer;font-size:12.5px;background:var(--surface-2);transition:transform .15s var(--bounce),border-color .12s;}
+.dice-preset-btn:hover{border-color:var(--accent);transform:scale(1.08);}
+.dice-preset-btn.active{background:var(--accent);color:var(--accent-contrast);border-color:var(--accent);}
+
+/* ---------- Dice result popup — a brief, prominent broadcast to every client ---------- */
+#diceResult{position:fixed;z-index:97;left:50%;top:18%;transform:translate(-50%,-50%);
+  background:var(--surface);border:2px solid var(--accent);border-radius:var(--radius-lg);box-shadow:var(--shadow);
+  padding:18px 28px;text-align:center;pointer-events:none;animation:diceBounceIn .4s var(--bounce);}
+#diceResult.hidden{display:none;}
+#diceResult .dice-sides{font-size:12px;color:var(--text-soft);text-transform:uppercase;letter-spacing:.04em;}
+#diceResult .dice-value{font-size:38px;font-weight:800;color:var(--text);}
+@keyframes diceBounceIn{
+  0%{transform:translate(-50%,-50%) scale(.4) rotate(-8deg);opacity:0;}
+  60%{transform:translate(-50%,-50%) scale(1.12) rotate(4deg);opacity:1;}
+  100%{transform:translate(-50%,-50%) scale(1) rotate(0);opacity:1;}
+}
+
+/* ---------- Ping — a temporary ring dropped on the board, visible to everyone ---------- */
+.ping-ring{position:absolute;width:36px;height:36px;margin-left:-18px;margin-top:-18px;border:3px solid var(--accent);
+  border-radius:50%;pointer-events:none;animation:pingPulse 1.1s ease-out forwards;}
+/* A pinged card or stack glows for a couple of seconds on every player's
+   screen (see flashPingHighlight). box-shadow rather than outline so it
+   follows the card's rounded corners and doesn't fight .selected's outline. */
+.ping-highlight{animation:pingGlow .7s ease-in-out infinite alternate;z-index:4;}
+@keyframes pingGlow{
+  from{box-shadow:0 0 0 3px var(--accent), 0 0 10px 2px var(--accent);}
+  to{box-shadow:0 0 0 5px var(--accent), 0 0 26px 10px var(--accent);}
+}
+@keyframes pingPulse{
+  0%{transform:scale(0.4);opacity:1;}
+  100%{transform:scale(2.6);opacity:0;}
+}
+
+/* ---------- Multi-select rubber-band + selected pieces/tokens ----------
+   Right-click-drag (or shift+left-drag) over empty board space draws this
+   box; anything whose footprint touches it gets selected — see
+   beginBoxSelect. Marching-ants stripes + a little spring-in pop are purely
+   for feel; the actual hit-testing only ever looks at the final rectangle
+   on release. */
+#selectionBox{position:absolute;pointer-events:none;border-radius:6px;
+  border:2px dashed var(--accent);
+  background-image:repeating-linear-gradient(-45deg, rgba(131,133,245,.20) 0 10px, rgba(131,133,245,.32) 10px 20px);
+  background-size:28px 28px;
+  box-shadow:0 0 16px rgba(131,133,245,.28);
+  animation:selectionBoxIn .15s var(--bounce), marchingAnts .6s linear infinite;}
+@keyframes selectionBoxIn{0%{opacity:0;filter:brightness(1.6);}100%{opacity:1;filter:none;}}
+@keyframes marchingAnts{ from{background-position:0 0;} to{ background-position:28px 0; } }
+/* Live "N selected" pill that follows the box while dragging it — see
+   beginBoxSelect. */
+#selectionCount .zone-tip{display:block;font-size:10px;font-weight:600;opacity:.75;margin-top:1px;}
+#selectionCount{position:fixed;z-index:95;pointer-events:none;background:var(--accent);color:var(--accent-contrast);
+  font-weight:700;font-size:12px;padding:4px 11px;border-radius:var(--radius-pill);box-shadow:var(--shadow);
+  animation:popIn .2s var(--bounce);white-space:nowrap;}
+.piece.selected, .token.selected{outline:2px solid var(--accent);outline-offset:3px;
+  box-shadow:0 0 0 6px rgba(131,133,245,.18),var(--shadow);animation:selectedGlow 1.8s ease-in-out infinite;}
+@keyframes selectedGlow{0%,100%{box-shadow:0 0 0 6px rgba(131,133,245,.18),var(--shadow);}50%{box-shadow:0 0 0 10px rgba(131,133,245,.05),var(--shadow);}}
+/* One-shot bounce for an item the INSTANT it becomes selected — added
+   transiently by JS right after a selection change (see selectPop), never
+   baked into the class renderBoard()/renderTokens() build from state, or
+   it'd replay on every unrelated re-render while the item stayed selected. */
+.select-pop{animation:selectPopBounce .4s var(--bounce);}
+@keyframes selectPopBounce{0%{filter:brightness(1.6) saturate(1.5);}100%{filter:none;}}
+/* A selected item that's part of a group actively being dragged lifts a
+   little brighter above its neighbors; letting go gives the whole group a
+   satisfying settle-bounce (see beginGroupDrag). */
+.group-lifted{filter:brightness(1.18) !important;z-index:6 !important;}
+.group-settle{animation:groupSettleBounce .35s var(--bounce);}
+@keyframes groupSettleBounce{0%{box-shadow:0 0 0 10px rgba(131,133,245,.45),var(--shadow);}100%{box-shadow:0 0 0 0 rgba(131,133,245,0),var(--shadow);}}
+
+/* ---------- Lock badge (pieces + zones) ---------- */
+.lock-badge{position:absolute;top:-8px;right:-8px;width:20px;height:20px;border-radius:50%;background:var(--surface);
+  border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;z-index:2;}
+
+/* ---------- Visible grid overlay. #boardWorld itself can't carry this: it's
+   position:absolute with no explicit width/height and every child of it is
+   ALSO absolutely positioned (out of flow), so it never gets an intrinsic
+   size of its own to paint a background into — a background-image on a
+   0×0 box paints nothing, which is exactly why toggling Show Grid used to
+   have no visible effect. #boardGrid is a real, normally-sized sibling
+   (100% of #boardRotate, which DOES have real pixel dimensions) that sits
+   beneath #boardWorld in paint order, with its background-size/position
+   kept in sync with the current pan/zoom by JS (see syncGridBackground(),
+   called from applyView()) rather than by riding along on a CSS transform —
+   more code, but it actually has a box to draw into. ---------- */
+/* Oversized by GRID_OVERSCAN on every side so it still covers the whole screen
+   when the board is rotated 90° on a non-square screen (syncGridBackground
+   offsets the pattern to match). */
+#boardGrid{position:absolute;top:-1000px;left:-1000px;width:calc(100% + 2000px);height:calc(100% + 2000px);pointer-events:none;display:none;}
+/* Only shown once Show Grid is actually checked (see applyGridDisplay) — a
+   bare, unlabeled number input sitting in the toolbar at all times just
+   reads as a stray "80" with no visible connection to anything. */
+#gridSizeInput.hidden{display:none;}
+#boardGrid.show-grid{
+  display:block;
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.09) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.09) 1px, transparent 1px);
+}
+
+/* ---------- Quick chat/emote bubbles ----------
+   Anchored to the bottom-left of #boardViewport itself (NOT the whole page),
+   so it can never drift on top of the hand panel below no matter how tall the
+   hand is resized — that overlap was the actual bug. Collapsible: the toggle
+   button always shows; the input row hides when collapsed, floating bubbles
+   still pop up above it either way so incoming chat is never missed. */
+#chatPanel{position:absolute;left:16px;bottom:16px;z-index:60;display:flex;flex-direction:column;
+  align-items:flex-start;gap:8px;max-width:340px;}
+/* One chip per player: cards in hand, with whoever's turn it is highlighted
+   (see renderPlayerCounters). */
+#playerCounters{display:flex;flex-wrap:wrap;gap:4px;}
+#playerCounters:empty{display:none;}
+.player-chip{font-size:11.5px;color:var(--text-soft);background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-pill);padding:2px 9px;white-space:nowrap;}
+.player-chip b{color:var(--text);font-weight:700;}
+.player-chip.active-turn{border-color:var(--accent);color:var(--text);box-shadow:0 0 0 2px var(--accent-soft);}
+/* Round "rotate view" button docked at the board's bottom-right, just above the hand. */
+/* Board tabs — a strip along the top of the board. Drag anything onto a tab to
+   move it there. */
+#boardTabs{position:absolute;left:12px;top:10px;z-index:60;display:flex;gap:4px;align-items:center;max-width:calc(100% - 24px);overflow-x:auto;}
+.board-tab{padding:4px 12px;font-size:12px;font-weight:700;border-radius:var(--radius-pill);cursor:pointer;user-select:none;white-space:nowrap;
+  background:var(--surface);border:1px solid var(--border);color:var(--text-soft);transition:background .12s,border-color .12s,transform .12s var(--bounce);}
+.board-tab:hover{color:var(--text);}
+.board-tab.active{background:var(--accent-soft);border-color:var(--accent);color:var(--text);}
+.board-tab.drop-hover{border-color:var(--ok);background:rgba(74,222,128,.18);color:var(--text);transform:scale(1.08);}
+.board-tab input{width:90px;font-size:12px;font-weight:700;padding:0;border:none;background:transparent;color:var(--text);outline:none;}
+.board-tab-add{padding:4px 9px;}
+#boardEmptyHint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none;
+  font-size:13px;color:var(--text-soft);opacity:.55;letter-spacing:.2px;white-space:nowrap;}
+#boardEmptyHint.hidden{display:none;}
+#btnRotateView{position:absolute;right:16px;bottom:16px;z-index:60;width:44px;height:44px;padding:0;
+  border-radius:50%;justify-content:center;font-size:20px;box-shadow:var(--shadow);}
+#chatBar{display:flex;align-items:center;gap:6px;width:100%;}
+#chatPanel.collapsed #chatBar input{display:none;}
+#chatBar input{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-pill);
+  padding:7px 14px;font-size:12.5px;color:var(--text);}
+#chatLog{display:flex;flex-direction:column-reverse;gap:6px;
+  max-height:220px;overflow:hidden;pointer-events:none;}
+.chat-bubble{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:6px 12px;font-size:12px;max-width:260px;color:var(--text);
+  animation:chatBubbleLife 6s var(--bounce) forwards;}
+.chat-bubble b{color:var(--accent);}
+@keyframes chatBubbleLife{
+  0%{transform:scale(.7);opacity:0;}
+  10%{transform:scale(1.05);opacity:1;}
+  16%{transform:scale(1);opacity:1;}
+  82%{opacity:1;}
+  100%{opacity:0;}
+}
+/* A bubble generated from a synced game event (see showHistoryBubble) rather
+   than someone actually typing in chat — visually distinct (accent-tinted
+   left edge, no bold name prefix) and the one kind of bubble the "Show in
+   chat" toggle can hide, via #chatPanel.hide-history below. */
+.chat-bubble.history-bubble{border-left:3px solid var(--accent);color:var(--text-soft);font-style:italic;}
+#chatPanel.hide-history .chat-bubble.history-bubble{display:none;}
+
+/* ---------- Full game history flyout ----------
+   Opened from #btnChatHistory, right next to the chat toggle. Anchored to
+   #chatPanel (already position:absolute, so it's a valid containing block)
+   and pinned to bottom:100% of it so it always opens upward, above the chat
+   log and input — never a centered modal, per the user's own framing of
+   this as part of the chat UI rather than a separate screen. */
+#historyFlyout{position:absolute;left:0;bottom:100%;margin-bottom:8px;width:min(320px,80vw);
+  max-height:340px;display:flex;flex-direction:column;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
+  padding:10px 12px;}
+#historyFlyout.hidden{display:none;}
+.history-flyout-header{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex:none;}
+.history-flyout-header b{flex:1;font-size:13px;}
+.history-toggle-label{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-soft);
+  white-space:nowrap;cursor:pointer;}
+#historyFlyoutBody{overflow-y:auto;}
+
+/* ---------- Pile browser — Search (Q) and "look at the top N" (hold A + a
+   number). A floating, draggable panel rather than a modal, so the board stays
+   usable: drag cards straight out of it. See openPileBrowser. ---------- */
+#pileBrowser{position:fixed;z-index:92;left:50%;bottom:170px;transform:translateX(-50%);max-width:min(900px,92vw);
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
+  animation:bouncePopIn .2s var(--bounce);}
+#pileBrowser.moved{transform:none;}
+#pileBrowser.hidden{display:none;}
+#pileBrowser .popover-drag .btn{padding:2px 7px;font-size:11px;}
+.pb-help{font-size:11px;color:var(--text-soft);padding:6px 12px 0;}
+#pileBrowserList{display:flex;gap:10px;padding:10px 12px 12px;overflow-x:auto;align-items:flex-start;}
+.pb-card{flex:none;width:104px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:grab;user-select:none;}
+.pb-card .face{width:104px;height:146px;border-radius:var(--radius-sm);overflow:hidden;border:2px solid var(--border);
+  transition:border-color .12s,transform .15s var(--bounce);background:var(--surface-2);}
+.pb-card:hover .face{border-color:var(--accent);transform:translateY(-3px);}
+.pb-card.drop-before .face{box-shadow:-6px 0 0 -2px var(--accent);}
+.pb-card img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;}
+.pb-pos{font-size:10.5px;font-weight:700;color:var(--text-soft);}
+.pb-actions{display:flex;gap:3px;}
+.pb-actions .btn{padding:2px 6px;font-size:11px;}
+.pb-ghost{position:fixed;pointer-events:none;z-index:200;width:78px;height:110px;border-radius:var(--radius-sm);overflow:hidden;
+  box-shadow:var(--shadow);opacity:.9;border:2px solid var(--accent);}
+.pb-ghost img{width:100%;height:100%;object-fit:cover;}
+
+/* ---------- Splayed stacks ---------- */
+/* Height/width for a splayed pile are set inline per-instance (renderBoard()), since
+   they depend on splay direction (horizontal splays need a wider box, vertical ones a
+   taller box) and on how many cards are in the pile. */
+.splay-card{position:absolute;width:140px;height:196px;border-radius:var(--radius-sm);border:1px solid var(--border);box-shadow:var(--shadow);overflow:hidden;background:var(--surface-2);}
+.splay-card img{width:100%;height:100%;object-fit:cover;display:block;}
+/* No visual highlight on a splay's draggable edges — the cursor itself
+   (ew-resize/ns-resize, see cursorForSplayEdge) is the only cue that an
+   edge is live; deliberate, so a deep pile doesn't get visually noisy.
+   IMPORTANT, if anything is ever added back here: never give .splay-card
+   (or a class layered onto it) a `position` override. It's already
+   position:absolute (see above) — that's already a valid containing block
+   for any absolutely-positioned child a future cue might need. An earlier
+   version set position:relative instead, on the theory that a child needed
+   a "positioned ancestor" — true, but .splay-card already IS one,  so the
+   override just pulled the card OUT of the piece's absolute fan-layout
+   scheme and into normal HTML block flow, where multiple such cards stack
+   downward one after another before their own left/top offsets even get
+   applied — invisible with only one such card in the pile, but a very
+   visible "cards drift further down/diagonally with every card added" bug
+   the moment a 2nd one joined the mix. */
+/* Placeholder slot shown while a peeled/played card is hovering a splay,
+   previewing exactly where it would land (see splayPreview / splayInsertIndex)
+   — never interactive, just a visual "it goes here" cue. */
+.splay-card.splay-gap{background:var(--accent-soft);border:2px dashed var(--accent);box-shadow:none;pointer-events:none;}
+/* A tuck preview carrying a real card face (see splayPreview/setSplayPreview) —
+   the dragged card itself, shown sitting in its would-land slot, rather than
+   a blank placeholder. Still dashed so it still reads as "not committed yet". */
+.splay-card.splay-gap.splay-gap-real{background:transparent;}
+
+/* ---------- History ---------- */
+.history-row{font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);}
+.history-time{color:var(--text-soft);margin-right:8px;font-variant-numeric:tabular-nums;}
+/* A row appended live while the flyout is already open (appendHistoryFlyoutRow)
+   rather than one of the plain rows loadHistoryFlyout fetched in bulk — same
+   playful pop as everything else in the app, so a live update actually reads
+   as "something just happened" instead of silently appearing. */
+.history-row-new{animation:bouncePopIn .3s var(--bounce);}
+
+/* ---------- Live presence (other players' cursors) ---------- */
+/* Lives inside #boardWorld (see ROOM CHANNEL section in the script) so it
+   inherits the shared pan/zoom/rotation transform for free, exactly like
+   pieces and tokens — no per-viewer math needed here. */
+.presence-cursor{position:absolute;top:0;left:0;pointer-events:none;z-index:500;
+  /* Counter-rotated around its own tip so the pointer and name tag stay upright
+     however the board is turned. */
+  transform-origin:2px 2px;transform:translate(-2px,-2px) rotate(var(--counter-rotate,0deg)) scale(var(--inv-zoom,1));transition:left .08s linear, top .08s linear;}
+.presence-cursor .dot{width:14px;height:14px;border-radius:50% 50% 50% 4px;transform:rotate(-45deg);
+  box-shadow:0 1px 4px rgba(0,0,0,.45);}
+.presence-cursor.holding .dot{animation:presencePulse .9s ease-in-out infinite;}
+@keyframes presencePulse{0%,100%{transform:rotate(-45deg) scale(1);}50%{transform:rotate(-45deg) scale(1.4);}}
+.presence-cursor .tag{position:absolute;left:16px;top:-2px;font-size:11px;font-weight:700;white-space:nowrap;
+  padding:2px 7px;border-radius:var(--radius);color:#0a0b0f;box-shadow:0 1px 4px rgba(0,0,0,.35);}
+.presence-cursor .chip{position:absolute;left:16px;top:17px;font-size:10.5px;padding:2px 7px;border-radius:var(--radius);
+  background:var(--surface);border:1px solid var(--accent);color:var(--text);white-space:nowrap;
+  box-shadow:0 1px 4px rgba(0,0,0,.35);animation:bouncePopIn .2s var(--bounce);}

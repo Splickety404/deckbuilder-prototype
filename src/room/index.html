@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Game Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<!-- Powers the whole live room: game-state sync (moves, draws, chat — see
+     the SYNC ENGINE / ROOM CHANNEL sections further down) AND cursors/
+     "holding a card" indicators. ABLY_API_KEY (see ROOM CHANNEL) must be
+     set for multiplayer to work at all — see room.html's setup notes. -->
+<script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
+<!--STYLES-->
+</head>
+<body>
+
+<div id="signin-gate">
+  <div class="signin-box">
+    <h1>GAME ROOM</h1>
+    <p>Sign in with the Google account you were given access with. Cards from sets you're not authorized for will still show up on the table when someone else brings them in — just as "Classified" instead of their real face.</p>
+    <div class="signin-handoff" id="signinHandoff" style="display:none;"></div>
+    <div id="googleSignInButton"></div>
+    <div class="signin-spinner" id="signinSpinner" style="display:none;"></div>
+    <div class="signin-status" id="signinStatus"></div>
+    <div class="signin-error" id="signinError"></div>
+  </div>
+</div>
+
+<div id="setup-screen" class="hidden">
+  <div class="setup-box">
+    <h1>Game Room</h1>
+    <p>A freeform virtual tabletop. Enter solo to lay out your board — you can open it up to other players, or join someone else's room, whenever you're ready.</p>
+
+    <div class="setup-row">
+      <label>Playing as</label>
+      <div id="setupSignedInAs" style="font-size:14px;font-weight:600;"></div>
+    </div>
+    <div class="setup-row">
+      <div class="btn btn-sm" id="btnToggleRejoin" style="color:var(--text-soft);">Rejoining an existing room instead? ▾</div>
+      <div id="rejoinFields" class="hidden" style="margin-top:10px;">
+        <div class="setup-row">
+          <label>Session</label>
+          <div class="session-tabs" id="sessionTabs">
+            <div class="tab active" data-mode="host">Host new game</div>
+            <div class="tab" data-mode="join">Join game</div>
+          </div>
+          <div id="hostRow"><p style="font-size:12.5px;color:var(--text-soft);margin:0;">A code will be generated when you start — read it out to the table.</p></div>
+          <div id="joinRow" style="display:none;">
+            <input type="text" id="joinCodeInput" placeholder="Enter session code" style="width:100%;">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="btn btn-accent" id="btnEnterRoom" style="width:100%;justify-content:center;">Enter the Room</div>
+    <div id="setupError"></div>
+  </div>
+</div>
+
+<div id="game-screen">
+  <header id="topbar">
+    <h1>Game Room</h1>
+    <span id="sessionInfo" style="font-size:12px;color:var(--text-soft);"></span>
+    <span id="connStatus"></span>
+    <div class="btn btn-sm btn-accent" id="btnOpenRoom">Open Room</div>
+    <div class="btn btn-sm" id="btnJoinRoom">Join Room</div>
+    <div class="topbar-group">
+      <div class="btn btn-sm" id="btnFocus" title="Jump to a labeled pile">Focus ▾</div>
+      <div class="btn btn-sm" id="btnZoomFit" title="Zoom out to fit everything">Fit All</div>
+    </div>
+    <div class="btn btn-sm" id="btnGridMenu" title="Grid display, snapping, and cell size">Grid ▾</div>
+    <div class="btn btn-sm" id="btnBoardMenu" title="Table theme and saved layouts">Board ▾</div>
+    <div class="btn btn-sm" id="btnUndo" style="margin-left:auto;opacity:.4;pointer-events:none;" title="Undo your last action (⌘Z / Ctrl+Z)">Undo</div>
+    <div class="btn btn-sm" id="btnLeaveGame" style="color:var(--danger);">Leave Game</div>
+  </header>
+  <!-- Menus/popovers opened from the top bar, the chat tools, and the board's
+       right-click menu. Positioned with position:fixed (see positionMenuNear),
+       so where they sit in the markup doesn't matter. -->
+  <div id="focusMenu" class="hidden"></div>
+  <div id="boardMenu" class="hidden">
+    <div class="focus-item" id="btnTheme">🎨 Table Theme…</div>
+    <div class="focus-item" id="btnExportLayout">⬇️ Export Layout</div>
+    <div class="focus-item" id="btnImportLayout">⬆️ Import Layout</div>
+    <div class="focus-item" id="btnImportPrecon" style="display:none;">📦 Import Precon…</div>
+  </div>
+  <div id="gridMenu" class="hidden">
+    <label class="focus-item"><input type="checkbox" id="showGridCheckbox"> Show grid</label>
+    <label class="focus-item"><input type="checkbox" id="snapToGridCheckbox"> Snap to grid</label>
+    <label class="focus-item">Cell size <input type="number" id="gridSizeInput" min="20" max="300" step="5" value="80" title="Grid cell size (px)" style="width:60px;margin-left:auto;"></label>
+  </div>
+  <div id="themePopover" class="hidden"></div>
+  <div id="tokenMenu" class="hidden"></div>
+  <div id="dicePopover" class="hidden"></div>
+  <input type="file" id="deckFileInput" accept=".json" style="display:none;">
+  <input type="file" id="layoutFileInput" accept=".json" style="display:none;">
+
+  <div id="boardViewport">
+    <div id="boardRotate">
+      <div id="boardGrid"></div>
+      <div id="boardWorld"></div>
+    </div>
+    <div id="chatPanel" class="board-overlay">
+      <div id="chatLog"></div>
+      <div id="chatBar">
+        <div class="btn btn-icon" id="btnChatToggle" title="Collapse chat">💬</div>
+        <div class="btn btn-icon" id="btnChatHistory" title="Full game history">📜</div>
+        <input type="text" id="chatInput" placeholder="Say something…" maxlength="200">
+        <div class="btn btn-icon" id="btnDice" title="Roll dice">🎲</div>
+        <div class="btn btn-sm" id="btnPassTurn" title="End your turn and pass to the next player">Pass Turn</div>
+      </div>
+      <!-- Whose turn it is, and how many cards each player holds (see renderPlayerCounters). -->
+      <div id="playerCounters"></div>
+      <div id="historyFlyout" class="hidden">
+        <div class="history-flyout-header">
+          <b>Game History</b>
+          <label class="history-toggle-label"><input type="checkbox" id="chkShowHistoryInChat"> Show in chat</label>
+          <div class="btn btn-icon" id="btnCloseHistoryFlyout" title="Close">✕</div>
+        </div>
+        <div id="historyFlyoutBody"></div>
+      </div>
+    </div>
+    <div class="btn board-overlay" id="btnRotateView" title="Rotate the board 90°">⟳</div>
+    <!-- Board tabs (see TABS / renderBoardTabs). -->
+    <div id="boardTabs" class="board-overlay"></div>
+    <!-- Shown only while there's nothing on the board yet (see renderBoard). -->
+    <div id="boardEmptyHint" class="hidden">Right-click the table to add a deck or tokens</div>
+  </div>
+
+  <div id="handResizeHandle" title="Drag to resize your hand"></div>
+
+  <div id="hand-panel">
+    <div class="hand-label">Your Hand</div>
+    <div class="hand-row">
+      <!-- Tokens in hand (see renderHandTokens) — empty and hidden until you drop one here. -->
+      <div id="handTokens"></div>
+      <div id="handCards"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div id="radialMenu" class="hidden"></div>
+<div id="imageScalePopover" class="hidden"></div>
+<div id="zonePopover" class="hidden"></div>
+
+<div id="hoverPreview" class="hidden">
+  <div id="hoverPreviewFrame">
+    <img id="hoverPreviewImg">
+    <div id="hoverPreviewBack" class="cardback" style="display:none;">🂠</div>
+  </div>
+</div>
+
+<div id="hotkeyHint" class="hidden"></div>
+
+<div id="diceResult" class="hidden"></div>
+
+<div id="pileBrowser" class="hidden">
+  <div class="popover-drag"><span id="pileBrowserTitle">Search</span><div class="btn btn-sm" id="btnPileBrowserClose">Done</div></div>
+  <div class="pb-help">Top of the pile is on the left. Drag a card onto the board, a pile, or your hand — or between cards here to reorder.</div>
+  <div id="pileBrowserList"></div>
+</div>
+
+<div class="modal-overlay hidden" id="connectModal">
+  <div class="modal-box" style="width:min(440px,92vw);">
+    <div class="modal-header"><h2 id="connectModalTitle">Connect this room</h2><div class="btn btn-icon" data-close="connectModal">✕</div></div>
+    <div class="modal-body">
+      <div class="setup-row">
+        <div class="session-tabs" id="connectTabs">
+          <div class="tab active" data-mode="host">Open Room</div>
+          <div class="tab" data-mode="join">Join Room</div>
+        </div>
+        <div id="connectHostRow"><p style="font-size:12.5px;color:var(--text-soft);margin:0;">Your current board becomes the room's starting layout. A code will be generated for you to share.</p></div>
+        <div id="connectJoinRow" style="display:none;">
+          <p style="font-size:12.5px;color:var(--text-soft);margin:0 0 8px;">Joining replaces your local board with whatever's already on the shared table.</p>
+          <input type="text" id="connectJoinCodeInput" placeholder="Enter session code" style="width:100%;">
+        </div>
+      </div>
+      <div class="btn btn-accent" id="btnConnectGo" style="width:100%;justify-content:center;">Connect</div>
+      <div id="connectError" style="color:var(--danger);font-size:12.5px;margin-top:8px;min-height:1em;"></div>
+    </div>
+  </div>
+</div>
+
+
+<!--SCRIPTS-->
+</body>
+</html>
