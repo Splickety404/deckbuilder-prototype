@@ -5,7 +5,6 @@
    this can happen at any time, not just at the very start.
    ========================================================================= */
 function connectToRoom({code, isHost}){
-  state.roomSheetId = ROOM_SHEET_ID;
   state.sessionCode = code;
   localStorage.setItem(LS_LAST_SESSION_CODE_KEY, code);
   state.hasInitialState = false;
@@ -71,25 +70,7 @@ if(boardLinkGameId && !roomHandoff){
   note.textContent = 'Sign in to open a new room with this game\'s board.';
   note.style.display = '';
 }
-async function fetchGameBoards(gameId){
-  const url = `${CARD_WEBAPP_URL}?precons=${encodeURIComponent(gameId)}&idToken=${encodeURIComponent(state.idToken)}`;
-  try{
-    const res = await fetch(url + '&_=' + Date.now());
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    return await res.json();
-  }catch(fetchErr){
-    return await new Promise((resolve, reject)=>{ // same JSONP fallback as the card fetches
-      const cbName = '__roomBoardsCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to answer.')); }, 30000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('Could not reach the server.')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-}
+function fetchGameBoards(gameId){ return roomServices.fetchGameBoards(gameId); }
 async function startFromBoardLink(gameId){
   try{ history.replaceState(null, '', location.pathname); }catch(e){}
   toast('Loading the board…');

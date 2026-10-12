@@ -106,25 +106,7 @@ async function fetchSheetCards(sheetId){
   // classified on THIS check can say "access was revoked" instead of just
   // silently landing on Classified same as a set never seen before.
   const wasCached = applyCachedSheetCards(sheetId);
-  const attempts = [
-    async () => {
-      const res = await fetch(`${CARD_WEBAPP_URL}?cardsForSheet=${encodeURIComponent(sheetId)}&idToken=${encodeURIComponent(state.idToken)}&_=${Date.now()}`);
-      if(!res.ok) throw new Error('HTTP '+res.status);
-      const json = await res.json();
-      if(!json.ok) throw new Error(json.error || 'unknown error');
-      return json;
-    },
-    () => new Promise((resolve,reject)=>{
-      const cbName = '__eooCardsCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); if(!data.ok){ reject(new Error(data.error||'unknown error')); return; } resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${CARD_WEBAPP_URL}?cardsForSheet=${encodeURIComponent(sheetId)}&idToken=${encodeURIComponent(state.idToken)}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    }),
-  ];
+  const attempts = roomServices.cardAttempts(sheetId);
   let lastErr;
   for(const attempt of attempts){
     try{

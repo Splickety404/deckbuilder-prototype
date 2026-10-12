@@ -108,11 +108,7 @@ async function loadHistoryFlyout(){
   const body = document.getElementById('historyFlyoutBody');
   body.innerHTML = 'Loading…';
   try{
-    const url = `${ROOM_WEBAPP_URL}?pollRoom=${encodeURIComponent(state.sessionCode)}&sheetId=${encodeURIComponent(state.roomSheetId)}&since=0&_=${Date.now()}`;
-    const res = await fetch(url);
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    let events = await res.json();
-    if(events && events.error) throw new Error(events.error);
+    let events = await roomServices.fetchHistory();
     events = (events||[]).filter(ev=> !(ev.payload && ev.payload.quiet)); // live-only updates, summarized by a NOTE — see hotkeyAdjustToken
     body.innerHTML = events.length ? events.map(ev=>
       `<div class="history-row"><span class="history-time">${new Date(ev.ts).toLocaleTimeString()}</span> ${escapeHtml(describeEvent(ev.type, ev.payload, ev.playerName))}</div>`
@@ -160,7 +156,6 @@ document.getElementById('btnCloseHistoryFlyout').addEventListener('click', ()=>{
    ========================================================================= */
 function leaveGame(){
   teardownRoomChannel();
-  state.roomSheetId = '';
   state.sessionCode = '';
   state.hasInitialState = false;
   state.pieces.clear();

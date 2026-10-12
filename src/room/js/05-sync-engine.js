@@ -24,7 +24,7 @@
    to you) runs incoming messages through the same skip-if-it's-mine check
    that used to guard against re-applying our own polled-back event.
    ========================================================================= */
-function isConnected(){ return !!(state.roomSheetId && state.sessionCode); }
+function isConnected(){ return !!state.sessionCode; }
 function postRoomEvent(type, payload){
   if(!isConnected()) return; // playing solo — nothing to sync yet
   const envelope = { ...payload, _origin: state.clientId, _playerName: state.playerName, _playerId: state.playerId };
@@ -37,11 +37,7 @@ function postRoomEvent(type, payload){
   // REQUEST_STATE/STATE_SNAPSHOT are internal plumbing (how a new joiner
   // catches up), not real game moves, so they're not worth logging here.
   if(type==='REQUEST_STATE' || type==='STATE_SNAPSHOT') return;
-  fetch(ROOM_WEBAPP_URL, {
-    method:'POST',
-    headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids a CORS preflight Apps Script can't answer
-    body: JSON.stringify({ sheetId: state.roomSheetId, sessionCode: state.sessionCode, playerId: state.playerId, playerName: state.playerName, type, payload: envelope }),
-  }).catch(e=> console.warn('Durable history log failed (gameplay unaffected):', e));
+  roomServices.logEvent(type, envelope);
 }
 // Fires for every message on the room's Ably channel, including our own
 // (Ably echoes a client's own publishes back to it) — the _origin check

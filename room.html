@@ -968,6 +968,74 @@ const ROOM_SHEET_ID = '1bcUd6qaDY72yGtSR5KBCtzSCZaBUtNL9PT9A7tKMXNI';
 const GOOGLE_CLIENT_ID = '1053912607552-pvrm9heedm4floaohv1olp5k5mdp95lq.apps.googleusercontent.com';
 
 /* =========================================================================
+   ROOM SERVICES (private build) — every call this page makes to a backend
+   goes through `roomServices`, never straight to a URL, so another build can
+   supply its own object with the same four methods and nothing else changes:
+     logEvent(type, envelope)   keep a permanent record of one game event
+                                (fire-and-forget; gameplay never waits on it)
+     fetchHistory()             -> [{ts, type, payload, playerName}] for this room
+     cardAttempts(sheetId)      -> [async () => {ok, cards…}, …] tried in order
+                                until one works (see fetchSheetCards)
+     fetchGameBoards(gameId)    -> {ok, boards:[…]} saved boards / precons
+   This is the Google Apps Script implementation — unchanged behavior, moved. */
+const roomServices = {
+  logEvent(type, envelope){
+    fetch(ROOM_WEBAPP_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids a CORS preflight Apps Script can't answer
+      body: JSON.stringify({ sheetId: ROOM_SHEET_ID, sessionCode: state.sessionCode, playerId: state.playerId, playerName: state.playerName, type, payload: envelope }),
+    }).catch(e=> console.warn('Durable history log failed (gameplay unaffected):', e));
+  },
+  async fetchHistory(){
+    const url = `${ROOM_WEBAPP_URL}?pollRoom=${encodeURIComponent(state.sessionCode)}&sheetId=${encodeURIComponent(ROOM_SHEET_ID)}&since=0&_=${Date.now()}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const events = await res.json();
+    if(events && events.error) throw new Error(events.error);
+    return events || [];
+  },
+  cardAttempts(sheetId){
+    return [
+      async () => {
+        const res = await fetch(`${CARD_WEBAPP_URL}?cardsForSheet=${encodeURIComponent(sheetId)}&idToken=${encodeURIComponent(state.idToken)}&_=${Date.now()}`);
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const json = await res.json();
+        if(!json.ok) throw new Error(json.error || 'unknown error');
+        return json;
+      },
+      () => new Promise((resolve,reject)=>{
+        const cbName = '__eooCardsCb_' + Math.random().toString(36).slice(2);
+        const script = document.createElement('script');
+        const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
+        function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+        window[cbName] = (data)=>{ cleanup(); if(!data.ok){ reject(new Error(data.error||'unknown error')); return; } resolve(data); };
+        script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
+        script.src = `${CARD_WEBAPP_URL}?cardsForSheet=${encodeURIComponent(sheetId)}&idToken=${encodeURIComponent(state.idToken)}&callback=${cbName}&_=${Date.now()}`;
+        document.head.appendChild(script);
+      }),
+    ];
+  },
+  async fetchGameBoards(gameId){
+    const url = `${CARD_WEBAPP_URL}?precons=${encodeURIComponent(gameId)}&idToken=${encodeURIComponent(state.idToken)}`;
+    try{
+      const res = await fetch(url + '&_=' + Date.now());
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    }catch(fetchErr){
+      return await new Promise((resolve, reject)=>{ // same JSONP fallback as the card fetches
+        const cbName = '__roomBoardsCb_' + Math.random().toString(36).slice(2);
+        const script = document.createElement('script');
+        const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to answer.')); }, 30000);
+        function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
+        window[cbName] = (data)=>{ cleanup(); resolve(data); };
+        script.onerror = ()=>{ cleanup(); reject(new Error('Could not reach the server.')); };
+        script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
+        document.head.appendChild(script);
+      });
+    }
+  },
+};
+/* =========================================================================
    SIGN-IN — gates the whole app, same as the deckbuilder. Unlike the
    deckbuilder, there's no fixed list of "sets this account can see" to fetch
    up front (a room isn't tied to any one game or set) — access is instead
@@ -1292,25 +1360,7 @@ async function fetchSheetCards(sheetId){
   // classified on THIS check can say "access was revoked" instead of just
   // silently landing on Classified same as a set never seen before.
   const wasCached = applyCachedSheetCards(sheetId);
-  const attempts = [
-    async () => {
-      const res = await fetch(`${CARD_WEBAPP_URL}?cardsForSheet=${encodeURIComponent(sheetId)}&idToken=${encodeURIComponent(state.idToken)}&_=${Date.now()}`);
-      if(!res.ok) throw new Error('HTTP '+res.status);
-      const json = await res.json();
-      if(!json.ok) throw new Error(json.error || 'unknown error');
-      return json;
-    },
-    () => new Promise((resolve,reject)=>{
-      const cbName = '__eooCardsCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('JSONP timed out')); }, 15000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); if(!data.ok){ reject(new Error(data.error||'unknown error')); return; } resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script failed to load')); };
-      script.src = `${CARD_WEBAPP_URL}?cardsForSheet=${encodeURIComponent(sheetId)}&idToken=${encodeURIComponent(state.idToken)}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    }),
-  ];
+  const attempts = roomServices.cardAttempts(sheetId);
   let lastErr;
   for(const attempt of attempts){
     try{
@@ -1491,7 +1541,6 @@ function randomId(len){
 }
 const state = {
   clientId: randomId(10),
-  roomSheetId: '',
   sessionCode: '',
   playerId: randomId(8),
   playerName: '',       // set from the signed-in Google account's name at sign-in, not user-typed
@@ -1564,7 +1613,7 @@ function hexToRgba(hex, alpha){
    to you) runs incoming messages through the same skip-if-it's-mine check
    that used to guard against re-applying our own polled-back event.
    ========================================================================= */
-function isConnected(){ return !!(state.roomSheetId && state.sessionCode); }
+function isConnected(){ return !!state.sessionCode; }
 function postRoomEvent(type, payload){
   if(!isConnected()) return; // playing solo — nothing to sync yet
   const envelope = { ...payload, _origin: state.clientId, _playerName: state.playerName, _playerId: state.playerId };
@@ -1577,11 +1626,7 @@ function postRoomEvent(type, payload){
   // REQUEST_STATE/STATE_SNAPSHOT are internal plumbing (how a new joiner
   // catches up), not real game moves, so they're not worth logging here.
   if(type==='REQUEST_STATE' || type==='STATE_SNAPSHOT') return;
-  fetch(ROOM_WEBAPP_URL, {
-    method:'POST',
-    headers:{'Content-Type':'text/plain;charset=utf-8'}, // avoids a CORS preflight Apps Script can't answer
-    body: JSON.stringify({ sheetId: state.roomSheetId, sessionCode: state.sessionCode, playerId: state.playerId, playerName: state.playerName, type, payload: envelope }),
-  }).catch(e=> console.warn('Durable history log failed (gameplay unaffected):', e));
+  roomServices.logEvent(type, envelope);
 }
 // Fires for every message on the room's Ably channel, including our own
 // (Ably echoes a client's own publishes back to it) — the _origin check
@@ -7155,11 +7200,7 @@ async function loadHistoryFlyout(){
   const body = document.getElementById('historyFlyoutBody');
   body.innerHTML = 'Loading…';
   try{
-    const url = `${ROOM_WEBAPP_URL}?pollRoom=${encodeURIComponent(state.sessionCode)}&sheetId=${encodeURIComponent(state.roomSheetId)}&since=0&_=${Date.now()}`;
-    const res = await fetch(url);
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    let events = await res.json();
-    if(events && events.error) throw new Error(events.error);
+    let events = await roomServices.fetchHistory();
     events = (events||[]).filter(ev=> !(ev.payload && ev.payload.quiet)); // live-only updates, summarized by a NOTE — see hotkeyAdjustToken
     body.innerHTML = events.length ? events.map(ev=>
       `<div class="history-row"><span class="history-time">${new Date(ev.ts).toLocaleTimeString()}</span> ${escapeHtml(describeEvent(ev.type, ev.payload, ev.playerName))}</div>`
@@ -7207,7 +7248,6 @@ document.getElementById('btnCloseHistoryFlyout').addEventListener('click', ()=>{
    ========================================================================= */
 function leaveGame(){
   teardownRoomChannel();
-  state.roomSheetId = '';
   state.sessionCode = '';
   state.hasInitialState = false;
   state.pieces.clear();
@@ -8145,7 +8185,6 @@ window.addEventListener('beforeunload', ()=>{ if(transport) transport.leaveNow()
    this can happen at any time, not just at the very start.
    ========================================================================= */
 function connectToRoom({code, isHost}){
-  state.roomSheetId = ROOM_SHEET_ID;
   state.sessionCode = code;
   localStorage.setItem(LS_LAST_SESSION_CODE_KEY, code);
   state.hasInitialState = false;
@@ -8211,25 +8250,7 @@ if(boardLinkGameId && !roomHandoff){
   note.textContent = 'Sign in to open a new room with this game\'s board.';
   note.style.display = '';
 }
-async function fetchGameBoards(gameId){
-  const url = `${CARD_WEBAPP_URL}?precons=${encodeURIComponent(gameId)}&idToken=${encodeURIComponent(state.idToken)}`;
-  try{
-    const res = await fetch(url + '&_=' + Date.now());
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    return await res.json();
-  }catch(fetchErr){
-    return await new Promise((resolve, reject)=>{ // same JSONP fallback as the card fetches
-      const cbName = '__roomBoardsCb_' + Math.random().toString(36).slice(2);
-      const script = document.createElement('script');
-      const timer = setTimeout(()=>{ cleanup(); reject(new Error('The server took too long to answer.')); }, 30000);
-      function cleanup(){ clearTimeout(timer); delete window[cbName]; script.remove(); }
-      window[cbName] = (data)=>{ cleanup(); resolve(data); };
-      script.onerror = ()=>{ cleanup(); reject(new Error('Could not reach the server.')); };
-      script.src = `${url}&callback=${cbName}&_=${Date.now()}`;
-      document.head.appendChild(script);
-    });
-  }
-}
+function fetchGameBoards(gameId){ return roomServices.fetchGameBoards(gameId); }
 async function startFromBoardLink(gameId){
   try{ history.replaceState(null, '', location.pathname); }catch(e){}
   toast('Loading the board…');

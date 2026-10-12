@@ -8,7 +8,6 @@ function randomId(len){
 }
 const state = {
   clientId: randomId(10),
-  roomSheetId: '',
   sessionCode: '',
   playerId: randomId(8),
   playerName: '',       // set from the signed-in Google account's name at sign-in, not user-typed
