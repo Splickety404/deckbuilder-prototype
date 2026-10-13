@@ -45,7 +45,7 @@ function buildDeckRow(id, card, {qty, showStepper}){
     if(info!=='loading') removedBadgeHtml = '<div class="removed-badge" title="Removed from the game — click for details">&#9888; Removed</div>';
   }
   const changed = card && cardChangedSinceExport(card);
-  row.innerHTML = `${img}<div class="dsname">${name}</div>${removedBadgeHtml}${changed?'<div class="changed-badge" title="Changed since this deck was exported — click to see what changed">&#9888;</div>':''}`;
+  row.innerHTML = `${img}<div class="dstop"><div class="dsname">${name}</div>${removedBadgeHtml}${changed?'<div class="changed-badge" title="Changed since this deck was exported — click to see what changed">&#9888;</div>':''}</div>`;
   if(changed) row.querySelector('.changed-badge').addEventListener('click', (e)=>{ e.stopPropagation(); openHistoryModal(card); });
   if(removedBadgeHtml) row.querySelector('.removed-badge').addEventListener('click', (e)=>{
     e.stopPropagation();

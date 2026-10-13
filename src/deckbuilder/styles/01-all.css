@@ -152,13 +152,13 @@ select:focus, input:focus{outline:2px solid var(--accent-soft);border-color:var(
 }
 html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-color:#92720a;}
 .leader-chip .changed-badge{margin-left:auto;}
-.deck-stack .changed-badge{margin-left:6px;}
+.deck-stack .changed-badge{margin-left:0;}
 .removed-badge{
   flex:none;cursor:pointer;font-size:12px;font-weight:600;padding:2px 6px;border-radius:5px;
   background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger);white-space:nowrap;
 }
 .leader-chip .removed-badge + span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.deck-stack .removed-badge{margin-left:6px;}
+.deck-stack .removed-badge{margin-left:0;}
 .tile-btn.forgefire-btn{background:#1f2937;color:#fff;font-size:10px;}
 .fb-item{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:8px;}
 .fb-item.unread{border-left:4px solid var(--accent, #2563eb);background:var(--surface-2);}
@@ -211,7 +211,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 #importDropZone.dragover{background:var(--accent-soft);border-color:var(--accent);color:var(--text);}
 .deck-stack{
   position:relative;
-  display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:5px;cursor:grab;
+  display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:4px 8px;padding:5px;cursor:grab;
   background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);
 }
 .deck-stack.over-limit{border-color:var(--danger);background:var(--danger-bg);}
@@ -236,9 +236,11 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
    could otherwise still steal the dragover event if it ever ends up rendered exactly
    under the cursor, and it has no drag listener of its own to handle that. */
 .reorder-indicator{position:absolute;left:6px;right:6px;height:3px;background:var(--accent);border-radius:2px;pointer-events:none;display:none;}
-.deck-stack img{width:28px;height:39px;object-fit:cover;border-radius:3px;flex:none;}
-.deck-stack.landscape-row img{width:auto;height:28px;aspect-ratio:5/7;object-fit:cover;transform:rotate(-90deg);}
-.deck-stack .dsname{flex:1 1 90px;min-width:0;overflow-wrap:anywhere;font-size:12.5px;line-height:1.2;}
+.deck-stack img{grid-column:1;grid-row:1 / span 2;width:44px;height:62px;object-fit:cover;border-radius:3px;}
+/* A landscape card is the same 5:7 image turned on its side: it keeps the portrait-sized box (so the row is as tall as the others) and the side margins reserve the extra width the turned image needs. */
+.deck-stack.landscape-row img{margin:0 9px;transform:rotate(-90deg);}
+.deck-stack .dstop{grid-column:2;grid-row:1;display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;}
+.deck-stack .dsname{min-width:0;text-align:right;overflow-wrap:anywhere;font-size:12.5px;line-height:1.2;}
 .deck-stack .dscount{font-weight:700;font-size:12px;color:var(--accent);}
 .deck-stack .dscount.over{color:var(--danger);}
 .deck-stack .stepper{display:flex;gap:2px;}
@@ -347,7 +349,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
   cursor:pointer;line-height:1;
 }
 .tile-btn:hover{background:#fff;}
-.deck-stack .tile-actions{position:static;opacity:1;margin-left:auto;flex:none;}
+.deck-stack .tile-actions{position:static;opacity:1;grid-column:2;grid-row:2;justify-self:end;flex-wrap:wrap;justify-content:flex-end;}
 .deck-stack .stepper .tile-btn{width:20px;height:20px;font-size:12px;}
 
 /* ---------- Filters (right) ---------- */
