@@ -62,24 +62,27 @@ document.getElementById('btnSubmitFeedback').addEventListener('click', async ()=
   if(!text){ errEl.textContent = 'Please type your feedback first.'; return; }
   if(text.length>FEEDBACK_MAX_LENGTH){ errEl.textContent = `That's a bit long — please keep it under ${FEEDBACK_MAX_LENGTH} characters.`; return; }
   errEl.textContent = '';
-  const btn = document.getElementById('btnSubmitFeedback');
-  const originalText = btn.textContent;
-  btn.textContent = 'Sending…';
+  // Close the form right away and finish sending in the background, so the user can keep browsing.
+  // If the send fails, the form is reopened with what they wrote so nothing is lost.
+  const c = feedbackCard;
+  const share = !!discord && document.getElementById('feedbackDiscordShare').checked;
+  if(discord) lsSet(LS_FEEDBACK_DISCORD_KEY, discord);
+  document.getElementById('feedbackModal').classList.add('hidden');
+  toast('Sending your feedback on "' + c.name + '"…');
   try{
-    const c = feedbackCard;
     const j = await sendCardFeedbackToServer({
       cardId: c.id, cardName: c.name, cardType: c.type||'', cardSet: c._setName||'',
-      feedback: text, discord, sheetId: c._sheetId || '',
-      shareToDiscord: !!discord && document.getElementById('feedbackDiscordShare').checked,
+      feedback: text, discord, sheetId: c._sheetId || '', shareToDiscord: share,
     });
-    if(discord) lsSet(LS_FEEDBACK_DISCORD_KEY, discord);
-    document.getElementById('feedbackModal').classList.add('hidden');
     const dFail = j.discord && /^error/.test(j.discord) ? ' (Discord share failed: ' + j.discord + ')' : '';
     toast('Thanks — your feedback on "' + c.name + '" was sent.' + dFail);
   }catch(err){
-    errEl.textContent = 'Could not send that: ' + err.message;
-  }finally{
-    btn.textContent = originalText;
+    openCardFeedback(c);
+    document.getElementById('feedbackText').value = text;
+    document.getElementById('feedbackDiscord').value = discord;
+    syncFeedbackDiscordShare();
+    document.getElementById('feedbackDiscordShare').checked = share;
+    document.getElementById('feedbackError').textContent = 'Could not send that: ' + err.message;
   }
 });
 

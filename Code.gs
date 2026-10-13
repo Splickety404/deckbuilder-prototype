@@ -1618,7 +1618,7 @@ function postFeedbackToDiscord(email, req, feedback) {
   try { blob = findFeedbackCardArt(email, clip(req.sheetId, 80), clip(req.cardId, 80)); }
   catch (err) { console.error('Discord feedback: no art: ' + ((err && err.message) || err)); }
 
-  const payload = { content: content, allowed_mentions: { parse: [] } }; // parse:[] = nothing can ping anyone
+  const payload = { username: 'Card Feedback', content: content, allowed_mentions: { parse: [] } }; // parse:[] = nothing can ping anyone
   const options = { method: 'post', muteHttpExceptions: true };
   if (blob) {
     options.payload = { payload_json: JSON.stringify(payload), 'files[0]': blob };
