@@ -2612,14 +2612,15 @@ document.getElementById('btnSubmitFeedback').addEventListener('click', async ()=
   btn.textContent = 'Sending…';
   try{
     const c = feedbackCard;
-    await sendCardFeedbackToServer({
+    const j = await sendCardFeedbackToServer({
       cardId: c.id, cardName: c.name, cardType: c.type||'', cardSet: c._setName||'',
       feedback: text, discord, sheetId: c._sheetId || '',
       shareToDiscord: !!discord && document.getElementById('feedbackDiscordShare').checked,
     });
     if(discord) lsSet(LS_FEEDBACK_DISCORD_KEY, discord);
     document.getElementById('feedbackModal').classList.add('hidden');
-    toast('Thanks — your feedback on "' + c.name + '" was sent.');
+    const dFail = j.discord && /^error/.test(j.discord) ? ' (Discord share failed: ' + j.discord + ')' : '';
+    toast('Thanks — your feedback on "' + c.name + '" was sent.' + dFail);
   }catch(err){
     errEl.textContent = 'Could not send that: ' + err.message;
   }finally{

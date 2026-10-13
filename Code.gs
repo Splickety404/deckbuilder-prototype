@@ -1588,11 +1588,16 @@ function saveCardFeedback(email, req) {
   }
   // Optional extra: the user ticked "also share in Discord" (only offered once they typed a handle).
   // The feedback is already saved above, so a Discord problem must never fail the submit.
+  // The outcome is returned so the page can say so if it failed (Executions shows nothing useful).
+  const out = {};
   if (req.shareToDiscord === true && clip(req.discord, 64)) {
-    try { postFeedbackToDiscord(email, req, feedback); }
-    catch (err) { console.error('Discord feedback post failed: ' + ((err && err.message) || err)); }
+    try { out.discord = postFeedbackToDiscord(email, req, feedback); }
+    catch (err) {
+      out.discord = 'error: ' + ((err && err.message) || err);
+      console.error('Discord feedback post failed: ' + out.discord);
+    }
   }
-  return {};
+  return out;
 }
 
 // Posts card feedback (plus the card's art, if found) to the private design channel through a
@@ -1601,7 +1606,7 @@ function saveCardFeedback(email, req) {
 // sent by the browser — and only if the sender can actually access that set's folder.
 function postFeedbackToDiscord(email, req, feedback) {
   const url = PropertiesService.getScriptProperties().getProperty('DISCORD_FEEDBACK_WEBHOOK');
-  if (!url) return;
+  if (!url) return 'error: DISCORD_FEEDBACK_WEBHOOK is not set';
   const clip = function (v, n) { return String(v || '').trim().slice(0, n); };
   const cardName = clip(req.cardName, 120) || '(unknown card)';
   const meta = [clip(req.cardType, 60), clip(req.cardSet, 120)].filter(Boolean).join(', ');
@@ -1622,7 +1627,8 @@ function postFeedbackToDiscord(email, req, feedback) {
     options.payload = JSON.stringify(payload);
   }
   const resp = UrlFetchApp.fetch(url, options);
-  if (resp.getResponseCode() >= 300) throw new Error('Discord answered ' + resp.getResponseCode());
+  if (resp.getResponseCode() >= 300) throw new Error('Discord answered ' + resp.getResponseCode() + ' ' + String(resp.getContentText()).slice(0, 200));
+  return blob ? 'posted with art' : 'posted (no art found)';
 }
 
 // The card's front-art image as a blob, or null. Looks the card up in its set's sheet (the set
