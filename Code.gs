@@ -599,7 +599,7 @@ function getSetData(folderId, idToken, callback, fast) {
     });
 
     result = {
-      ok: true, setName: setName, sheetId: sheetFile.getId(), rows: rows,
+      ok: true, setName: setName, sheetId: sheetFile.getId(), sheetName: sheetFile.getName(), rows: rows,
     };
   } catch (err) {
     result = { ok: false, error: String((err && err.message) || err) };

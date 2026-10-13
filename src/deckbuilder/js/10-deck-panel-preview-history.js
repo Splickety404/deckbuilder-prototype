@@ -66,6 +66,7 @@ function buildDeckRow(id, card, {qty, showStepper}){
   }
   if(card && card._doubleSided && card._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(id); renderDeckPanel(); }));
   actions.appendChild(mkBtn('…', ()=> card && openPreview(card)));
+  if(typeof addForgeFireButton==='function') addForgeFireButton(actions, card);
   if(typeof addCardFeedbackButton==='function') addCardFeedbackButton(actions, card);
   actions.appendChild(mkBtn('×', ()=> removeAllCopies(id)));
   row.appendChild(actions);
@@ -233,6 +234,12 @@ function openPreview(c){
   histBtn.style.display = lu ? 'inline-flex' : 'none'; // only cards that have ever been through an update have history
   histBtn.onclick = () => openHistoryModal(c);
 
+  const ffBtn = document.getElementById('btnForgeFire');
+  if(ffBtn){
+    const url = typeof forgeFireUrl==='function' ? forgeFireUrl(c) : null;
+    ffBtn.style.display = url ? 'inline-flex' : 'none';
+    ffBtn.onclick = () => openForgeFire(c);
+  }
   const fbBtn = document.getElementById('btnCardFeedback');
   if(fbBtn) fbBtn.onclick = () => openCardFeedback(c);
 

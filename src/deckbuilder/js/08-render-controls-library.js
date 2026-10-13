@@ -70,6 +70,7 @@ function renderLibrary(){
     if(countIn>0) actions.appendChild(mkBtn('−', ()=>state.game.removeOne(c.id)));
     if(c._doubleSided && c._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(c.id); renderLibrary(); }));
     actions.appendChild(mkBtn('…', ()=>openPreview(c)));
+    if(typeof addForgeFireButton==='function') addForgeFireButton(actions, c);
     if(typeof addCardFeedbackButton==='function') addCardFeedbackButton(actions, c);
     tile.appendChild(actions);
 

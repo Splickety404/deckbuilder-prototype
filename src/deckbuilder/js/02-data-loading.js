@@ -126,6 +126,7 @@ async function loadData(silent){
       state.headers = Object.keys(firstWithRows.rows[0]);
       state.hasImages = state.headers.includes('front-image-url');
     }
+    if(typeof registerForgeSets==='function') registerForgeSets(saved);
     showLoadedCards(saved);
     setSyncStatus('showing saved cards — checking for updates…');
     if(typeof perfMark==='function') perfMark('saved cards shown');
@@ -161,6 +162,7 @@ async function loadData(silent){
         rows: result.rows,
         setName: result.setName || entry.label,
         folderId: entry.folderId,
+        sheetName: result.sheetName || '',
         sheetId: result.sheetId, // the set's actual data-sheet id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.
       });
     });
@@ -169,7 +171,9 @@ async function loadData(silent){
     // nothing changed since it was saved (avoids a pointless redraw).
     const keepSavedView = saved && (anySetFailed || JSON.stringify(rawSetResults.map(s=>s.rows))===savedJson);
     if(!anySetFailed && typeof cardCacheSaveSets==='function') cardCacheSaveSets(rawSetResults);
+    const forgeChanged = typeof registerForgeSets==='function' ? registerForgeSets(rawSetResults) : false;
     if(!keepSavedView) showLoadedCards(rawSetResults);
+    else if(forgeChanged) renderAll(); // the saved view predates the sheet names; redraw so the new buttons appear
     // Card text is in and the grid is already rendered and usable — don't make the
     // user wait on art, either. hideLoadingOverlay() happens here; art pops in per set
     // once each one's scan finishes (see syncAllSetImages/applySetImages).

@@ -159,6 +159,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .leader-chip .removed-badge + span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .deck-stack .removed-badge{margin-left:6px;}
+.tile-btn.forgefire-btn{background:#1f2937;color:#fff;font-size:10px;}
 .fb-item{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:8px;}
 .fb-item.unread{border-left:4px solid var(--accent, #2563eb);background:var(--surface-2);}
 .fb-item .fb-meta{font-size:12px;color:var(--text-soft);margin-bottom:4px;}

@@ -53,7 +53,7 @@ function cardCacheLoadSets(authorizedSets){
   for(const entry of authorizedSets){
     const s = blob.sets && blob.sets[entry.folderId];
     if(!s) return null;
-    out.push({ rows: JSON.parse(JSON.stringify(s.rows)), setName: s.setName, folderId: entry.folderId, sheetId: s.sheetId });
+    out.push({ rows: JSON.parse(JSON.stringify(s.rows)), setName: s.setName, folderId: entry.folderId, sheetId: s.sheetId, sheetName: s.sheetName||'' });
   }
   return out;
 }
@@ -61,7 +61,7 @@ function cardCacheSaveSets(rawSetResults){
   if(!state.userEmail) return;
   const blob = cardCacheRead(state.userEmail) || { email: state.userEmail, games: state.games||[], sets:{} };
   blob.sets = blob.sets || {};
-  rawSetResults.forEach(s=>{ blob.sets[s.folderId] = { rows: s.rows, setName: s.setName, sheetId: s.sheetId }; });
+  rawSetResults.forEach(s=>{ blob.sets[s.folderId] = { rows: s.rows, setName: s.setName, sheetId: s.sheetId, sheetName: s.sheetName||'' }; });
   cardCacheWrite(blob);
 }
 

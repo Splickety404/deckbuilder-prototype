@@ -173,6 +173,7 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .leader-chip .removed-badge + span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .deck-stack .removed-badge{margin-left:6px;}
+.tile-btn.forgefire-btn{background:#1f2937;color:#fff;font-size:10px;}
 .fb-item{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;margin-bottom:8px;}
 .fb-item.unread{border-left:4px solid var(--accent, #2563eb);background:var(--surface-2);}
 .fb-item .fb-meta{font-size:12px;color:var(--text-soft);margin-bottom:4px;}
@@ -715,6 +716,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
           <dl id="preview-text"></dl>
           <div id="previewLastUpdated" style="font-size:12px;color:var(--text-soft);margin-top:10px;"></div>
           <div class="btn btn-sm" id="btnViewHistory" style="margin-top:6px;display:none;">Version History</div>
+          <div class="btn btn-sm" id="btnForgeFire" style="margin-top:6px;display:none;">Open on Forge Fire ↗</div>
           <div class="btn btn-sm feedback-btn" id="btnCardFeedback" style="margin-top:6px;">💬 Send feedback</div>
         </div>
       </div>
@@ -1564,7 +1566,7 @@ function cardCacheLoadSets(authorizedSets){
   for(const entry of authorizedSets){
     const s = blob.sets && blob.sets[entry.folderId];
     if(!s) return null;
-    out.push({ rows: JSON.parse(JSON.stringify(s.rows)), setName: s.setName, folderId: entry.folderId, sheetId: s.sheetId });
+    out.push({ rows: JSON.parse(JSON.stringify(s.rows)), setName: s.setName, folderId: entry.folderId, sheetId: s.sheetId, sheetName: s.sheetName||'' });
   }
   return out;
 }
@@ -1572,7 +1574,7 @@ function cardCacheSaveSets(rawSetResults){
   if(!state.userEmail) return;
   const blob = cardCacheRead(state.userEmail) || { email: state.userEmail, games: state.games||[], sets:{} };
   blob.sets = blob.sets || {};
-  rawSetResults.forEach(s=>{ blob.sets[s.folderId] = { rows: s.rows, setName: s.setName, sheetId: s.sheetId }; });
+  rawSetResults.forEach(s=>{ blob.sets[s.folderId] = { rows: s.rows, setName: s.setName, sheetId: s.sheetId, sheetName: s.sheetName||'' }; });
   cardCacheWrite(blob);
 }
 
@@ -1728,6 +1730,7 @@ async function loadData(silent){
       state.headers = Object.keys(firstWithRows.rows[0]);
       state.hasImages = state.headers.includes('front-image-url');
     }
+    if(typeof registerForgeSets==='function') registerForgeSets(saved);
     showLoadedCards(saved);
     setSyncStatus('showing saved cards — checking for updates…');
     if(typeof perfMark==='function') perfMark('saved cards shown');
@@ -1763,6 +1766,7 @@ async function loadData(silent){
         rows: result.rows,
         setName: result.setName || entry.label,
         folderId: entry.folderId,
+        sheetName: result.sheetName || '',
         sheetId: result.sheetId, // the set's actual data-sheet id, distinct from its folderId — see getSetData; needed below so exported decks carry a sheetId the game room app can actually look up (getKnownSetSheets() in Code.
       });
     });
@@ -1771,7 +1775,9 @@ async function loadData(silent){
     // nothing changed since it was saved (avoids a pointless redraw).
     const keepSavedView = saved && (anySetFailed || JSON.stringify(rawSetResults.map(s=>s.rows))===savedJson);
     if(!anySetFailed && typeof cardCacheSaveSets==='function') cardCacheSaveSets(rawSetResults);
+    const forgeChanged = typeof registerForgeSets==='function' ? registerForgeSets(rawSetResults) : false;
     if(!keepSavedView) showLoadedCards(rawSetResults);
+    else if(forgeChanged) renderAll(); // the saved view predates the sheet names; redraw so the new buttons appear
     // Card text is in and the grid is already rendered and usable — don't make the
     // user wait on art, either. hideLoadingOverlay() happens here; art pops in per set
     // once each one's scan finishes (see syncAllSetImages/applySetImages).
@@ -2681,6 +2687,47 @@ async function toggleFeedbackSnapshot(btn){
   }
 }
 /* =========================================================================
+   FORGE FIRE LINKS (private, admin only, Echo of Omens only). For the admin account, each
+   card gets a button that opens its official Forge Fire page:
+     <app>/games/<game id>/sets/<set id>/cards/<card id>
+   The card id is the card's own `id` column. The set id is the UUID at the END of the set's
+   card spreadsheet name (e.g. "EOO Set 2 dfa5d772-…"), so a new set only needs its id added to
+   its sheet's name. The server returns that name as `sheetName` with each set's card data.
+   ========================================================================= */
+const FORGEFIRE_ADMIN_EMAIL = 'smcbride@ghostgalaxy.com';
+const FORGEFIRE_BASE = 'https://app.forgefire.games/app/games/';
+const FORGEFIRE_ECHO_GAME_ID = '9c9075dc-fa15-43ab-a5cd-2771aeca0811';
+const FORGEFIRE_UUID_AT_END = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/i;
+state.forgeSetIds = new Map(); // sheetId -> Forge Fire set id
+
+// Notes each loaded set's Forge Fire id from its sheet name. Returns true if anything changed.
+function registerForgeSets(rawSetResults){
+  let changed = false;
+  rawSetResults.forEach(s=>{
+    const m = s.sheetName && FORGEFIRE_UUID_AT_END.exec(s.sheetName);
+    if(m && state.forgeSetIds.get(s.sheetId)!==m[1].toLowerCase()){ state.forgeSetIds.set(s.sheetId, m[1].toLowerCase()); changed = true; }
+  });
+  return changed;
+}
+function forgeFireUrl(card){
+  if(!card || (state.userEmail||'').toLowerCase()!==FORGEFIRE_ADMIN_EMAIL) return null;
+  if(!state.game || state.game.id!=='echo') return null;
+  const setId = state.forgeSetIds.get(card._sheetId);
+  return setId ? `${FORGEFIRE_BASE}${FORGEFIRE_ECHO_GAME_ID}/sets/${setId}/cards/${card.id}` : null;
+}
+function openForgeFire(card){
+  const url = forgeFireUrl(card);
+  if(url) window.open(url, '_blank', 'noopener');
+}
+// Adds the button to a tile/row's action strip (a .tile-actions element), for the admin only.
+function addForgeFireButton(actionsEl, card){
+  if(!forgeFireUrl(card)) return;
+  const b = mkBtn('FF', ()=>openForgeFire(card));
+  b.title = 'Open this card on Forge Fire';
+  b.classList.add('forgefire-btn');
+  actionsEl.appendChild(b);
+}
+/* =========================================================================
    DYNAMIC SCHEMA — filter/detail fields are derived from whatever columns the
    sheet actually has, so adding/removing a (non-structural) column just works.
    ========================================================================= */
@@ -3087,6 +3134,7 @@ function renderLibrary(){
     if(countIn>0) actions.appendChild(mkBtn('−', ()=>state.game.removeOne(c.id)));
     if(c._doubleSided && c._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(c.id); renderLibrary(); }));
     actions.appendChild(mkBtn('…', ()=>openPreview(c)));
+    if(typeof addForgeFireButton==='function') addForgeFireButton(actions, c);
     if(typeof addCardFeedbackButton==='function') addCardFeedbackButton(actions, c);
     tile.appendChild(actions);
 
@@ -3574,6 +3622,7 @@ function buildDeckRow(id, card, {qty, showStepper}){
   }
   if(card && card._doubleSided && card._back) actions.appendChild(mkBtn('⟲', ()=>{ toggleCardFlip(id); renderDeckPanel(); }));
   actions.appendChild(mkBtn('…', ()=> card && openPreview(card)));
+  if(typeof addForgeFireButton==='function') addForgeFireButton(actions, card);
   if(typeof addCardFeedbackButton==='function') addCardFeedbackButton(actions, card);
   actions.appendChild(mkBtn('×', ()=> removeAllCopies(id)));
   row.appendChild(actions);
@@ -3741,6 +3790,12 @@ function openPreview(c){
   histBtn.style.display = lu ? 'inline-flex' : 'none'; // only cards that have ever been through an update have history
   histBtn.onclick = () => openHistoryModal(c);
 
+  const ffBtn = document.getElementById('btnForgeFire');
+  if(ffBtn){
+    const url = typeof forgeFireUrl==='function' ? forgeFireUrl(c) : null;
+    ffBtn.style.display = url ? 'inline-flex' : 'none';
+    ffBtn.onclick = () => openForgeFire(c);
+  }
   const fbBtn = document.getElementById('btnCardFeedback');
   if(fbBtn) fbBtn.onclick = () => openCardFeedback(c);
 
