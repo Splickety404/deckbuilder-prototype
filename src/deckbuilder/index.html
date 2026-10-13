@@ -102,6 +102,7 @@
       <div class="tab" data-type="champion">Champion</div>
     </div>
     <div class="btn" id="btnFeedbackInbox" style="display:none;" title="Read the card feedback people have sent">Feedback</div>
+    <div class="btn" id="btnUploadUpdates" style="display:none;" title="Upload an exported card PDF to a set you can edit — adds new cards and updates changed ones">Upload updates</div>
     <div class="btn" id="btnUnwrapBooster" title="Open a booster pack and add its cards to your Overlord and Champion decks — you can open as many as you like">Unwrap a Booster</div>
 <!--PRIVATE-END-->
 <!--PRIVATE-BEGIN-->
@@ -314,6 +315,62 @@
         <p id="feedbackInboxError" style="color:var(--danger);font-size:12.5px;margin:0 0 8px;"></p>
         <div id="feedbackInboxList"></div>
       </div>
+    </div>
+  </div>
+  <!-- Upload card updates (the Card Updater): a full-screen panel; see 05d-card-upload-private.js -->
+  <div id="cu-overlay" class="cu-hidden">
+    <div class="cu-page">
+      <div class="cu-head">
+        <h2>Upload card updates</h2>
+        <span class="cu-sub">Read an exported card PDF, compare it with a set, and publish the changes.</span>
+        <span class="cu-spacer"></span>
+        <div class="cu-btn" id="cu-btnClose">Close</div>
+      </div>
+      <div class="cu-scroll">
+        <main class="cu-main">
+          <section class="cu-setup">
+            <div class="cu-step">
+              <h3>1 · Choose the set</h3>
+              <select id="cu-setSelect"></select>
+              <div class="cu-note" id="cu-destNote">Only sets you have edit access to are listed.</div>
+            </div>
+          </section>
+          <section id="cu-drop" class="cu-drop">
+            <b>2 · Drop a card PDF here</b>
+            <span>One page per card face. Pages without a record are read as the back of the card before them.</span>
+            <label class="cu-btn">Choose a file…<input type="file" id="cu-file" accept="application/pdf" hidden></label>
+          </section>
+          <div id="cu-status"></div>
+          <div id="cu-notices"></div>
+          <div id="cu-toolbar" class="cu-hidden">
+            <span class="cu-chip">Cards <b id="cu-nCards">0</b></span>
+            <span class="cu-chip">With backs <b id="cu-nBacks">0</b></span>
+            <span class="cu-chip">Landscape <b id="cu-nLand">0</b></span>
+            <span class="cu-chip">Issues <b id="cu-nIssues">0</b></span>
+            <span class="cu-chip cu-cmp cu-hidden">New <b id="cu-nNew">0</b></span>
+            <span class="cu-chip cu-cmp cu-hidden">Updated <b id="cu-nUpdated">0</b></span>
+            <span class="cu-chip cu-cmp cu-hidden">Art updated <b id="cu-nArt">0</b></span>
+            <span class="cu-chip cu-cmp cu-hidden">Fields added <b id="cu-nAdded">0</b></span>
+            <span class="cu-chip cu-cmp cu-hidden">Unchanged <b id="cu-nSame">0</b></span>
+            <span class="cu-chip cu-rm cu-hidden">Will be removed <b id="cu-nRemoved">0</b></span>
+            <span class="cu-spacer"></span>
+            <div class="cu-btn cu-on" data-filter="all">All</div>
+            <div class="cu-btn cu-cmp cu-hidden" data-filter="changes">Changes</div>
+            <div class="cu-btn cu-rm cu-hidden" data-filter="removed">Removed</div>
+            <div class="cu-btn" data-filter="issues">Issues</div>
+            <div class="cu-btn" data-filter="land">Landscape</div>
+            <div class="cu-btn" data-filter="backs">With backs</div>
+            <input id="cu-search" type="search" placeholder="Search name, type, id…">
+          </div>
+          <div id="cu-grid"></div>
+        </main>
+      </div>
+      <div id="cu-publishBar" class="cu-hidden">
+        <div id="cu-publishText"></div>
+        <label class="cu-comp cu-hidden" id="cu-compLabel" title="Tick only when this PDF has every card in the set: cards on file that aren't in it get removed."><input type="checkbox" id="cu-chkComprehensive" autocomplete="off"> Comprehensive — this PDF is every card in the set</label>
+        <div class="cu-btn cu-primary" id="cu-btnPublish">Publish</div>
+      </div>
+      <div id="cu-detail" class="cu-hidden"><div class="cu-panel" id="cu-detailPanel"></div></div>
     </div>
   </div>
   <!-- Card feedback -->

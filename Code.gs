@@ -1446,6 +1446,9 @@ function authorizeMail() {
 // Only for people with EDIT access to the set's folder (not just view).
 // Every call is a POST (text/plain, so the browser sends it without a CORS
 // preflight) of JSON: { action, idToken, cardsFolderId, ... }
+//   cuMySets -> the sets the signed-in person may publish to (edit access),
+//               each with its Cards folder id — feeds the deckbuilder's
+//               "Upload updates" set picker. Changes nothing.
 //   cuState  -> the set's current card records + image file names
 //   cuUpload -> { files:[{name, data(base64 JPEG/PNG)}] } — each replaces any
 //               file of the same card face (same name, any extension);
@@ -1475,6 +1478,11 @@ function doPost(e) {
       result = req.action === 'feedbackList' ? listCardFeedback()
         : req.action === 'feedbackSnapshot' ? getFeedbackSnapshot(req.fileId)
         : markFeedbackRead(req.rows || 'all');
+      result.ok = true;
+      return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (req.action === 'cuMySets') {
+      result = cuMySets(v.email);
       result.ok = true;
       return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
     }
@@ -1708,6 +1716,36 @@ function cuResolveTarget(cardsFolderId, email) {
   if (!game) throw new Error('That folder isn\'t the Cards folder of a set in a known game (expected Game › Set › Cards).');
   if (!emailCanEditFolder(email, setFolderId)) throw new Error('You need edit access to this set\'s folder to publish cards to it.');
   return { cardsFolder: cardsFolder, cardsFolderId: cardsFolderId, setFolder: setFolder, setFolderId: setFolderId, game: game };
+}
+
+// The sets (across every known game) whose folder this person can EDIT, each with
+// its Cards folder — what the deckbuilder's "Upload updates" button offers. The
+// Cards folder is the immediate subfolder named "Cards" (any case); failing that,
+// the same "any subfolder with 'card' in its name" the art scan uses. A set
+// without one is left out (there'd be nowhere to put its images). The permission
+// check is the very one cuResolveTarget enforces on every later call, so this
+// list is only a convenience, never the gate. Cached 5 minutes per person.
+function cuMySets(email) {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'cuSets:' + Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, email));
+  try { const hit = cache.get(cacheKey); if (hit) return { sets: JSON.parse(hit) }; } catch (e) { /* fall through */ }
+  const sets = [];
+  KNOWN_GAMES.forEach(game => {
+    getSetsForGame(game).forEach(s => {
+      try {
+        if (!emailCanEditFolder(email, s.folderId)) return;
+        const setFolder = DriveApp.getFolderById(s.folderId);
+        let cards = null;
+        const subs = setFolder.getFolders();
+        while (subs.hasNext()) { const f = subs.next(); if (/^cards$/i.test(f.getName())) { cards = f; break; } }
+        if (!cards) cards = findCardArtFolder(setFolder);
+        if (cards) sets.push({ game: game.label, set: s.label, cardsFolderId: cards.getId() });
+      } catch (err) { /* a set we can't read just isn't offered */ }
+    });
+  });
+  try { cache.put(cacheKey, JSON.stringify(sets), 300); } catch (e) { /* skip */ }
+  return { sets: sets };
 }
 
 // Like emailCanAccessFolder, but only an owner or editor counts.
