@@ -1586,7 +1586,64 @@ function saveCardFeedback(email, req) {
   } finally {
     lock.releaseLock();
   }
+  // Optional extra: the user ticked "also share in Discord" (only offered once they typed a handle).
+  // The feedback is already saved above, so a Discord problem must never fail the submit.
+  if (req.shareToDiscord === true && clip(req.discord, 64)) {
+    try { postFeedbackToDiscord(email, req, feedback); }
+    catch (err) { console.error('Discord feedback post failed: ' + ((err && err.message) || err)); }
+  }
   return {};
+}
+
+// Posts card feedback (plus the card's art, if found) to the private design channel through a
+// Discord webhook. The webhook URL is a secret kept in Script Properties (DISCORD_FEEDBACK_WEBHOOK),
+// never in this file. The art file is found HERE from the set's own sheet — never from a file id
+// sent by the browser — and only if the sender can actually access that set's folder.
+function postFeedbackToDiscord(email, req, feedback) {
+  const url = PropertiesService.getScriptProperties().getProperty('DISCORD_FEEDBACK_WEBHOOK');
+  if (!url) return;
+  const clip = function (v, n) { return String(v || '').trim().slice(0, n); };
+  const cardName = clip(req.cardName, 120) || '(unknown card)';
+  const meta = [clip(req.cardType, 60), clip(req.cardSet, 120)].filter(Boolean).join(', ');
+  let content = '**' + cardName + '**' + (meta ? ' (' + meta + ')' : '') +
+    '\nFrom: ' + clip(req.discord, 64) + '\n' + feedback;
+  if (content.length > 1990) content = content.slice(0, 1987) + '...';
+
+  let blob = null;
+  try { blob = findFeedbackCardArt(email, clip(req.sheetId, 80), clip(req.cardId, 80)); }
+  catch (err) { console.error('Discord feedback: no art: ' + ((err && err.message) || err)); }
+
+  const payload = { content: content, allowed_mentions: { parse: [] } }; // parse:[] = nothing can ping anyone
+  const options = { method: 'post', muteHttpExceptions: true };
+  if (blob) {
+    options.payload = { payload_json: JSON.stringify(payload), 'files[0]': blob };
+  } else {
+    options.contentType = 'application/json';
+    options.payload = JSON.stringify(payload);
+  }
+  const resp = UrlFetchApp.fetch(url, options);
+  if (resp.getResponseCode() >= 300) throw new Error('Discord answered ' + resp.getResponseCode());
+}
+
+// The card's front-art image as a blob, or null. Looks the card up in its set's sheet (the set
+// must be a known one the sender can access) and reads the Drive file id out of its art URL.
+function findFeedbackCardArt(email, sheetId, cardId) {
+  if (!sheetId || !cardId) return null;
+  const match = getKnownSetSheets().find(function (s) { return s.sheetId === sheetId; });
+  if (!match || !emailCanAccessFolder(email, match.folderId)) return null;
+  const sheet = SpreadsheetApp.openById(sheetId).getSheetByName('Sheet1');
+  if (!sheet) return null;
+  const data = sheet.getDataRange().getValues();
+  const idCol = data[0].indexOf('id');
+  const artCol = data[0].indexOf('front-image-url');
+  if (idCol === -1 || artCol === -1) return null;
+  const row = data.slice(1).find(function (r) { return String(r[idCol]) === cardId; });
+  const m = row && /\/d\/([A-Za-z0-9_-]+)/.exec(String(row[artCol] || ''));
+  if (!m) return null;
+  const file = DriveApp.getFileById(m[1]);
+  if (file.getSize() > 8000000) return null; // keep well under Discord's upload limit
+  const blob = file.getBlob();
+  return /^image\//.test(blob.getContentType()) ? blob : null; // art that's a PDF is skipped
 }
 
 // Newest first. "row" is the sheet row number, used to mark a note read.

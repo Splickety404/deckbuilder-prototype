@@ -796,6 +796,10 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
         <textarea id="feedbackText" rows="6" maxlength="4000" placeholder="What do you think of this card?" style="width:100%;box-sizing:border-box;resize:vertical;margin-bottom:10px;font-family:inherit;"></textarea>
         <label style="font-size:12.5px;color:var(--text-soft);">Discord handle (optional)</label>
         <input type="text" id="feedbackDiscord" maxlength="64" placeholder="yourname" style="width:100%;box-sizing:border-box;margin-bottom:10px;">
+        <label id="feedbackDiscordShareRow" style="display:none;gap:6px;align-items:flex-start;font-size:12.5px;margin:0 0 10px;">
+          <input type="checkbox" id="feedbackDiscordShare" style="margin-top:2px;">
+          <span>Also share this (with the card image) in the Echo of Omens design team's private Discord channel</span>
+        </label>
         <p style="font-size:12px;color:var(--text-soft);margin:0 0 8px;">Your account email (<span id="feedbackReplyEmail"></span>) is included so you can be contacted. Your Discord handle is saved in this browser for next time.</p>
         <p id="feedbackError" style="color:var(--danger);font-size:12.5px;min-height:1.2em;margin:0 0 8px;"></p>
         <div style="display:flex;gap:8px;justify-content:flex-end;">
@@ -2560,10 +2564,23 @@ function openCardFeedback(card){
   document.getElementById('feedbackText').value = '';
   document.getElementById('feedbackDiscord').value = lsGet(LS_FEEDBACK_DISCORD_KEY);
   document.getElementById('feedbackReplyEmail').textContent = state.userEmail || '';
+  syncFeedbackDiscordShare();
   document.getElementById('feedbackError').textContent = '';
   document.getElementById('feedbackModal').classList.remove('hidden');
   document.getElementById('feedbackText').focus();
 }
+
+// The "also share in Discord" checkbox only appears once a Discord handle has been typed,
+// and starts ticked each time it newly appears. Unticking it sticks while they keep typing.
+function syncFeedbackDiscordShare(){
+  const row = document.getElementById('feedbackDiscordShareRow');
+  const box = document.getElementById('feedbackDiscordShare');
+  const hasHandle = !!document.getElementById('feedbackDiscord').value.trim();
+  const wasShown = row.style.display !== 'none';
+  if(hasHandle && !wasShown) box.checked = true;
+  row.style.display = hasHandle ? 'flex' : 'none';
+}
+document.getElementById('feedbackDiscord').addEventListener('input', syncFeedbackDiscordShare);
 
 // Adds the 💬 button to a tile/row's action strip (a .tile-actions element).
 function addCardFeedbackButton(actionsEl, card){
@@ -2597,7 +2614,8 @@ document.getElementById('btnSubmitFeedback').addEventListener('click', async ()=
     const c = feedbackCard;
     await sendCardFeedbackToServer({
       cardId: c.id, cardName: c.name, cardType: c.type||'', cardSet: c._setName||'',
-      feedback: text, discord,
+      feedback: text, discord, sheetId: c._sheetId || '',
+      shareToDiscord: !!discord && document.getElementById('feedbackDiscordShare').checked,
     });
     if(discord) lsSet(LS_FEEDBACK_DISCORD_KEY, discord);
     document.getElementById('feedbackModal').classList.add('hidden');

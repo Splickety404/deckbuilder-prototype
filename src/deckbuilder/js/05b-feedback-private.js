@@ -19,10 +19,23 @@ function openCardFeedback(card){
   document.getElementById('feedbackText').value = '';
   document.getElementById('feedbackDiscord').value = lsGet(LS_FEEDBACK_DISCORD_KEY);
   document.getElementById('feedbackReplyEmail').textContent = state.userEmail || '';
+  syncFeedbackDiscordShare();
   document.getElementById('feedbackError').textContent = '';
   document.getElementById('feedbackModal').classList.remove('hidden');
   document.getElementById('feedbackText').focus();
 }
+
+// The "also share in Discord" checkbox only appears once a Discord handle has been typed,
+// and starts ticked each time it newly appears. Unticking it sticks while they keep typing.
+function syncFeedbackDiscordShare(){
+  const row = document.getElementById('feedbackDiscordShareRow');
+  const box = document.getElementById('feedbackDiscordShare');
+  const hasHandle = !!document.getElementById('feedbackDiscord').value.trim();
+  const wasShown = row.style.display !== 'none';
+  if(hasHandle && !wasShown) box.checked = true;
+  row.style.display = hasHandle ? 'flex' : 'none';
+}
+document.getElementById('feedbackDiscord').addEventListener('input', syncFeedbackDiscordShare);
 
 // Adds the 💬 button to a tile/row's action strip (a .tile-actions element).
 function addCardFeedbackButton(actionsEl, card){
@@ -56,7 +69,8 @@ document.getElementById('btnSubmitFeedback').addEventListener('click', async ()=
     const c = feedbackCard;
     await sendCardFeedbackToServer({
       cardId: c.id, cardName: c.name, cardType: c.type||'', cardSet: c._setName||'',
-      feedback: text, discord,
+      feedback: text, discord, sheetId: c._sheetId || '',
+      shareToDiscord: !!discord && document.getElementById('feedbackDiscordShare').checked,
     });
     if(discord) lsSet(LS_FEEDBACK_DISCORD_KEY, discord);
     document.getElementById('feedbackModal').classList.add('hidden');
