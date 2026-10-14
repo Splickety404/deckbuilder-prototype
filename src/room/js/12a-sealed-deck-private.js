@@ -38,6 +38,11 @@ async function sealedSetChoices(){
     }catch(e){ /* fall back to whatever is already on the table */ }
   }
   sheetNamesById.forEach((setName, sheetId)=>{
+    // A set on the table that you can't open (its cards load as Classified) is
+    // never offered; one whose cards haven't arrived yet is, and is re-checked
+    // when picked (buildSealedDeckOnTable).
+    const mine = [...cardsById.values()].filter(c=> c._sheetId===sheetId);
+    if(mine.length && mine.every(c=> c._classified)) return;
     const have = sets.find(s=> s.label===setName);
     if(have) have.sheetId = sheetId; else sets.push({label:setName, sheetId});
   });
