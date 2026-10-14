@@ -11,31 +11,18 @@ function getBonusCard(){ return curDeck().bonusCardId ? state.byId.get(curDeck()
 function getExtraCard(){ return curDeck().extraCardId ? state.byId.get(curDeck().extraCardId) : null; }
 
 
-/* Neutral cards are identified by their aspect value itself (e.g. "OLNeutral"/"CHNeutral"
-   in the live data) rather than by process-of-elimination against leader cards. */
-function isNeutral(card){ return /neutral/i.test(card.aspect||''); }
 
 let _realAspects = {overlord:new Set(), champion:new Set()};
 function computeAndCacheAspects(){
   _realAspects.overlord = new Set(state.cards.filter(c=>c.type.startsWith('O - ') && c.aspect && !isNeutral(c)).map(c=>c.aspect));
   _realAspects.champion = new Set(state.cards.filter(c=>c.type.startsWith('C - ') && c.aspect && !isNeutral(c)).map(c=>c.aspect));
 }
-function leaderTypeName(deckType){ return deckType==='overlord' ? 'O - Overlord' : 'C - Champion'; }
-function prefixFor(deckType){ return deckType==='overlord' ? 'O - ' : 'C - '; }
-function bonusCardTypeName(deckType){ return deckType==='overlord' ? 'O - Domination' : 'C - Quest'; }
-function extraCardTypeName(deckType){ return deckType==='overlord' ? 'O - Stronghold' : 'C - Resistance'; }
-const EXTRA_CARD_PLACEHOLDER_NAME = { overlord:'Stronghold', champion:'Resistance' };
 const HORIZONTAL_TYPES = new Set(['O - Domination','C - Quest','O - Stronghold','C - Resistance']);
 
 // Real O - Stronghold / C - Resistance cards, once any exist, are always preferred over
 // the Z - Custom placeholder standing in for them today — checked fresh each load, no
 // manual switch-over needed.
-function extraCardPool(deckType){
-  const real = state.cards.filter(c=>c.type===extraCardTypeName(deckType));
-  if(real.length) return real;
-  const placeholderName = EXTRA_CARD_PLACEHOLDER_NAME[deckType];
-  return state.cards.filter(c=>c.type==='Z - Custom' && c.name===placeholderName);
-}
+function extraCardPool(deckType){ return extraCardPoolFrom(state.cards, deckType); }
 
 // Type membership for whichever pool is currently active — this is a hard rule with
 // no leader dependency at all (a Champion card can never go in an Overlord deck,

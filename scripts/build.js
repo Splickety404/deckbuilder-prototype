@@ -6,6 +6,7 @@
 //                            the joined styles/scripts go (the marker line itself is replaced)
 //   src/<app>/styles/*.css   joined in filename order, wrapped in <style>…</style>
 //   src/<app>/js/*.js        joined in filename order, wrapped in <script>…</script>
+//   src/shared/js/*.js       code used by more than one app — placed in front of each app's own scripts
 //
 // Files are joined with nothing added between them, so splitting a big file into pieces and
 // rebuilding gives back the identical file. The joined script is syntax-checked first.
@@ -81,7 +82,7 @@ const apps = fs.readdirSync(srcDir).filter(d => fs.existsSync(path.join(srcDir, 
 for(const app of apps){
   const dir = path.join(srcDir, app);
   const cssFiles = filesIn(path.join(dir, 'styles'), '.css');
-  const jsFiles = filesIn(path.join(dir, 'js'), '.js');
+  const jsFiles = [...filesIn(path.join(srcDir, 'shared', 'js'), '.js'), ...filesIn(path.join(dir, 'js'), '.js')];
   const css = joinFiles(cssFiles);
   const js = joinFiles(jsFiles);
   try{ new vm.Script(js, { filename: `${app} (joined script)` }); }

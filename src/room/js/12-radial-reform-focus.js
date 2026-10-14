@@ -89,6 +89,8 @@ function openBoardRadialMenu(clientX, clientY){
     {icon:'🔘', label:'Add Token', action:act(()=> openTokenTypeMenuAt(clientX, clientY))},
     // Only on a table whose board came from a game (board link or "Send deck
     // to room") — that's how the room knows whose preconstructed decks to list.
+    // Game-specific extra (see 12a-sealed-deck-private.js) — absent from a build without it.
+    ...(typeof openSealedDeckMenuAt==='function' ? [{icon:'🎲', label:'Get Sealed Deck', action:act(()=> openSealedDeckMenuAt(clientX, clientY))}] : []),
     ...(state.gameFolderId ? [{icon:'📦', label:'Import Precon', action:act(()=> openPreconMenuAt(clientX, clientY))}] : []),
   ];
   openRadialMenu(()=> done ? null : items, clientX, clientY);
