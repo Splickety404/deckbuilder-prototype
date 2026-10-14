@@ -205,20 +205,26 @@ function openHandTokenRadialMenu(type, clientX, clientY){
 document.addEventListener('keydown', (e)=>{
   if(!hoveredHandTokenType || e.ctrlKey || e.metaKey || e.altKey) return;
   if(isTextEntryFocused()) return;
+  if(/^[0-9]$/.test(e.key)){ // set the hand stack to that value (two digits typed quickly = two-digit number)
+    e.preventDefault();
+    const now = Date.now(), id = 'hand:'+hoveredHandTokenType;
+    tokenDigitBuf = (tokenDigitId===id && now - tokenDigitAt < 900 && tokenDigitBuf.length<3) ? tokenDigitBuf + e.key : e.key;
+    tokenDigitId = id; tokenDigitAt = now;
+    hotkeyAdjustHandToken(hoveredHandTokenType, Number(tokenDigitBuf) - (state.handTokens.get(hoveredHandTokenType)||0));
+    return;
+  }
   const k = e.key.toLowerCase();
   const delta = k==='w' ? 1 : k==='s' ? -1 : 0;
   if(!delta) return;
   e.preventDefault();
   hotkeyAdjustHandToken(hoveredHandTokenType, delta);
 });
-let handTokenWheelAcc = 0;
+const handTokenWheel = {acc:0, last:0, key:null};
 document.getElementById('handTokens').addEventListener('wheel', (e)=>{
   const chip = e.target.closest && e.target.closest('.hand-token'); if(!chip) return;
   e.preventDefault(); e.stopPropagation();
-  handTokenWheelAcc += e.deltaMode===1 ? e.deltaY*33 : e.deltaY;
-  if(Math.abs(handTokenWheelAcc) < TOKEN_WHEEL_STEP) return;
-  const delta = handTokenWheelAcc < 0 ? 1 : -1;
-  handTokenWheelAcc = 0;
+  const delta = wheelSteps(handTokenWheel, chip.dataset.type, e);
+  if(!delta) return;
   hoveredHandTokenType = chip.dataset.type;
   hotkeyAdjustHandToken(chip.dataset.type, delta);
 }, {passive:false});

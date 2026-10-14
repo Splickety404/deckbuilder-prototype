@@ -477,7 +477,28 @@ document.getElementById('btnZoomFit').addEventListener('click', fitAll);
 // same quiet live sync + one summary as the W/S hotkeys (see hotkeyAdjustToken).
 // Deltas are accumulated so a trackpad's stream of tiny scroll events steps
 // at a sane rate; one mouse-wheel notch is one step.
-let tokenWheelAcc = 0, tokenWheelId = null;
+// A new scroll gesture (nothing for 250ms, a different token, or the other
+// direction) counts its very FIRST event as a step right away — some mice send
+// several tiny events before reaching a full notch, which felt like a dead
+// wheel — and every further step then needs TOKEN_WHEEL_STEP more scroll. A
+// big single event (a fast spin) counts as several steps. Returns +n for
+// scroll-up, -n for scroll-down, 0 for "not yet". `w` is a per-target
+// {acc, last, key} bag.
+function wheelSteps(w, key, e){
+  const d = e.deltaMode===1 ? e.deltaY*33 : e.deltaY; // line-based wheels report ~3 per notch
+  if(!d) return 0;
+  const now = performance.now();
+  const fresh = w.key!==key || now - w.last > 250 || Math.sign(d)!==Math.sign(w.acc||d);
+  w.key = key; w.last = now;
+  if(fresh){ w.acc = 0; return d<0 ? 1 : -1; }
+  w.acc += d;
+  if(Math.abs(w.acc) < TOKEN_WHEEL_STEP) return 0;
+  const n = Math.abs(w.acc) >= 150 ? Math.round(Math.abs(w.acc)/100) : 1;
+  const dir = w.acc<0 ? 1 : -1;
+  w.acc = 0;
+  return dir*n;
+}
+const tokenWheel = {acc:0, last:0, key:null};
 // Scroll over any card (board or hand) grows/shrinks the hover preview, 10%
 // per notch, remembered in this browser. Shows the preview right away.
 let previewWheelAcc = 0;
@@ -502,11 +523,8 @@ document.getElementById('boardViewport').addEventListener('wheel', (e)=>{
   e.preventDefault();
   e.stopImmediatePropagation(); // don't also zoom
   const id = tokenEl.dataset.id;
-  if(id!==tokenWheelId){ tokenWheelId = id; tokenWheelAcc = 0; }
-  tokenWheelAcc += e.deltaMode===1 ? e.deltaY*33 : e.deltaY; // line-based wheels report ~3 per notch
-  if(Math.abs(tokenWheelAcc) < TOKEN_WHEEL_STEP) return;
-  const delta = tokenWheelAcc < 0 ? 1 : -1;
-  tokenWheelAcc = 0;
+  const delta = wheelSteps(tokenWheel, id, e);
+  if(!delta) return;
   hoveredTokenId = id;
   hotkeyAdjustToken(id, delta);
 }, {passive:false});

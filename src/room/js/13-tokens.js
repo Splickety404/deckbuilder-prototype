@@ -194,7 +194,21 @@ function renderTokens(){
     // or go negative (see SET_TOKEN_COUNT), so "count!==1" (not "count>1") is
     // what actually means "this needs its number called out."
     el.innerHTML = tokenFaceMarkup(t.type, 'token-face') +
-      (t.count!==1 ? `<div class="token-count">${t.count}</div>` : '');
+      (t.count!==1 ? `<div class="token-count">${t.count}</div>` : '') +
+      (t.count<=0 ? `<div class="token-remove" title="Remove this empty stack">✕</div>` : '');
+    // A stack at zero or below gets a small ✕ (shown on hover, touching the
+    // token's bottom edge) that removes the whole stack — undoable.
+    const removeEl = el.querySelector('.token-remove');
+    if(removeEl){
+      ['mousedown','pointerdown','mouseup','dblclick','contextmenu'].forEach(ev=> removeEl.addEventListener(ev, (e)=> e.stopPropagation()));
+      removeEl.addEventListener('click', (e)=>{
+        e.stopPropagation(); e.preventDefault();
+        const clone = JSON.parse(JSON.stringify(t));
+        if(hoveredTokenId===t.id){ hoveredTokenId = null; hideHotkeyHint(); endTokenHotkeyRun(); }
+        doAction('REMOVE_TOKEN', {id:t.id});
+        setUndo(()=> doAction('PLACE_TOKEN', clone));
+      });
+    }
     // Exactly 1 just moves as a whole (Seth: "it is not a stack to be
     // peeled"); anything else — 2+, or zero/negative — drags via the peel
     // interaction instead (peelTokenToBoard itself decides what a "peel"
@@ -217,34 +231,59 @@ function renderTokens(){
 }
 let hoveredTokenId = null;
 function showTokenHotkeyHint(el){
+  if(!hoverRemindersOn) return;
   if(pointerDragging) return; // no reminders while moving things (see pointerDragging)
   const hint = document.getElementById('hotkeyHint');
   hint.innerHTML = tokenKeyboardHintHtml();
   hint.classList.remove('hidden');
-  const r = el.getBoundingClientRect(), h = hint.getBoundingClientRect();
-  let top = r.top - h.height - 8;
-  if(top < 4) top = r.bottom + 8;
-  hint.style.left = Math.max(4, Math.min(r.left + r.width/2 - h.width/2, window.innerWidth - h.width - 4))+'px';
+  // Keep clear of the quantity bubble (and the remove button): they hang off
+  // the token's own box, so measuring just the token put the reminder on them.
+  const tr = el.getBoundingClientRect(), h = hint.getBoundingClientRect();
+  let r = {left:tr.left, top:tr.top, right:tr.right, bottom:tr.bottom};
+  el.querySelectorAll('.token-count, .token-remove').forEach(x=>{
+    const xr = x.getBoundingClientRect();
+    if(!xr.width && !xr.height) return;
+    r = {left:Math.min(r.left, xr.left), top:Math.min(r.top, xr.top), right:Math.max(r.right, xr.right), bottom:Math.max(r.bottom, xr.bottom)};
+  });
+  const gap = 12;
+  let top = r.top - h.height - gap;
+  if(top < 4) top = r.bottom + gap;
+  hint.style.left = Math.max(4, Math.min((r.left + r.right)/2 - h.width/2, window.innerWidth - h.width - 4))+'px';
   hint.style.top = top+'px';
 }
 document.addEventListener('keydown', (e)=>{
   if(!hoveredTokenId || e.ctrlKey || e.metaKey || e.altKey) return;
   if(isTextEntryFocused()) return;
   if(!state.tokens.has(hoveredTokenId)){ hoveredTokenId = null; return; }
+  // A number key sets the stack to that value; typing a second digit soon
+  // after the first makes it two digits (1 then 2 = 12).
+  if(/^[0-9]$/.test(e.key)){
+    e.preventDefault();
+    const now = Date.now();
+    tokenDigitBuf = (tokenDigitId===hoveredTokenId && now - tokenDigitAt < 900 && tokenDigitBuf.length<3) ? tokenDigitBuf + e.key : e.key;
+    tokenDigitId = hoveredTokenId; tokenDigitAt = now;
+    hotkeySetToken(hoveredTokenId, Number(tokenDigitBuf));
+    return;
+  }
   const k = e.key.toLowerCase();
   const delta = k==='w' ? 1 : k==='s' ? -1 : 0;
   if(!delta) return;
   e.preventDefault();
   hotkeyAdjustToken(hoveredTokenId, delta);
 });
+let tokenDigitBuf = '', tokenDigitId = null, tokenDigitAt = 0;
 // Hotkey changes sync live but quietly (no chat line per press); when the
 // cursor leaves the token, one summary goes to the table — "changed Damage
 // from 5 to 8" — and one Undo reverts the whole run.
 let tokenHotkeyRun = null; // {id, type, startCount}
 function hotkeyAdjustToken(id, delta){
   const t = state.tokens.get(id); if(!t) return;
+  hotkeySetToken(id, t.count+delta);
+}
+function hotkeySetToken(id, count){
+  const t = state.tokens.get(id); if(!t || t.count===count) return;
   if(!tokenHotkeyRun || tokenHotkeyRun.id!==id){ endTokenHotkeyRun(); tokenHotkeyRun = {id, type:t.type, startCount:t.count}; }
-  const payload = {id, count:t.count+delta, quiet:true};
+  const payload = {id, count, quiet:true};
   applyRoomEvent('SET_TOKEN_COUNT', payload);
   postRoomEvent('SET_TOKEN_COUNT', payload);
 }
@@ -573,8 +612,7 @@ function findPieceAtPoint(worldX, worldY){
   }
   return null;
 }
-// Adjusts a token's count by any signed amount (the radial menu's +1/+3/+5/
-// +10 and -1/-3/-5/-10 items — see openTokenRadialMenu — all funnel through
+// Adjusts a token's count by any signed amount (the radial menu's +1 and -1 items — see openTokenRadialMenu — all funnel through
 // this one function). No floor at zero: a token can sit at zero or go
 // negative now (a life/damage counter, not just a stack of physical chips —
 // see SET_TOKEN_COUNT's own comment).
@@ -593,9 +631,10 @@ function incrementToken(tokenId, delta){
 // Both arcs are ordered smallest-to-largest magnitude going left-to-right, so
 // a given magnitude's + and - items line up in the same vertical column
 // (+1 upper-left / -1 lower-left, ... +10 upper-right / -10 lower-right).
-const TOKEN_INCREMENTS = [1, 3, 5, 10];
+const TOKEN_INCREMENTS = [1];
 function tokenRadialAngle(half, indexFromLeft){ // half: 'top' or 'bottom'; indexFromLeft: 0..TOKEN_INCREMENTS.length-1
   const n = TOKEN_INCREMENTS.length;
+  if(n===1) return half==='top' ? -Math.PI/2 : Math.PI/2; // a lone +1/-1 sits straight up/down
   const span = Math.PI * (n-1)/(n+3); // leaves room at each end for the items pinned on the 0/π equator (Remove All, Set Value, Detach)
   const start = half==='top' ? (-Math.PI + (Math.PI-span)/2) : ((Math.PI-span)/2);
   return start + indexFromLeft*(span/(n-1));

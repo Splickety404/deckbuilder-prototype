@@ -270,6 +270,13 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
      so a long count grows up and outward — never over the letter or emoji. */
   transform:scale(calc(var(--inv-zoom,1) / var(--tok-boost,1)));transform-origin:0 100%;}
 .token .token-count:hover{filter:brightness(1.15);}
+/* Empty-stack remove button: only while hovering a token at 0 or below, hanging
+   straight off its bottom edge (touching it, so the pointer never leaves the token). */
+.token .token-remove{display:none;position:absolute;top:100%;left:50%;width:18px;height:16px;align-items:center;justify-content:center;
+  background:var(--danger);color:#fff;font-size:10px;font-weight:700;line-height:1;border-radius:0 0 8px 8px;box-shadow:var(--shadow);cursor:pointer;z-index:2;
+  transform:translateX(-50%) scale(calc(var(--inv-zoom,1) / var(--tok-boost,1)));transform-origin:50% 0;}
+.token:hover .token-remove{display:flex;}
+.token .token-remove:hover{filter:brightness(1.15);}
 .token.merge-target{outline:3px solid var(--ok);outline-offset:3px;box-shadow:0 0 0 7px rgba(74,222,128,.22),var(--shadow);}
 .token.merge-target .token-count{background:var(--ok);color:#0a2a12;}
 
@@ -368,7 +375,7 @@ body.force-cursor-ns, body.force-cursor-ns *{cursor:ns-resize!important;}
   animation:radialPop .3s var(--bounce) backwards;}
 .radial-item:hover{background:var(--surface-2);border-color:var(--accent);transform:translate(-50%,-50%) scale(1.1);}
 .radial-item .radial-icon{font-size:18px;line-height:1;}
-.radial-item .radial-label{font-size:9.5px;font-weight:600;color:var(--text-soft);line-height:1.15;max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.radial-item .radial-label{font-size:9.5px;font-weight:600;color:var(--text-soft);line-height:1.1;max-width:58px;white-space:normal;overflow-wrap:anywhere;}
 /* A STACK-scoped action (Lock Stack, Remove Stack, etc. — see
    openPieceRadialMenu) gets a permanent accent tint instead of the plain
    neutral chip a single-card action uses, so the two groups read as visually

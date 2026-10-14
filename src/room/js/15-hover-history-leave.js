@@ -102,28 +102,97 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<
 // now a flyout anchored above the chat panel instead (see #historyFlyout),
 // opened from #btnChatHistory right next to the chat toggle — still fetched
 // fresh from the sheet every time it's opened, same as before.
+// The current game's history is kept in this browser as well (small
+// pre-rendered rows, per session code), so opening the flyout is instant
+// instead of waiting on the sheet: every event this client sees live is
+// recorded here as it happens, and a background fetch from the sheet (the
+// permanent record, which also covers anything that happened before this
+// client joined) fills in the rest and replaces the cache with the complete
+// list. Opening the flyout then shows the cache right away and refreshes it.
+const LS_HISTORY_PREFIX = 'room_history_';
+const HISTORY_CACHE_MAX = 1500;
+let historyCache = [], historyCacheCode = null, historyFetchPromise = null;
+function historyCacheKey(){ return LS_HISTORY_PREFIX + state.sessionCode; }
+function ensureHistoryCache(){
+  if(historyCacheCode===state.sessionCode) return;
+  historyCacheCode = state.sessionCode;
+  historyFetchPromise = null;
+  try{ historyCache = JSON.parse(localStorage.getItem(historyCacheKey())||'[]') || []; }catch(e){ historyCache = []; }
+}
+let historySaveTimer = null;
+function saveHistoryCache(){
+  clearTimeout(historySaveTimer);
+  historySaveTimer = setTimeout(()=>{
+    try{
+      localStorage.setItem(historyCacheKey(), JSON.stringify(historyCache));
+      // keep only the few most recently used games' caches
+      const idx = JSON.parse(localStorage.getItem('room_history_index')||'[]').filter(k=>k!==historyCacheKey());
+      idx.push(historyCacheKey());
+      while(idx.length>5){ try{ localStorage.removeItem(idx.shift()); }catch(e){} }
+      localStorage.setItem('room_history_index', JSON.stringify(idx));
+    }catch(e){}
+  }, 500);
+}
+function recordHistoryRow(type, payload, playerName, ts){
+  if(!state.sessionCode) return;
+  ensureHistoryCache();
+  historyCache.push({ts: ts||Date.now(), text: describeEvent(type, payload, playerName)});
+  if(historyCache.length > HISTORY_CACHE_MAX) historyCache.splice(0, historyCache.length - HISTORY_CACHE_MAX);
+  saveHistoryCache();
+}
+function historyRowHtml(ts, text){
+  return `<div class="history-row"><span class="history-time">${new Date(ts).toLocaleTimeString()}</span> ${escapeHtml(text)}</div>`;
+}
+// Fetches the sheet's full history and makes it the cache (plus any live rows
+// newer than the sheet has caught up to). Shared by the flyout and the
+// background warm-up so two fetches are never in flight at once.
+function refreshHistoryFromSheet(){
+  ensureHistoryCache();
+  if(historyFetchPromise) return historyFetchPromise;
+  const code = state.sessionCode;
+  historyFetchPromise = (async ()=>{
+    try{
+      let events = await roomServices.fetchHistory();
+      if(state.sessionCode!==code) return;
+      events = (events||[]).filter(ev=> !(ev.payload && ev.payload.quiet)); // live-only updates, summarized by a NOTE — see hotkeyAdjustToken
+      const rows = events.map(ev=>({ts:ev.ts, text:describeEvent(ev.type, ev.payload, ev.playerName)}));
+      const lastSheet = rows.length ? Math.max(...rows.map(r=>new Date(r.ts).getTime())) : 0;
+      const live = historyCache.filter(r=> new Date(r.ts).getTime() > lastSheet + 1500); // not in the sheet yet
+      historyCache = rows.concat(live).slice(-HISTORY_CACHE_MAX);
+      saveHistoryCache();
+    } finally { historyFetchPromise = null; }
+  })();
+  return historyFetchPromise;
+}
+// Called once a client has joined, so the sheet's history is already here
+// by the time anyone opens the flyout.
+function warmHistoryCache(){ if(state.sessionCode) refreshHistoryFromSheet().catch(()=>{}); }
+function renderHistoryFlyoutFromCache(){
+  const body = document.getElementById('historyFlyoutBody');
+  body.innerHTML = historyCache.length ? historyCache.map(r=> historyRowHtml(r.ts, r.text)).join('') : '<p style="color:var(--text-soft);">No events yet.</p>';
+  body.scrollTop = body.scrollHeight;
+}
 async function loadHistoryFlyout(){
   const body = document.getElementById('historyFlyoutBody');
-  body.innerHTML = 'Loading…';
+  ensureHistoryCache();
+  if(historyCache.length) renderHistoryFlyoutFromCache(); else body.innerHTML = 'Loading…';
   try{
-    let events = await roomServices.fetchHistory();
-    events = (events||[]).filter(ev=> !(ev.payload && ev.payload.quiet)); // live-only updates, summarized by a NOTE — see hotkeyAdjustToken
-    body.innerHTML = events.length ? events.map(ev=>
-      `<div class="history-row"><span class="history-time">${new Date(ev.ts).toLocaleTimeString()}</span> ${escapeHtml(describeEvent(ev.type, ev.payload, ev.playerName))}</div>`
-    ).join('') : '<p style="color:var(--text-soft);">No events yet.</p>';
+    await refreshHistoryFromSheet();
+    if(document.getElementById('historyFlyout').classList.contains('hidden')) return;
+    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    renderHistoryFlyoutFromCache();
+    if(!atBottom) return;
   }catch(e){
-    body.innerHTML = 'Could not load history: '+escapeHtml(e.message);
+    if(!historyCache.length) body.innerHTML = 'Could not load history: '+escapeHtml(e.message);
   }
 }
 // Live-appends a single new row to the history flyout if it's currently
-// open, instead of leaving it as a snapshot frozen at whatever moment it was
-// opened — previously the only way to see a new event in it was to close and
-// reopen it (loadHistoryFlyout always refetches from scratch). Mirrors
-// loadHistoryFlyout's own row markup exactly, so a live row is
-// indistinguishable from one that was fetched normally, and is called for
-// BOTH the local player's own actions (announceLocalAction) and everyone
-// else's (handleIncomingRoomEvent) — the same two call sites that feed the chat bubbles.
+// open (and always records it in the cache), instead of leaving it as a
+// snapshot frozen at whatever moment it was opened. Called for BOTH the
+// local player's own actions (announceLocalAction) and everyone else's
+// (handleIncomingRoomEvent) — the same two call sites that feed the chat bubbles.
 function appendHistoryFlyoutRow(type, payload, playerName, ts){
+  recordHistoryRow(type, payload, playerName, ts);
   const flyout = document.getElementById('historyFlyout');
   if(!flyout || flyout.classList.contains('hidden')) return;
   const body = document.getElementById('historyFlyoutBody');

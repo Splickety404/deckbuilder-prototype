@@ -530,7 +530,7 @@ function applyRoomEvent(type, payload){
       if(payload.players) payload.players.forEach(([pid,name])=> state.players.set(pid, name));
       if(payload.turnOrder) state.turnOrder = payload.turnOrder;
       if(payload.turnIndex!=null) state.turnIndex = payload.turnIndex;
-      state.hasInitialState = true;
+      state.hasInitialState = true; warmHistoryCache();
       state.lastSnapshotAt = Date.now(); // see waitForRoomState
       if(payload.sourceSheets && payload.sourceSheets.length){
         registerPendingCards((payload.pieces||[]).flatMap(p=>p.cardIds||[]));

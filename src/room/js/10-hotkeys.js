@@ -61,7 +61,17 @@ function wireHotkeyHint(el, pieceId){
     hideHotkeyHint();
   });
 }
+// Per-viewer preference (Board ▾ → "Show hover reminders"), remembered in this browser.
+const LS_HOVER_REMINDERS_KEY = 'room_hover_reminders';
+let hoverRemindersOn = (()=>{ try{ return localStorage.getItem(LS_HOVER_REMINDERS_KEY)!=='off'; }catch(e){ return true; } })();
+document.getElementById('hoverRemindersCheckbox').checked = hoverRemindersOn;
+document.getElementById('hoverRemindersCheckbox').addEventListener('change', (e)=>{
+  hoverRemindersOn = e.target.checked;
+  try{ localStorage.setItem(LS_HOVER_REMINDERS_KEY, hoverRemindersOn ? 'on' : 'off'); }catch(err){}
+  if(!hoverRemindersOn) hideHotkeyHint();
+});
 function showHotkeyHint(el){
+  if(!hoverRemindersOn) return;
   if(pointerDragging) return; // no reminders while moving things (see pointerDragging)
   const hint = document.getElementById('hotkeyHint');
   const p = state.pieces.get(el.dataset.id);
@@ -119,7 +129,7 @@ function keyboardHintHtml(keys, note){
 function tokenKeyboardHintHtml(){
   const k = (key, label)=> `<div class="kb-key${label?' on':''}"><b>${key}</b>${label?`<span>${label}</span>`:''}</div>`;
   return `<div class="kb-wrap">
-    <div class="kb"><div class="kb-row">${k('Q')}${k('W','+1')}${k('E')}</div><div class="kb-row r1">${k('A')}${k('S','−1')}${k('D')}</div></div>
+    <div class="kb"><div class="kb-row">${k('Q')}${k('W','+1')}${k('E')}</div><div class="kb-row r1">${k('A')}${k('S','−1')}${k('D')}</div><div class="kb-note">0–9: set value</div></div>
     <div class="kb-mouse"><svg width="26" height="38" viewBox="0 0 26 38" aria-hidden="true">
       <rect x="1.5" y="1.5" width="23" height="35" rx="11.5" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".55"/>
       <line x1="13" y1="1.5" x2="13" y2="15" stroke="currentColor" stroke-width="1.2" opacity=".35"/>

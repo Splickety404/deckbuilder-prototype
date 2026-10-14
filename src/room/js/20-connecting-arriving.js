@@ -16,7 +16,7 @@ function connectToRoom({code, isHost}){
   if(isHost){
     // Whatever you've already built locally becomes the room's starting layout.
     doAction('LOAD_LAYOUT', exportLayout());
-    state.hasInitialState = true;
+    state.hasInitialState = true; warmHistoryCache();
   } else {
     // Joining adopts the shared room's board instead of merging with it —
     // clear local content first, then ask whoever's already there for the
@@ -141,7 +141,7 @@ async function placeHandoffDeck(deck){
 // already-cleared — board is simply treated as current from here on.
 function requestStateSync(){
   doAction('REQUEST_STATE', {requesterId: state.playerId});
-  setTimeout(()=>{ state.hasInitialState = true; }, 2000);
+  setTimeout(()=>{ state.hasInitialState = true; warmHistoryCache(); }, 2000);
 }
 
 let connectMode = 'host';
