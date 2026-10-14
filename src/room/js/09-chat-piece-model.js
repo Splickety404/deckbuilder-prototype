@@ -254,6 +254,13 @@ function renderBoard(){
         const pivotX = dir==='left' ? extent + PIECE_W/2 : PIECE_W/2;
         const pivotY = dir==='up' ? extent + PIECE_H/2 : PIECE_H/2;
         el.style.transformOrigin = `${pivotX}px ${pivotY}px`;
+      } else {
+        // 'right'/'down': the anchor sits at the container's local (0,0). A single
+        // card only PREVIEWING a splay isn't p.splayed yet, so the pivot set above
+        // was left at CSS's default (the middle of the now-enlarged box) — which
+        // swings a rotated card's fan off diagonally. Pin it to the anchor, same
+        // as an already-splayed pile.
+        el.style.transformOrigin = `${PIECE_W/2}px ${PIECE_H/2}px`;
       }
       // A card's OWN rotation (see rotatePiece/ROTATE_CARD) rotates it around
       // its own center, same CSS mechanism as everything else in this app —
