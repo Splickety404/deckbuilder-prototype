@@ -1175,6 +1175,7 @@ function sagaDrawMany(pool, n, counts, leader, opts){
   const out = [];
   for(let i=0;i<n;i++){
     const eligible = pool.filter(c=>{
+      if(opts && opts.maxCopies) return (counts.get(c.id)||0) < opts.maxCopies; // e.g. schemes: never two of the same
       const limit = SAGA.maxCopies + ((leader.name==='Commander Koross' && cardMentions(c,'Undying Legion')) ? 1 : 0);
       return (counts.get(c.id)||0) < limit;
     });
@@ -1212,7 +1213,7 @@ function buildSagaDeck(cards, deckType, inSet){
   // Overlord only: 5 schemes first
   if(deckType==='overlord'){
     const counts = new Map();
-    sagaDrawMany(legal(cards.filter(c=>c.type==='O - Scheme')), SAGA.schemeCount, counts, leader)
+    sagaDrawMany(legal(cards.filter(c=>c.type==='O - Scheme')), SAGA.schemeCount, counts, leader, {maxCopies:1}) // all 5 schemes are different
       .forEach(c=>deck.schemeIds.push(c.id));
   }
 
