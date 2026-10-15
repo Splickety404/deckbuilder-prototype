@@ -1099,7 +1099,35 @@ const SAGA = {
   maxCopies: 2,
   mainDeckSize: 30,
   schemeCount: 5,
+  // A scheme's "quest" value comes from its deckbuilding-requirement; a deck's 5 schemes must total at least 15.
+  questValue: { empty:2, default:3, full:4 },
+  minSchemeQuest: 15,
 };
+function schemeQuest(card){
+  const v = String(card['deckbuilding-requirement']||'').trim().toLowerCase();
+  return SAGA.questValue.hasOwnProperty(v) ? SAGA.questValue[v] : SAGA.questValue.default; // blank counts as Default
+}
+function schemesQuestTotal(cards){ return cards.reduce((n,c)=>n+schemeQuest(c), 0); }
+
+// Draws the Saga deck's schemes: all different, and together worth at least minSchemeQuest quest.
+// Redraws a few times; if that still falls short (a tiny pool), swaps the lowest-quest
+// scheme for a higher-quest unused one until it's met or nothing better is left.
+function drawSagaSchemes(pool, leader){
+  let best = [];
+  for(let attempt=0; attempt<200; attempt++){
+    const drawn = sagaDrawMany(pool, SAGA.schemeCount, new Map(), leader, {maxCopies:1});
+    if(schemesQuestTotal(drawn) > schemesQuestTotal(best)) best = drawn;
+    if(schemesQuestTotal(drawn) >= SAGA.minSchemeQuest) return drawn;
+  }
+  while(schemesQuestTotal(best) < SAGA.minSchemeQuest){
+    const lowest = best.reduce((a,b)=> schemeQuest(b)<schemeQuest(a) ? b : a);
+    const better = pool.filter(c=>!best.some(b=>b.id===c.id) && schemeQuest(c)>schemeQuest(lowest));
+    const swap = randomOf(better);
+    if(!swap) break;
+    best = best.map(c=> c===lowest ? swap : c);
+  }
+  return best;
+}
 
 function rarityTier(card){
   const r = String(card.rarity||'').trim().toLowerCase();
@@ -1212,8 +1240,7 @@ function buildSagaDeck(cards, deckType, inSet){
 
   // Overlord only: 5 schemes first
   if(deckType==='overlord'){
-    const counts = new Map();
-    sagaDrawMany(legal(cards.filter(c=>c.type==='O - Scheme')), SAGA.schemeCount, counts, leader, {maxCopies:1}) // all 5 schemes are different
+    drawSagaSchemes(legal(cards.filter(c=>c.type==='O - Scheme')), leader) // 5 different schemes, 15+ quest in total
       .forEach(c=>deck.schemeIds.push(c.id));
   }
 
@@ -4126,6 +4153,11 @@ function renderDeckRulesChecklist(){
   if(isOverlord){
     const schemeCount = curDeck().schemeIds.length;
     rules.push([schemeCount===SCHEME_DECK_SIZE, `${schemeCount} / ${SCHEME_DECK_SIZE} schemes` + (schemeCount===SCHEME_DECK_SIZE?' — exact':'')]);
+
+    const schemeCards = curDeck().schemeIds.map(id=>state.byId.get(id)).filter(Boolean);
+    const quest = schemesQuestTotal(schemeCards);
+    const questShort = schemeCount>=SAGA.schemeCount && quest<SAGA.minSchemeQuest;
+    rules.push([!questShort, questShort ? `${quest} quest in the scheme deck — needs at least ${SAGA.minSchemeQuest}` : `${quest} quest in the scheme deck` + (schemeCount<SAGA.schemeCount ? ` so far (5 schemes need at least ${SAGA.minSchemeQuest})` : ` (at least ${SAGA.minSchemeQuest})`)]);
 
     const schemeCounts = {};
     curDeck().schemeIds.forEach(id=> schemeCounts[id]=(schemeCounts[id]||0)+1);

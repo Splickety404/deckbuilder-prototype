@@ -75,6 +75,11 @@ function renderDeckRulesChecklist(){
     const schemeCount = curDeck().schemeIds.length;
     rules.push([schemeCount===SCHEME_DECK_SIZE, `${schemeCount} / ${SCHEME_DECK_SIZE} schemes` + (schemeCount===SCHEME_DECK_SIZE?' — exact':'')]);
 
+    const schemeCards = curDeck().schemeIds.map(id=>state.byId.get(id)).filter(Boolean);
+    const quest = schemesQuestTotal(schemeCards);
+    const questShort = schemeCount>=SAGA.schemeCount && quest<SAGA.minSchemeQuest;
+    rules.push([!questShort, questShort ? `${quest} quest in the scheme deck — needs at least ${SAGA.minSchemeQuest}` : `${quest} quest in the scheme deck` + (schemeCount<SAGA.schemeCount ? ` so far (5 schemes need at least ${SAGA.minSchemeQuest})` : ` (at least ${SAGA.minSchemeQuest})`)]);
+
     const schemeCounts = {};
     curDeck().schemeIds.forEach(id=> schemeCounts[id]=(schemeCounts[id]||0)+1);
     const dupSchemes = Object.values(schemeCounts).filter(n=>n>1).length;

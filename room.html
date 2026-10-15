@@ -1021,7 +1021,35 @@ const SAGA = {
   maxCopies: 2,
   mainDeckSize: 30,
   schemeCount: 5,
+  // A scheme's "quest" value comes from its deckbuilding-requirement; a deck's 5 schemes must total at least 15.
+  questValue: { empty:2, default:3, full:4 },
+  minSchemeQuest: 15,
 };
+function schemeQuest(card){
+  const v = String(card['deckbuilding-requirement']||'').trim().toLowerCase();
+  return SAGA.questValue.hasOwnProperty(v) ? SAGA.questValue[v] : SAGA.questValue.default; // blank counts as Default
+}
+function schemesQuestTotal(cards){ return cards.reduce((n,c)=>n+schemeQuest(c), 0); }
+
+// Draws the Saga deck's schemes: all different, and together worth at least minSchemeQuest quest.
+// Redraws a few times; if that still falls short (a tiny pool), swaps the lowest-quest
+// scheme for a higher-quest unused one until it's met or nothing better is left.
+function drawSagaSchemes(pool, leader){
+  let best = [];
+  for(let attempt=0; attempt<200; attempt++){
+    const drawn = sagaDrawMany(pool, SAGA.schemeCount, new Map(), leader, {maxCopies:1});
+    if(schemesQuestTotal(drawn) > schemesQuestTotal(best)) best = drawn;
+    if(schemesQuestTotal(drawn) >= SAGA.minSchemeQuest) return drawn;
+  }
+  while(schemesQuestTotal(best) < SAGA.minSchemeQuest){
+    const lowest = best.reduce((a,b)=> schemeQuest(b)<schemeQuest(a) ? b : a);
+    const better = pool.filter(c=>!best.some(b=>b.id===c.id) && schemeQuest(c)>schemeQuest(lowest));
+    const swap = randomOf(better);
+    if(!swap) break;
+    best = best.map(c=> c===lowest ? swap : c);
+  }
+  return best;
+}
 
 function rarityTier(card){
   const r = String(card.rarity||'').trim().toLowerCase();
@@ -1134,8 +1162,7 @@ function buildSagaDeck(cards, deckType, inSet){
 
   // Overlord only: 5 schemes first
   if(deckType==='overlord'){
-    const counts = new Map();
-    sagaDrawMany(legal(cards.filter(c=>c.type==='O - Scheme')), SAGA.schemeCount, counts, leader, {maxCopies:1}) // all 5 schemes are different
+    drawSagaSchemes(legal(cards.filter(c=>c.type==='O - Scheme')), leader) // 5 different schemes, 15+ quest in total
       .forEach(c=>deck.schemeIds.push(c.id));
   }
 
