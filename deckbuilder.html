@@ -2702,16 +2702,17 @@ function boosterRoll(weights, available){
   return tiers[tiers.length-1];
 }
 // Picks n cards of one rarity (or, with a weights table, a rolled rarity per card) from a pool,
-// avoiding repeats inside the same booster unless the pool is too small to avoid them.
+// never repeating a card inside the same booster. If every card of the wanted rarity is already
+// in the pack, any other unused card from the pool is used instead (or the slot is skipped
+// in the unlikely case the whole pool is used up).
 function boosterPicks(pool, n, rarity, taken){
   const out = [];
   for(let i=0;i<n;i++){
     let tier = rarity;
     if(typeof rarity==='object') tier = boosterRoll(rarity, new Set(pool.map(rarityTier)));
-    let cands = pool.filter(c=>rarityTier(c)===tier);
-    if(!cands.length) cands = pool; // that rarity doesn't exist here — fall back to anything
-    const fresh = cands.filter(c=>!taken.has(c.id));
-    const c = randomOf(fresh.length ? fresh : cands);
+    const unused = pool.filter(c=>!taken.has(c.id));
+    const ofTier = unused.filter(c=>rarityTier(c)===tier);
+    const c = randomOf(ofTier.length ? ofTier : unused);
     if(!c) continue;
     taken.add(c.id);
     out.push(c);
@@ -2739,7 +2740,7 @@ function openBooster(setName){
   add(boosterPicks(mainPool, 1, BOOSTER_RARITY_ROLLS.uncommonOrRare, taken), 'Uncommon / Rare slot');
   add(boosterPicks(mainPool, 1, BOOSTER_RARITY_ROLLS.rareOrLegendary, taken), 'Rare / Legendary slot');
   // scheme slot: normal pull rates (65/30/5, Rare may upgrade to Legendary)
-  const scheme = sagaDraw(schemes);
+  const scheme = sagaDraw(schemes.filter(c=>!taken.has(c.id)));
   if(scheme){ taken.add(scheme.id); pulled.push({card:scheme, label:'Scheme'}); }
   add(boosterPicks([...mainPool, ...schemes, ...leaders], 1, BOOSTER_RARITY_ROLLS.wild, taken), 'Wild slot');
 
