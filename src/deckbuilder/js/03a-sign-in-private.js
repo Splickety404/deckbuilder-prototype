@@ -82,7 +82,6 @@ async function confirmAccessInBackground(credential, assumedGames){
     cardCacheSaveGames(who.email, who.games);
     state.games = who.games;
     initFeedbackAdmin();
-    if(typeof initCardUpload==='function') initCardUpload();
     const fresh = who.games.find(g=>g.folderId===state.currentGameFolderId);
     if(!fresh){
       toast('Your game access changed — please sign in again.');
@@ -147,7 +146,6 @@ async function onGoogleSignIn(response){
     cardCacheSaveGames(who.email, who.games);
     startWithGames(who.games);
     initFeedbackAdmin();
-    if(typeof initCardUpload==='function') initCardUpload();
   }catch(e){
     setSigninStatus('');
     setSigninChecking(false);
@@ -157,7 +155,6 @@ async function onGoogleSignIn(response){
 
 function signOut(){
   initFeedbackAdmin(true);
-  if(typeof initCardUpload==='function') initCardUpload(true);
   cardCacheClear();
   state.idToken = '';
   state.userEmail = '';
