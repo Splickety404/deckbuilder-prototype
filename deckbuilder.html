@@ -5440,13 +5440,32 @@ const PDF_JPEG_QUALITY = 0.8; // genuine, controllable compression — this was 
 // failure reported, no text fallback, just a page of near-blank cards. Guarding on size turns
 // that into a normal, counted failure (text fallback + the "N image(s) failed" count).
 const MIN_EMBEDDABLE_DIM = 100;
+// A transient failure (Google briefly throttling a burst of image requests, a dropped
+// connection) usually clears within a second or two, so each card gets a few tries with a
+// growing pause before it's counted as failed. Only network/HTTP errors are retried — a
+// "too small" placeholder is a deliberate verdict and fails straight away.
+const PDF_FETCH_ATTEMPTS = 3;
+async function urlToDataUrlWithRetry(url){
+  let lastErr;
+  for(let attempt=1; attempt<=PDF_FETCH_ATTEMPTS; attempt++){
+    try{ return await urlToDataUrl(url); }
+    catch(e){
+      lastErr = e;
+      if(e && e.noRetry) break;
+      if(attempt < PDF_FETCH_ATTEMPTS) await new Promise(r=>setTimeout(r, 800*attempt));
+    }
+  }
+  throw lastErr;
+}
 async function urlToDataUrl(url){
   const res = await fetch(url, {mode:'cors'});
   if(!res.ok) throw new Error('fetch failed: HTTP '+res.status);
   const blob = await res.blob();
   const bitmap = await createImageBitmap(blob);
   if(bitmap.width < MIN_EMBEDDABLE_DIM || bitmap.height < MIN_EMBEDDABLE_DIM){
-    throw new Error(`image came back suspiciously small (${bitmap.width}x${bitmap.height}) — likely a "can't preview" placeholder, not real art`);
+    const err = new Error(`image came back suspiciously small (${bitmap.width}x${bitmap.height}) — likely a "can't preview" placeholder, not real art`);
+    err.noRetry = true;
+    throw err;
   }
   const canvas = document.createElement('canvas');
   canvas.width = bitmap.width; canvas.height = bitmap.height;
@@ -5477,6 +5496,7 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
   const MARGIN_X=(PAGE_W-CARD_W*COLS)/2, MARGIN_Y=(PAGE_H-CARD_H*ROWS)/2;
 
   let failCount=0;
+  const failedNames=[];
   for(let i=0;i<list.length;i++){
     prog.textContent = `Rendering card ${i+1} / ${list.length}...`;
     const cellIdx = i % (COLS*ROWS);
@@ -5500,7 +5520,7 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
       // error vs. the "suspiciously small" placeholder guard above vs.
       // something else entirely — is visible in the browser console instead
       // of every failure looking identical from the outside.
-      try{ dataUrl = await urlToDataUrl(url); }catch(e){ failCount++; dataUrl=null; console.error('PDF export: art failed to embed for', card.name, `(${side})`, url, e); }
+      try{ dataUrl = await urlToDataUrlWithRetry(url); }catch(e){ failCount++; failedNames.push(card.name + (side==='back'?' (back)':'')); dataUrl=null; console.error('PDF export: art failed to embed for', card.name, `(${side})`, url, e); }
     }
     if(dataUrl){
       doc.addImage(dataUrl, 'JPEG', x, y, CARD_W, CARD_H);
@@ -5509,7 +5529,11 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
       doc.text(doc.splitTextToSize(card.name + (side==='back'?' (back)':''), CARD_W-16), x+8, y+20);
     }
   }
-  prog.textContent = failCount ? `Done, with ${failCount} image(s) that failed to embed (drawn as text instead).` : 'Done!';
+  if(failCount){
+    const uniq = [...new Set(failedNames)];
+    const shown = uniq.slice(0,10).join(', ') + (uniq.length>10 ? `, and ${uniq.length-10} more` : '');
+    prog.textContent = `Done, with ${failCount} image(s) that failed to embed (drawn as text instead): ${shown}. Try exporting again in a minute.`;
+  } else prog.textContent = 'Done!';
   doc.save(deckFileBase() + '_print_and_play.pdf');
 });
 
