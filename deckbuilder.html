@@ -1077,8 +1077,8 @@ function buildSagaDeck(cards, deckType, inSet){
   if(!leader) return { error:'No leaders found in that set.' };
   deck.leaderId = leader.id;
 
-  // Domination / Quest: 1 in 3, whatever the leader's aspect
-  const bonus = randomOf(pick(cards.filter(c=>c.type===bonusCardTypeName(deckType))));
+  // Domination / Quest: 1 in 3, but never one that shares the leader's aspect
+  const bonus = randomOf(pick(cards.filter(c=>c.type===bonusCardTypeName(deckType) && c.aspect!==leader.aspect)));
   if(bonus){ deck.bonusCardId = bonus.id; deck.bonusAspect = bonus.aspect||''; }
 
   // Stronghold / Resistance — see extraCardPoolFrom's comment on the Z-Custom placeholder
