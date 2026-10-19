@@ -67,7 +67,7 @@ const EchoDeckCodec = {
     return false;
   },
   parseTextItem(ctx, m){
-    if(ctx.section==='schemes'){ ctx.schemeNames.push(m[2].trim()); return true; }
+    if(ctx.section==='schemes'){ for(let i=0;i<(Number(m[1])||1);i++) ctx.schemeNames.push(m[2].trim()); return true; }
     return false;
   },
   finishTextImport(ctx, byName, unmatched){
@@ -76,15 +76,32 @@ const EchoDeckCodec = {
       const i = ctx.deckLines.findIndex(l=>{ const c=byName.get(l.name); return c && (c.type==='O - Overlord'||c.type==='C - Champion'); });
       if(i>=0) ctx.leaderName = byName.get(ctx.deckLines.splice(i,1)[0].name).name;
     }
+    ctx.warnings = ctx.warnings || [];
     if(ctx.deckLines){
-      // Any scheme named in the list (no "Schemes:" section needed) goes to the scheme deck, not the main deck.
+      // Any scheme named in the list (no "Schemes:" section needed) goes to the scheme deck, not
+      // the main deck. Repeats are kept as listed; the rules warning below tells the user.
       ctx.schemeNames = ctx.schemeNames || [];
       ctx.deckLines = ctx.deckLines.filter(l=>{
         const c = byName.get(l.name);
-        if(c && c._isScheme){ if(!ctx.schemeNames.includes(c.name)) ctx.schemeNames.push(c.name); return false; }
+        if(c && c._isScheme){ for(let i=0;i<l.count;i++) ctx.schemeNames.push(c.name); return false; }
         return true;
       });
+      // Domination/Quest and Stronghold/Resistance: the first one found becomes the deck's single
+      // chosen card for that slot; any extra copies (or a second different one) stay in the main deck.
+      const claim = (types, key, label)=>{
+        for(const l of ctx.deckLines){
+          const c = byName.get(l.name);
+          if(!c || !types.includes(c.type)) continue;
+          if(!ctx[key]){ ctx[key] = c.name; l.count -= 1; }
+          if(l.count>0) ctx.warnings.push(`${l.count} extra ${c.name} (${label} is limited to 1 and was left in the main deck)`);
+        }
+        ctx.deckLines = ctx.deckLines.filter(l=>l.count>0);
+      };
+      claim(['O - Domination','C - Quest'], 'bonusCardName', 'Domination/Quest');
+      claim(['O - Stronghold','C - Resistance'], 'extraCardName', 'Stronghold/Resistance');
     }
+    if(ctx.schemeNames && new Set(ctx.schemeNames).size < ctx.schemeNames.length) ctx.warnings.push('the same scheme is listed more than once');
+    if(ctx.schemeNames && ctx.schemeNames.length > SCHEME_DECK_SIZE) ctx.warnings.push(`${ctx.schemeNames.length} schemes (limit ${SCHEME_DECK_SIZE})`);
     const leaderName = ctx.leaderName || null, bonusCardName = ctx.bonusCardName || null, extraCardName = ctx.extraCardName || null;
     const bonusAspectVal = ctx.bonusAspectVal || '', schemeNames = ctx.schemeNames || [];
     const leaderCard = leaderName ? state.cards.find(c=>c.name===(byName.get(leaderName)||{}).name && (c.type==='O - Overlord'||c.type==='C - Champion')) : null;

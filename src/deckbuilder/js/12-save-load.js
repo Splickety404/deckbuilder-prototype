@@ -213,7 +213,8 @@ function importDeckFromText(text){
   curDeck().preconFileId = null;
   renderAll();
   const when = ctx.exportedAtVal && !isNaN(new Date(ctx.exportedAtVal)) ? ` (exported ${new Date(ctx.exportedAtVal).toLocaleString()})` : '';
-  toast(unmatched.length ? `Imported with ${unmatched.length} unmatched line(s): ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}` : 'Deck imported'+when+'.');
+  const warn = (ctx.warnings||[]).length ? ' Breaks deck rules: '+ctx.warnings.join('; ')+'.' : '';
+  toast(unmatched.length ? `Imported with ${unmatched.length} unmatched line(s): ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}.${warn}` : 'Deck imported'+when+'.'+warn);
 }
 
 
