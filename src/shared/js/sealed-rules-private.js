@@ -29,7 +29,11 @@ function extraCardPoolFrom(cards, deckType){
 const SAGA = {
   rarityWeights: { common:65, uncommon:30, rare:5 }, // relative weights for the rarity roll
   legendaryUpgrade: 0.10,                            // chance a Rare roll becomes Legendary
-  guaranteedFirstRare: true,                         // first main-deck draw always rolls Rare
+  // The 30 main-deck cards are drawn from fixed rarity slots (see sagaMainDeckSlots):
+  // 3 Rare (each may upgrade to Legendary), 6 Uncommon (2 of them may upgrade to Rare),
+  // 11 Common, and the rest filled Common/Uncommon by rarityWeights.
+  mainDeckPlan: { rare:3, uncommon:6, uncommonUpgradable:2, common:11 },
+  upgradeChance: 0.10,                               // chance an upgradable slot moves up one rarity
   loyaltyModifier: { loyal:5/3, standard:1, neutral:5/9 },
   maxCopies: 2,
   mainDeckSize: 30,
@@ -96,9 +100,10 @@ function loyaltyClass(card){
 // modifier (every type weight is 1). `useModifiers` is off for leaders.
 function sagaDraw(pool, opts){
   opts = opts||{};
-  const tier = rollRarity(pool, opts.forceRare);
+  const tier = opts.tier || rollRarity(pool, opts.forceRare);
   if(!tier) return null;
   const inTier = pool.filter(c=>rarityTier(c)===tier);
+  if(!inTier.length) return null;
   if(!opts.useModifiers) return randomOf(inTier);
   const weightOf = (c)=>SAGA.loyaltyModifier[loyaltyClass(c)];
   let r = Math.random()*inTier.reduce((s,c)=>s+weightOf(c),0);
@@ -133,16 +138,53 @@ function isSagaLegal(card, leader, bonusAspect){
   return leader.name==='Hob' && card.type==='C - Ally' && cardMentions(card,'Shade');
 }
 
-// Draws n cards one at a time into `counts` (id -> copies), never exceeding the copy limit.
+// The 30 main-deck slots, each {tier, upgradeTo?}: a fixed number of cards of each rarity,
+// with some slots that may (upgradeChance) move up one rarity, then "fill" slots that roll
+// Common/Uncommon by weight.
+function sagaMainDeckSlots(){
+  const plan = SAGA.mainDeckPlan, slots = [];
+  for(let i=0;i<plan.rare;i++) slots.push({ tier:'rare', upgradeTo:'legendary' });
+  for(let i=0;i<plan.uncommon;i++) slots.push(i<plan.uncommonUpgradable ? { tier:'uncommon', upgradeTo:'rare' } : { tier:'uncommon' });
+  for(let i=0;i<plan.common;i++) slots.push({ tier:'common' });
+  while(slots.length<SAGA.mainDeckSize) slots.push({ fill:true });
+  return slots.slice(0, SAGA.mainDeckSize);
+}
+// Other rarities to try, nearest first, when a slot's own rarity has nothing left to draw.
+const SAGA_TIER_FALLBACK = {
+  legendary:['rare','uncommon','common'], rare:['legendary','uncommon','common'],
+  uncommon:['common','rare','legendary'], common:['uncommon','rare','legendary'],
+};
+// Draws the card for one slot from `eligible` (cards not yet at their copy limit).
+function sagaDrawSlot(eligible, slot){
+  let tier = slot.tier;
+  if(slot.fill){
+    const w = SAGA.rarityWeights, has = {};
+    eligible.forEach(c=>{ has[rarityTier(c)] = true; });
+    const opts = ['common','uncommon'].filter(t=>has[t]);
+    if(opts.length){
+      let r = Math.random()*opts.reduce((n,t)=>n+w[t],0);
+      tier = opts[opts.length-1];
+      for(const t of opts){ r -= w[t]; if(r<=0){ tier=t; break; } }
+    } else tier = 'common'; // only Rare/Legendary left — falls through to the fallback order
+  } else if(slot.upgradeTo && Math.random()<SAGA.upgradeChance) tier = slot.upgradeTo;
+  for(const t of [tier].concat(SAGA_TIER_FALLBACK[tier])){
+    const c = sagaDraw(eligible, {useModifiers:true, tier:t});
+    if(c) return c;
+  }
+  return null;
+}
+
+// Draws cards one at a time into `counts` (id -> copies), never exceeding the copy limit.
+// `slots` (optional) is a list of rarity slots; otherwise n plain rarity-rolled draws.
 function sagaDrawMany(pool, n, counts, leader, opts){
-  const out = [];
-  for(let i=0;i<n;i++){
+  const out = [], slots = opts && opts.slots;
+  for(let i=0;i<(slots ? slots.length : n);i++){
     const eligible = pool.filter(c=>{
       if(opts && opts.maxCopies) return (counts.get(c.id)||0) < opts.maxCopies; // e.g. schemes: never two of the same
       const limit = SAGA.maxCopies + ((leader.name==='Commander Koross' && cardMentions(c,'Undying Legion')) ? 1 : 0);
       return (counts.get(c.id)||0) < limit;
     });
-    const c = sagaDraw(eligible, {useModifiers:true, forceRare: opts && opts.firstIsRare && i===0});
+    const c = slots ? sagaDrawSlot(eligible, slots[i]) : sagaDraw(eligible, {useModifiers:true});
     if(!c) break;
     counts.set(c.id, (counts.get(c.id)||0)+1);
     out.push(c);
@@ -179,9 +221,9 @@ function buildSagaDeck(cards, deckType, inSet){
       .forEach(c=>deck.schemeIds.push(c.id));
   }
 
-  // 30 main-deck cards; the first is a guaranteed Rare
+  // 30 main-deck cards, drawn from fixed rarity slots (see sagaMainDeckSlots)
   const mainPool = legal(cards.filter(c=>isMainDeckEligibleType(c, deckType)));
-  sagaDrawMany(mainPool, SAGA.mainDeckSize, deck.deckCards, leader, {firstIsRare:SAGA.guaranteedFirstRare})
+  sagaDrawMany(mainPool, SAGA.mainDeckSize, deck.deckCards, leader, {slots:sagaMainDeckSlots()})
     .forEach(c=>{ if(!deck.deckOrder.includes(c.id)) deck.deckOrder.push(c.id); });
 
   deck.expectedSize = 2 + SAGA.mainDeckSize + (deckType==='overlord' ? SAGA.schemeCount : 0);
