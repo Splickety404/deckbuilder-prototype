@@ -76,6 +76,15 @@ const EchoDeckCodec = {
       const i = ctx.deckLines.findIndex(l=>{ const c=byName.get(l.name); return c && (c.type==='O - Overlord'||c.type==='C - Champion'); });
       if(i>=0) ctx.leaderName = byName.get(ctx.deckLines.splice(i,1)[0].name).name;
     }
+    if(ctx.deckLines){
+      // Any scheme named in the list (no "Schemes:" section needed) goes to the scheme deck, not the main deck.
+      ctx.schemeNames = ctx.schemeNames || [];
+      ctx.deckLines = ctx.deckLines.filter(l=>{
+        const c = byName.get(l.name);
+        if(c && c._isScheme){ if(!ctx.schemeNames.includes(c.name)) ctx.schemeNames.push(c.name); return false; }
+        return true;
+      });
+    }
     const leaderName = ctx.leaderName || null, bonusCardName = ctx.bonusCardName || null, extraCardName = ctx.extraCardName || null;
     const bonusAspectVal = ctx.bonusAspectVal || '', schemeNames = ctx.schemeNames || [];
     const leaderCard = leaderName ? state.cards.find(c=>c.name===(byName.get(leaderName)||{}).name && (c.type==='O - Overlord'||c.type==='C - Champion')) : null;
