@@ -71,9 +71,14 @@ const EchoDeckCodec = {
     return false;
   },
   finishTextImport(ctx, byName, unmatched){
+    if(!ctx.leaderName && ctx.deckLines){
+      // No "Leader:" line (e.g. a bare pasted list) — the first Overlord/Champion card is the leader.
+      const i = ctx.deckLines.findIndex(l=>{ const c=byName.get(l.name); return c && (c.type==='O - Overlord'||c.type==='C - Champion'); });
+      if(i>=0) ctx.leaderName = byName.get(ctx.deckLines.splice(i,1)[0].name).name;
+    }
     const leaderName = ctx.leaderName || null, bonusCardName = ctx.bonusCardName || null, extraCardName = ctx.extraCardName || null;
     const bonusAspectVal = ctx.bonusAspectVal || '', schemeNames = ctx.schemeNames || [];
-    const leaderCard = leaderName ? state.cards.find(c=>c.name===leaderName && (c.type==='O - Overlord'||c.type==='C - Champion')) : null;
+    const leaderCard = leaderName ? state.cards.find(c=>c.name===(byName.get(leaderName)||{}).name && (c.type==='O - Overlord'||c.type==='C - Champion')) : null;
     if(leaderName && !leaderCard) unmatched.push(leaderName);
 
     state.deckType = leaderCard ? (leaderCard.type==='O - Overlord'?'overlord':'champion') : state.deckType;

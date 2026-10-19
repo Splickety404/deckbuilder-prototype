@@ -155,40 +155,75 @@ function importDeckFromJson(d){
   toast('Deck imported.');
 }
 
+// Smart plain-text import. Works on a bare pasted list of cards (no header needed) as well
+// as our own exported format. Recognises "3x Name", "3 Name", "Name x3", "Name" (= 1 copy),
+// matches names ignoring case/punctuation/extra spaces, and picks up an export date from a
+// line like "# Exported: …" / "Export date: …" if one is present (used for "changed since").
 function importDeckFromText(text){
-  const lines = text.split('\n').map(l=>l.trim());
+  const norm = s=> String(s).toLowerCase().replace(/[\u2018\u2019]/g,"'").replace(/[\u201c\u201d]/g,'"').replace(/'/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+  const byName = new Map(), byNorm = new Map();
+  state.cards.forEach(c=>{
+    if(!byName.has(c.name)) byName.set(c.name, c);
+    const k = norm(c.name); if(!byNorm.has(k)) byNorm.set(k, c);
+  });
+  const findCard = name=> byName.get(name) || byNorm.get(norm(name.replace(/\s*[\[(][^\])]*[\])]\s*$/, ''))) || byNorm.get(norm(name));
+
   const ctx = { section: null, exportedAtVal: null, deckLines: [] };
-  lines.forEach(line=>{
+  let deckName = '', sawCountLine = false;
+  text.split(/\r?\n/).map(l=>l.trim()).forEach(line=>{
     if(!line) return;
+    const dm = line.match(/^#?\s*(?:exported(?:\s*(?:at|on|date))?|export\s*(?:date|time|at|on)?)\s*[:\-]\s*(.+)$/i);
+    if(dm){
+      const t = Date.parse(dm[1].trim());
+      ctx.exportedAtVal = isNaN(t) ? dm[1].trim() : new Date(t).toISOString();
+      return;
+    }
     if(line.startsWith('#')){
-      const m = line.match(/^#\s*exported:\s*(.+)$/i);
-      if(m) ctx.exportedAtVal = m[1].trim();
+      const t = line.replace(/^#+\s*/, '').trim();
+      if(t && !deckName && !/^deck type:/i.test(t) && t!=='Untitled Deck') deckName = t;
       return;
     }
     if(deckCodec().parseTextLine(line, ctx)) return;
-    if(/^deck:/i.test(line)){ ctx.section='deck'; return; }
-    const m = line.match(/^(\d+)x?\s+(.+)$/i);
-    if(!m) return;
+    if(/^deck:?$/i.test(line)){ ctx.section='deck'; return; }
+    let m = line.match(/^(\d+)\s*x?\s+(.+)$/i);
+    if(!m){ const r = line.match(/^(.+?)\s+x\s*(\d+)$/i); if(r) m = [line, r[2], r[1]]; }
+    if(!m){
+      // a bare line only counts if it is exactly a card we know (so stray prose is ignored)
+      if(findCard(line) && !/:$/.test(line)) m = [line, '1', line]; else return;
+    }
     if(deckCodec().parseTextItem(ctx, m)) return;
+    sawCountLine = true;
     ctx.deckLines.push({name:m[2].trim(), count:Number(m[1])});
   });
-  const deckLines = ctx.deckLines;
-
-  const byName = new Map();
-  state.cards.forEach(c=>{ if(!byName.has(c.name)) byName.set(c.name, c); });
+  if(!ctx.deckLines.length && !sawCountLine && !ctx.leaderName) throw new Error('no cards recognized in that text');
 
   const unmatched=[];
-  deckCodec().finishTextImport(ctx, byName, unmatched);
+  deckCodec().finishTextImport(ctx, { get:findCard }, unmatched);
 
   curDeck().deckCards = new Map(); curDeck().deckOrder = [];
-  deckLines.forEach(({name,count})=>{
-    const c = byName.get(name);
-    if(c){ curDeck().deckCards.set(c.id, count); curDeck().deckOrder.push(c.id); } else unmatched.push(name);
+  ctx.deckLines.forEach(({name,count})=>{
+    const c = findCard(name);
+    if(!c){ unmatched.push(name); return; }
+    curDeck().deckCards.set(c.id, (curDeck().deckCards.get(c.id)||0) + count);
+    if(!curDeck().deckOrder.includes(c.id)) curDeck().deckOrder.push(c.id);
   });
 
-  curDeck().name = '';
+  curDeck().name = deckName;
   curDeck().sourceExportedAt = ctx.exportedAtVal;
+  curDeck().preconFileId = null;
   renderAll();
-  toast(unmatched.length ? `Imported with ${unmatched.length} unmatched line(s): ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}` : 'Deck imported.');
+  const when = ctx.exportedAtVal && !isNaN(new Date(ctx.exportedAtVal)) ? ` (exported ${new Date(ctx.exportedAtVal).toLocaleString()})` : '';
+  toast(unmatched.length ? `Imported with ${unmatched.length} unmatched line(s): ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}` : 'Deck imported'+when+'.');
 }
 
+
+// Paste-text import: any pasted decklist, with or without our header lines.
+document.getElementById('btnImportPaste').addEventListener('click', ()=>{
+  const box = document.getElementById('importPasteText');
+  if(!box.value.trim()){ toast('Paste a decklist first.'); return; }
+  try{
+    importDeckFromText(box.value);
+    box.value = '';
+    document.getElementById('loadModal').classList.add('hidden');
+  }catch(err){ toast('Import failed: '+err.message); }
+});
