@@ -8,8 +8,14 @@
 const LS_LAST_DECKTYPE_KEY = 'eoo_last_decktype';
 document.getElementById('deckTypeTabs').addEventListener('click', (e)=>{
   const t = e.target.closest('.tab'); if(!t) return;
-  if(t.dataset.type === state.deckType) return;
-  state.deckType = t.dataset.type;   // Overlord and Champion are separate decks, built in
+  // The Scheme Deck tab is a shortcut to the Overlord's scheme list (the Main/Scheme toggle below).
+  const isSchemeTab = t.dataset.type==='scheme';
+  const wantType = isSchemeTab ? 'overlord' : t.dataset.type;
+  const wantMode = isSchemeTab ? 'scheme' : 'main';
+  if(wantType === state.deckType && (wantType!=='overlord' || curDeck().overlordMode===wantMode)) return;
+  state.deckType = wantType;
+  if(wantType==='overlord') curDeck().overlordMode = wantMode;
+  // Overlord and Champion are separate decks, built in
   state.selection = new Set();       // parallel — nothing about either one is reset here.
   localStorage.setItem(LS_LAST_DECKTYPE_KEY, state.deckType);
   renderAll();

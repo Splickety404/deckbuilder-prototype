@@ -20,8 +20,19 @@ function generateSagaDeck(setName, deckType){
   d.deckCards.forEach((n,id)=>slot.deckCards.set(id,n));
   d.deckOrder.forEach(id=>slot.deckOrder.push(id));
 
+  // Animation plan: every card of the new deck flies in from the button (see 05d).
+  const byId = (id)=>state.byId.get(id);
+  const moves = [];
+  if(slot.leaderId) moves.push({card:byId(slot.leaderId), side:deckType, slot:'deck-leader-slot'});
+  if(slot.bonusCardId) moves.push({card:byId(slot.bonusCardId), side:deckType, slot:'deck-bonus-slot'});
+  if(slot.extraCardId) moves.push({card:byId(slot.extraCardId), side:deckType, slot:'deck-extra-slot'});
+  slot.deckOrder.forEach(id=>{ for(let i=0;i<(slot.deckCards.get(id)||0);i++) moves.push({card:byId(id), key:deckType}); });
+  slot.schemeIds.forEach(id=>moves.push({card:byId(id), key:'scheme'}));
+  FlyCards.begin(deckType==='overlord' ? ['overlord','scheme'] : [deckType]); // the old deck is being replaced: counts start from 0
+
   state.decks[deckType] = slot;
   renderAll();
+  FlyCards.run(document.getElementById('btnSealedDeck'), moves.filter(m=>m.card));
   const total = 1 + (res.hasBonus?1:0) + deckCountOf(slot) + slot.schemeIds.length; // leader + Domination/Quest + cards
   const expected = d.expectedSize;
   toast(`Saga deck generated from "${setName}": ${total} cards${total<expected?` (short of ${expected} — the allowed pool ran out)`:''}.`);

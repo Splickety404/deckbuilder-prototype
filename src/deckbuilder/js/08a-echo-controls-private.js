@@ -7,8 +7,10 @@
    ========================================================================= */
 EchoGame.renderTabs = function(){
   document.querySelectorAll('#deckTypeTabs .tab').forEach(t=>{
-    t.classList.toggle('active', t.dataset.type===state.deckType);
+    const schemeOpen = state.deckType==='overlord' && curDeck().overlordMode==='scheme';
+    t.classList.toggle('active', t.dataset.type==='scheme' ? schemeOpen : t.dataset.type===state.deckType && !schemeOpen);
   });
+  FlyCards.paintCounts();
 };
 
 EchoGame.renderDeckControlsExtras = function(){

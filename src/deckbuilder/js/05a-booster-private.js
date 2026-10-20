@@ -64,19 +64,22 @@ function openBooster(setName){
   // Deal them out. A leader goes in as the deck's leader if that side has none yet, otherwise
   // it's added to the deck list as an extra (flagged in the rules checklist).
   let extraLeaders = 0;
+  const moves = []; // where each card is headed, for the fly-in animation (05d)
+  FlyCards.begin();
   pulled.forEach(({card})=>{
     const side = card.type.startsWith('O - ') ? 'overlord' : 'champion';
     const slot = state.decks[side];
-    if(card.type==='O - Scheme'){ slot.schemeIds.push(card.id); return; }
+    if(card.type==='O - Scheme'){ slot.schemeIds.push(card.id); moves.push({card, key:'scheme'}); return; }
     if(card.type===leaderTypeName(side)){
-      if(!slot.leaderId){ slot.leaderId = card.id; return; }
+      if(!slot.leaderId){ slot.leaderId = card.id; moves.push({card, side, slot:'deck-leader-slot'}); return; }
       extraLeaders++;
     }
     slot.deckCards.set(card.id, (slot.deckCards.get(card.id)||0)+1);
     if(!slot.deckOrder.includes(card.id)) slot.deckOrder.push(card.id);
+    moves.push({card, key:side});
   });
   renderAll();
-  showBoosterResults(pulled);
+  FlyCards.run(document.getElementById('btnUnwrapBooster'), moves, ()=> showBoosterResults(pulled));
   if(extraLeaders) toast(`Your booster had ${extraLeaders} extra Overlord/Champion card${extraLeaders>1?'s':''} — you now have more than one in a deck. Remove one any time.`);
   else toast('Booster opened — cards added to your decks.');
 }
