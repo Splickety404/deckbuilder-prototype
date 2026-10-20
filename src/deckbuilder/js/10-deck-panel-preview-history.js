@@ -26,6 +26,7 @@ function buildDeckRow(id, card, {qty, showStepper}){
   row.className = 'deck-stack' + (card && card._isHorizontal ? ' landscape-row' : '');
   row.draggable = true;
   row.dataset.id = id;
+  if(typeof isFoil==='function' && isFoil(id)) row.classList.add('foil');
   // The game decides how many copies are legal (none are ever blocked — this only flags visually).
   const copyLimit = state.game.copyLimit(card);
   const overLimit = showStepper && qty>copyLimit;

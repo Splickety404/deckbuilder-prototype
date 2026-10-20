@@ -38,6 +38,7 @@ function renderLibrary(){
     tile.draggable = true;
     tile.dataset.id = c.id;
     if(state.selection.has(c.id)) tile.classList.add('selected');
+    if(typeof isFoil==='function' && isFoil(c.id)) tile.classList.add('foil');
 
     if(displayImageUrl(c)){
       tile.innerHTML = `${cardImageHtml(c, `loading="lazy" alt="${escapeHtml(c.name)}"`, gridImageFetchWidth())}

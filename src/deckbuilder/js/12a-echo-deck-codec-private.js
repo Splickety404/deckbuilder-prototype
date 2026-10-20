@@ -8,13 +8,14 @@
 const EchoDeckCodec = {
   saveExtras(d){
     return { overlordMode: d.overlordMode, leaderId: d.leaderId, bonusCardId: d.bonusCardId, extraCardId: d.extraCardId,
-             bonusAspect: d.bonusAspect, schemeIds: d.schemeIds };
+             bonusAspect: d.bonusAspect, schemeIds: d.schemeIds, foilIds: [...d.foilIds] };
   },
   applySaved(saved, d){
     d.overlordMode = saved.overlordMode||'main';
     d.leaderId=saved.leaderId; d.bonusAspect=saved.bonusAspect||'';
     d.bonusCardId=saved.bonusCardId||null; d.extraCardId=saved.extraCardId||null;
     d.schemeIds = saved.schemeIds||[];
+    d.foilIds = new Set(saved.foilIds||[]);
   },
   jsonFields(d){
     return {
@@ -26,6 +27,7 @@ const EchoDeckCodec = {
       extraCardName: getExtraCard()?getExtraCard().name:null,
       bonusAspect: d.bonusAspect,
       schemeIds: d.schemeIds,
+      foilIds: [...d.foilIds],
     };
   },
   applyJson(file, d){
@@ -35,6 +37,7 @@ const EchoDeckCodec = {
     d.extraCardId = file.extraCardId || null;
     d.bonusAspect = file.bonusAspect || '';
     d.schemeIds = file.schemeIds || [];
+    d.foilIds = new Set(file.foilIds || []);
   },
   textSetupLines(d){
     const leader = getLeader();

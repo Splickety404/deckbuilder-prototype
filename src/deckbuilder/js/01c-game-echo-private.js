@@ -24,6 +24,7 @@ const EchoGame = {
       leaderId:null, schemeIds:[], overlordMode:'main',
       bonusCardId:null,  // O - Domination (Overlord) / C - Quest (Champion) — its aspect drives bonusAspect below
       extraCardId:null,  // O - Stronghold (Overlord) / C - Resistance (Champion), or the Z-Custom placeholder until real cards exist
+      foilIds:new Set(), // cards in this deck that are foil (from a special booster) — display + PDF texture only
       bonusAspect:'',    // derived from bonusCardId's aspect whenever it's set — never chosen independently anymore
     };
   },

@@ -51,9 +51,10 @@ function downloadBlob(content, filename, type){
 // itself in the order you arranged it.
 function buildPrintList(){
   const list=[];
+  const foils = curDeck().foilIds || new Set();
   const pushCard = (card) => {
     if(!card) return;
-    list.push({card, side:'front'});
+    list.push({card, side:'front', foil: foils.has(card.id)});
     if(card._doubleSided) list.push({card, side:'back'});
   };
   deckCodec().printLead(curDeck()).forEach(pushCard);
@@ -137,7 +138,7 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
     const col = cellIdx % COLS, row = Math.floor(cellIdx/COLS);
     const x = MARGIN_X + col*CARD_W, y = MARGIN_Y + row*CARD_H;
 
-    const {card, side} = list[i];
+    const {card, side, foil} = list[i];
     // 900px wide comfortably clears 300 DPI at this card's ~2.4in physical width — good
     // print quality without pulling the full source resolution, which is print-production
     // scale (and was the main driver of the old PDF's large file size). force:true here
@@ -157,6 +158,7 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
     }
     if(dataUrl){
       doc.addImage(dataUrl, 'JPEG', x, y, CARD_W, CARD_H);
+      if(foil && typeof drawFoilTexture==='function') drawFoilTexture(doc, x, y, CARD_W, CARD_H); // foil cards get a subtle shimmer texture
     } else {
       doc.setFontSize(10);
       doc.text(doc.splitTextToSize(card.name + (side==='back'?' (back)':''), CARD_W-16), x+8, y+20);

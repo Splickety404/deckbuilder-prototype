@@ -211,6 +211,7 @@ function renderCurrentViewStats(){
 
 function renderPickChip(elId, card, placeholderText, selectedId, onRemove){
   const el = document.getElementById(elId);
+  el.classList.toggle('foil', !!card && isFoil(card.id));
   if(!card && selectedId){
     // A card WAS chosen, but no longer exists in the live feed — distinct from
     // "nothing chosen" (which would show the plain placeholder instead).

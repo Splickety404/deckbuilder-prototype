@@ -93,7 +93,7 @@ const FlyCards = (()=>{
       if(Math.min(y0, ey) < lift + 30) lift = -lift; // near the top edge: bulge downward instead so the card never leaves the screen
 
       const fly = document.createElement('div');
-      fly.className = 'fly-card';
+      fly.className = 'fly-card' + (m.foil ? ' foil' : '');
       const url = displayImageUrl(m.card);
       if(url) fly.innerHTML = `<img src="${escapeHtml(sizedUrl(url,150))}" class="${m.card._rotate?'sideways':''}" alt="">`;
       document.body.appendChild(fly);

@@ -534,6 +534,16 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
 .fly-card img{width:100%;height:100%;object-fit:cover;display:block;}
 .fly-card img.sideways{width:98px;height:70px;flex:none;transform:rotate(90deg);}
 #deckTypeTabs .tab[data-type="champion"]{margin-left:12px;} /* Overlord + Scheme Deck sit together; Champion is set apart */
+
+/* ---------- Foil cards (special booster) ---------- */
+.card-tile.foil,.deck-stack.foil,.leader-chip.foil{position:relative;}
+.foil{box-shadow:0 0 0 1px rgba(255,214,120,.85),0 0 10px rgba(170,130,255,.55);}
+.foil::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;mix-blend-mode:screen;
+  background:linear-gradient(115deg,transparent 22%,rgba(255,255,255,.55) 34%,rgba(120,210,255,.38) 41%,rgba(255,140,230,.38) 48%,rgba(255,240,140,.42) 55%,transparent 67%);
+  background-size:260% 100%;animation:foil-sheen 3.4s linear infinite;}
+.foil::before{content:"\2726";position:absolute;top:2px;right:4px;z-index:2;font-size:12px;line-height:1;color:#ffe9a8;text-shadow:0 0 6px #b98cff;pointer-events:none;}
+@keyframes foil-sheen{from{background-position:130% 0;}to{background-position:-130% 0;}}
+@media (prefers-reduced-motion: reduce){.foil::after{animation:none;background-position:50% 0;}}
 </style>
 </head>
 <body>
@@ -1694,6 +1704,7 @@ const EchoGame = {
       leaderId:null, schemeIds:[], overlordMode:'main',
       bonusCardId:null,  // O - Domination (Overlord) / C - Quest (Champion) — its aspect drives bonusAspect below
       extraCardId:null,  // O - Stronghold (Overlord) / C - Resistance (Champion), or the Z-Custom placeholder until real cards exist
+      foilIds:new Set(), // cards in this deck that are foil (from a special booster) — display + PDF texture only
       bonusAspect:'',    // derived from bonusCardId's aspect whenever it's set — never chosen independently anymore
     };
   },
@@ -2585,39 +2596,27 @@ function openSealedSetPicker(generatorFn){
    UNWRAP A BOOSTER (private). Opens one booster and ADDS its cards to the
    Overlord and Champion decks (and the Overlord scheme list) — nothing already
    in a deck is removed, so it can be clicked as many times as you like.
+   Slot layout: 3 Champion Commons, 4 Overlord Commons, 2 Champion + 2 Overlord Uncommons (the 2nd of
+   each may roll Rare), 1 Rare (may roll Legendary), 1 Scheme. One pack in three is "special": it has
+   3 Overlord Commons instead of 4, plus a foil card.
    Reuses rarityTier / sagaDraw / isMainDeckEligibleType from the Saga generator.
    ========================================================================= */
-const BOOSTER_RARITY_ROLLS = {
-  uncommonOrRare:  { uncommon:90, rare:10 },
-  rareOrLegendary: { rare:90, legendary:10 },
-  wild:            { legendary:3, rare:6, uncommon:31, common:60 },
-};
+const BOOSTER_UPGRADE_CHANCE = 0.10;   // an Uncommon slot may roll Rare; the Rare slot may roll Legendary
+const BOOSTER_SPECIAL_CHANCE = 1/3;    // 1 pack in 3 swaps the 4th Overlord Common for a foil card
 let boosterSetName = null; // the set you picked; remembered for the rest of the session
 
-function boosterRoll(weights, available){
-  const tiers = Object.keys(weights).filter(t=>available.has(t));
-  if(!tiers.length) return null;
-  let r = Math.random()*tiers.reduce((s,t)=>s+weights[t],0);
-  for(const t of tiers){ r -= weights[t]; if(r<=0) return t; }
-  return tiers[tiers.length-1];
-}
-// Picks n cards of one rarity (or, with a weights table, a rolled rarity per card) from a pool,
-// never repeating a card inside the same booster. If every card of the wanted rarity is already
-// in the pack, any other unused card from the pool is used instead (or the slot is skipped
-// in the unlikely case the whole pool is used up).
-function boosterPicks(pool, n, rarity, taken){
-  const out = [];
-  for(let i=0;i<n;i++){
-    let tier = rarity;
-    if(typeof rarity==='object') tier = boosterRoll(rarity, new Set(pool.map(rarityTier)));
-    const unused = pool.filter(c=>!taken.has(c.id));
-    const ofTier = unused.filter(c=>rarityTier(c)===tier);
-    const c = randomOf(ofTier.length ? ofTier : unused);
-    if(!c) continue;
-    taken.add(c.id);
-    out.push(c);
-  }
-  return out;
+// Picks one card of a rarity from a pool, never repeating a card inside the same booster.
+// `upgradeTo` (optional) is the rarity it has a 10% chance to become instead; if no card of the
+// wanted rarity is left, the slot's base rarity is used, then any unused card from the pool
+// (the slot is skipped only if the whole pool is used up).
+function boosterPick(pool, tier, taken, upgradeTo){
+  const unused = pool.filter(c=>!taken.has(c.id));
+  const want = (upgradeTo && Math.random()<BOOSTER_UPGRADE_CHANCE) ? upgradeTo : tier;
+  let cands = unused.filter(c=>rarityTier(c)===want);
+  if(!cands.length) cands = unused.filter(c=>rarityTier(c)===tier);
+  const c = randomOf(cands.length ? cands : unused);
+  if(c) taken.add(c.id);
+  return c;
 }
 
 function openBooster(setName){
@@ -2626,44 +2625,63 @@ function openBooster(setName){
   const champ = inSet.filter(c=>isMainDeckEligibleType(c,'champion'));
   const overl = inSet.filter(c=>isMainDeckEligibleType(c,'overlord'));
   const schemes = inSet.filter(c=>c.type==='O - Scheme');
-  const leaders = inSet.filter(c=>c.type===leaderTypeName('overlord') || c.type===leaderTypeName('champion'));
   const mainPool = [...champ, ...overl];
   if(!mainPool.length){ toast('No cards found in that set.'); return; }
   const taken = new Set();
   const pulled = [];
-  const add = (cards, label)=> cards.forEach(c=>pulled.push({card:c, label}));
+  const slot = (pool, tier, upgradeTo, extra)=>{
+    const c = boosterPick(pool, tier, taken, upgradeTo);
+    if(c) pulled.push({card:c, ...extra});
+  };
 
-  add(boosterPicks(champ, 3, 'common', taken), 'Common');
-  add(boosterPicks(overl, 4, 'common', taken), 'Common');
-  add(boosterPicks(champ, 1, 'uncommon', taken), 'Uncommon');
-  add(boosterPicks(overl, 1, 'uncommon', taken), 'Uncommon');
-  add(boosterPicks(mainPool, 1, BOOSTER_RARITY_ROLLS.uncommonOrRare, taken), 'Uncommon / Rare slot');
-  add(boosterPicks(mainPool, 1, BOOSTER_RARITY_ROLLS.rareOrLegendary, taken), 'Rare / Legendary slot');
+  const special = Math.random() < BOOSTER_SPECIAL_CHANCE;
+  for(let i=0;i<3;i++) slot(champ, 'common');
+  for(let i=0;i<(special?3:4);i++) slot(overl, 'common');
+  slot(champ, 'uncommon');
+  slot(champ, 'uncommon', 'rare');
+  slot(overl, 'uncommon');
+  slot(overl, 'uncommon', 'rare');
+  slot(mainPool, 'rare', 'legendary');
+  if(special){ // the foil: any card in the game (any set), shown foiled in the deckbuilder and printed with a shimmer texture
+    const foilPool = state.cards.filter(c=>!taken.has(c.id) && /^[OC] - /.test(c.type));
+    const f = randomOf(foilPool);
+    if(f){ taken.add(f.id); pulled.push({card:f, foil:true}); }
+  }
   // scheme slot: normal pull rates (65/30/5, Rare may upgrade to Legendary)
   const scheme = sagaDraw(schemes.filter(c=>!taken.has(c.id)));
-  if(scheme){ taken.add(scheme.id); pulled.push({card:scheme, label:'Scheme'}); }
-  add(boosterPicks([...mainPool, ...schemes, ...leaders], 1, BOOSTER_RARITY_ROLLS.wild, taken), 'Wild slot');
+  if(scheme){ taken.add(scheme.id); pulled.push({card:scheme}); }
 
-  // Deal them out. A leader goes in as the deck's leader if that side has none yet, otherwise
-  // it's added to the deck list as an extra (flagged in the rules checklist).
-  let extraLeaders = 0;
+  // Deal them out. A leader / Domination-Quest / Stronghold-Resistance goes into its own slot if
+  // that slot is empty, otherwise it's added to the deck list as an extra (flagged in the rules
+  // checklist).
+  let extras = 0;
   const moves = []; // where each card is headed, for the fly-in animation (05d)
   FlyCards.begin();
-  pulled.forEach(({card})=>{
+  pulled.forEach(({card, foil})=>{
     const side = card.type.startsWith('O - ') ? 'overlord' : 'champion';
-    const slot = state.decks[side];
-    if(card.type==='O - Scheme'){ slot.schemeIds.push(card.id); moves.push({card, key:'scheme'}); return; }
-    if(card.type===leaderTypeName(side)){
-      if(!slot.leaderId){ slot.leaderId = card.id; moves.push({card, side, slot:'deck-leader-slot'}); return; }
-      extraLeaders++;
+    const deck = state.decks[side];
+    if(foil) deck.foilIds.add(card.id);
+    if(card.type==='O - Scheme'){ deck.schemeIds.push(card.id); moves.push({card, key:'scheme', foil}); return; }
+    const own = [['leaderId', leaderTypeName(side), 'deck-leader-slot'],
+                 ['bonusCardId', bonusCardTypeName(side), 'deck-bonus-slot'],
+                 ['extraCardId', extraCardTypeName(side), 'deck-extra-slot']].find(([,type])=>card.type===type);
+    if(own){
+      if(!deck[own[0]]){
+        deck[own[0]] = card.id;
+        if(own[0]==='bonusCardId') deck.bonusAspect = card.aspect || deck.bonusAspect;
+        moves.push({card, side, slot:own[2], foil}); return;
+      }
+      extras++;
     }
-    slot.deckCards.set(card.id, (slot.deckCards.get(card.id)||0)+1);
-    if(!slot.deckOrder.includes(card.id)) slot.deckOrder.push(card.id);
-    moves.push({card, key:side});
+    deck.deckCards.set(card.id, (deck.deckCards.get(card.id)||0)+1);
+    if(!deck.deckOrder.includes(card.id)) deck.deckOrder.push(card.id);
+    moves.push({card, key:side, foil});
   });
   renderAll();
   FlyCards.run(document.getElementById('btnUnwrapBooster'), moves);
-  if(extraLeaders) toast(`Your booster had ${extraLeaders} extra Overlord/Champion card${extraLeaders>1?'s':''} — you now have more than one in a deck. Remove one any time.`);
+  const foilCard = pulled.find(p=>p.foil);
+  if(extras) toast(`Your booster had ${extras} extra leader/setup card${extras>1?'s':''} — you now have more than one in a deck. Remove one any time.`);
+  else if(foilCard) toast(`Special booster! ✦ Foil: ${foilCard.card.name}`);
   else toast('Booster opened — cards added to your decks.');
 }
 
@@ -2974,7 +2992,7 @@ const FlyCards = (()=>{
       if(Math.min(y0, ey) < lift + 30) lift = -lift; // near the top edge: bulge downward instead so the card never leaves the screen
 
       const fly = document.createElement('div');
-      fly.className = 'fly-card';
+      fly.className = 'fly-card' + (m.foil ? ' foil' : '');
       const url = displayImageUrl(m.card);
       if(url) fly.innerHTML = `<img src="${escapeHtml(sizedUrl(url,150))}" class="${m.card._rotate?'sideways':''}" alt="">`;
       document.body.appendChild(fly);
@@ -3019,6 +3037,51 @@ const FlyCards = (()=>{
 
   return { begin, run, paintCounts };
 })();
+/* =========================================================================
+   FOIL (private). A special booster's foil card is remembered per deck (deck.foilIds, saved with
+   the deck). It's purely cosmetic: a shimmering highlight in the deckbuilder (CSS .foil) and a
+   subtle texture overlay on the PDF export (drawFoilTexture, used by 13-export.js).
+   ========================================================================= */
+// Is this card a foil in the deck being edited? (Only while it's actually in that deck.)
+function isFoil(id){
+  const d = curDeck();
+  if(!d || !d.foilIds || !d.foilIds.has(id)) return false;
+  return (d.deckCards.get(id)||0)>0 || d.schemeIds.includes(id) ||
+         d.leaderId===id || d.bonusCardId===id || d.extraCardId===id;
+}
+
+// Subtle holographic texture for a printed card: thin rainbow diagonal lines at ~10% opacity plus a
+// few small white glints, clipped to the card's rectangle. Transparent enough to leave text readable.
+function drawFoilTexture(doc, x, y, w, h){
+  const hsl = (hue)=>{ // hue 0-360 → soft pastel rgb
+    const f = (n)=>{ const k=(n+hue/30)%12; return Math.round(255*(0.78 - 0.22*Math.max(-1, Math.min(k-3, 9-k, 1)))); };
+    return [f(0), f(8), f(4)];
+  };
+  const GState = doc.GState;
+  if(!GState) return;
+  doc.saveGraphicsState();
+  doc.setGState(new GState({opacity:0.11}));
+  doc.setLineWidth(1.6);
+  const gap = 5;
+  for(let c=0, i=0; c < w+h; c+=gap, i++){
+    // line x + y = c (relative to the card's top-left), clipped to the card
+    const x1 = Math.min(c, w), y1 = c - x1;
+    const y2 = Math.min(c, h), x2 = c - y2;
+    if(y1>h || x2>w) continue;
+    const [r,g,b] = hsl((i*14)%360);
+    doc.setDrawColor(r,g,b);
+    doc.line(x+x1, y+y1, x+x2, y+y2);
+  }
+  doc.setGState(new GState({opacity:0.45}));
+  doc.setDrawColor(255,255,255); doc.setLineWidth(0.7);
+  let seed = 7;
+  const rnd = ()=>{ seed = (seed*9301+49297)%233280; return seed/233280; };
+  for(let i=0;i<26;i++){ // little four-point glints
+    const gx = x + 8 + rnd()*(w-16), gy = y + 8 + rnd()*(h-16), s = 1.5 + rnd()*2.5;
+    doc.line(gx-s, gy, gx+s, gy); doc.line(gx, gy-s, gx, gy+s);
+  }
+  doc.restoreGraphicsState();
+}
 /* =========================================================================
    DYNAMIC SCHEMA — filter/detail fields are derived from whatever columns the
    sheet actually has, so adding/removing a (non-structural) column just works.
@@ -3381,6 +3444,7 @@ function renderLibrary(){
     tile.draggable = true;
     tile.dataset.id = c.id;
     if(state.selection.has(c.id)) tile.classList.add('selected');
+    if(typeof isFoil==='function' && isFoil(c.id)) tile.classList.add('foil');
 
     if(displayImageUrl(c)){
       tile.innerHTML = `${cardImageHtml(c, `loading="lazy" alt="${escapeHtml(c.name)}"`, gridImageFetchWidth())}
@@ -3649,6 +3713,7 @@ function renderCurrentViewStats(){
 
 function renderPickChip(elId, card, placeholderText, selectedId, onRemove){
   const el = document.getElementById(elId);
+  el.classList.toggle('foil', !!card && isFoil(card.id));
   if(!card && selectedId){
     // A card WAS chosen, but no longer exists in the live feed — distinct from
     // "nothing chosen" (which would show the plain placeholder instead).
@@ -3868,6 +3933,7 @@ function buildDeckRow(id, card, {qty, showStepper}){
   row.className = 'deck-stack' + (card && card._isHorizontal ? ' landscape-row' : '');
   row.draggable = true;
   row.dataset.id = id;
+  if(typeof isFoil==='function' && isFoil(id)) row.classList.add('foil');
   // The game decides how many copies are legal (none are ever blocked — this only flags visually).
   const copyLimit = state.game.copyLimit(card);
   const overLimit = showStepper && qty>copyLimit;
@@ -4665,13 +4731,14 @@ document.getElementById('btnImportPaste').addEventListener('click', ()=>{
 const EchoDeckCodec = {
   saveExtras(d){
     return { overlordMode: d.overlordMode, leaderId: d.leaderId, bonusCardId: d.bonusCardId, extraCardId: d.extraCardId,
-             bonusAspect: d.bonusAspect, schemeIds: d.schemeIds };
+             bonusAspect: d.bonusAspect, schemeIds: d.schemeIds, foilIds: [...d.foilIds] };
   },
   applySaved(saved, d){
     d.overlordMode = saved.overlordMode||'main';
     d.leaderId=saved.leaderId; d.bonusAspect=saved.bonusAspect||'';
     d.bonusCardId=saved.bonusCardId||null; d.extraCardId=saved.extraCardId||null;
     d.schemeIds = saved.schemeIds||[];
+    d.foilIds = new Set(saved.foilIds||[]);
   },
   jsonFields(d){
     return {
@@ -4683,6 +4750,7 @@ const EchoDeckCodec = {
       extraCardName: getExtraCard()?getExtraCard().name:null,
       bonusAspect: d.bonusAspect,
       schemeIds: d.schemeIds,
+      foilIds: [...d.foilIds],
     };
   },
   applyJson(file, d){
@@ -4692,6 +4760,7 @@ const EchoDeckCodec = {
     d.extraCardId = file.extraCardId || null;
     d.bonusAspect = file.bonusAspect || '';
     d.schemeIds = file.schemeIds || [];
+    d.foilIds = new Set(file.foilIds || []);
   },
   textSetupLines(d){
     const leader = getLeader();
@@ -4851,9 +4920,10 @@ function downloadBlob(content, filename, type){
 // itself in the order you arranged it.
 function buildPrintList(){
   const list=[];
+  const foils = curDeck().foilIds || new Set();
   const pushCard = (card) => {
     if(!card) return;
-    list.push({card, side:'front'});
+    list.push({card, side:'front', foil: foils.has(card.id)});
     if(card._doubleSided) list.push({card, side:'back'});
   };
   deckCodec().printLead(curDeck()).forEach(pushCard);
@@ -4937,7 +5007,7 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
     const col = cellIdx % COLS, row = Math.floor(cellIdx/COLS);
     const x = MARGIN_X + col*CARD_W, y = MARGIN_Y + row*CARD_H;
 
-    const {card, side} = list[i];
+    const {card, side, foil} = list[i];
     // 900px wide comfortably clears 300 DPI at this card's ~2.4in physical width — good
     // print quality without pulling the full source resolution, which is print-production
     // scale (and was the main driver of the old PDF's large file size). force:true here
@@ -4957,6 +5027,7 @@ document.getElementById('optExportPdf').addEventListener('click', async ()=>{
     }
     if(dataUrl){
       doc.addImage(dataUrl, 'JPEG', x, y, CARD_W, CARD_H);
+      if(foil && typeof drawFoilTexture==='function') drawFoilTexture(doc, x, y, CARD_W, CARD_H); // foil cards get a subtle shimmer texture
     } else {
       doc.setFontSize(10);
       doc.text(doc.splitTextToSize(card.name + (side==='back'?' (back)':''), CARD_W-16), x+8, y+20);
