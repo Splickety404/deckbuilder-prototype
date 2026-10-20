@@ -5,57 +5,16 @@
    Slot layout: 3 Champion Commons, 4 Overlord Commons, 2 Champion + 2 Overlord Uncommons (the 2nd of
    each may roll Rare), 1 Rare (may roll Legendary), 1 Scheme. One pack in three is "special": it has
    3 Overlord Commons instead of 4, plus a foil card.
-   Reuses rarityTier / sagaDraw / isMainDeckEligibleType from the Saga generator.
+   The slot rules themselves live in src/shared/js/booster-rules-private.js.
    ========================================================================= */
-const BOOSTER_UPGRADE_CHANCE = 0.10;   // an Uncommon slot may roll Rare; the Rare slot may roll Legendary
-const BOOSTER_SPECIAL_CHANCE = 1/3;    // 1 pack in 3 swaps the 4th Overlord Common for a foil card
 let boosterSetName = null; // the set you picked; remembered for the rest of the session
 
-// Picks one card of a rarity from a pool, never repeating a card inside the same booster.
-// `upgradeTo` (optional) is the rarity it has a 10% chance to become instead; if no card of the
-// wanted rarity is left, the slot's base rarity is used, then any unused card from the pool
-// (the slot is skipped only if the whole pool is used up).
-function boosterPick(pool, tier, taken, upgradeTo){
-  const unused = pool.filter(c=>!taken.has(c.id));
-  const want = (upgradeTo && Math.random()<BOOSTER_UPGRADE_CHANCE) ? upgradeTo : tier;
-  let cands = unused.filter(c=>rarityTier(c)===want);
-  if(!cands.length) cands = unused.filter(c=>rarityTier(c)===tier);
-  const c = randomOf(cands.length ? cands : unused);
-  if(c) taken.add(c.id);
-  return c;
-}
-
 function openBooster(setName){
-  const bySet = (c) => (c._setNames && c._setNames.length) ? c._setNames.includes(setName) : c._setName===setName;
-  const inSet = state.cards.filter(bySet);
-  const champ = inSet.filter(c=>isMainDeckEligibleType(c,'champion'));
-  const overl = inSet.filter(c=>isMainDeckEligibleType(c,'overlord'));
-  const schemes = inSet.filter(c=>c.type==='O - Scheme');
-  const mainPool = [...champ, ...overl];
-  if(!mainPool.length){ toast('No cards found in that set.'); return; }
-  const taken = new Set();
-  const pulled = [];
-  const slot = (pool, tier, upgradeTo, extra)=>{
-    const c = boosterPick(pool, tier, taken, upgradeTo);
-    if(c) pulled.push({card:c, ...extra});
-  };
-
-  const special = Math.random() < BOOSTER_SPECIAL_CHANCE;
-  for(let i=0;i<3;i++) slot(champ, 'common');
-  for(let i=0;i<(special?3:4);i++) slot(overl, 'common');
-  slot(champ, 'uncommon');
-  slot(champ, 'uncommon', 'rare');
-  slot(overl, 'uncommon');
-  slot(overl, 'uncommon', 'rare');
-  slot(mainPool, 'rare', 'legendary');
-  if(special){ // the foil: any card in the game (any set), shown foiled in the deckbuilder and printed with a shimmer texture
-    const foilPool = state.cards.filter(c=>!taken.has(c.id) && /^[OC] - /.test(c.type));
-    const f = randomOf(foilPool);
-    if(f){ taken.add(f.id); pulled.push({card:f, foil:true}); }
-  }
-  // scheme slot: normal pull rates (65/30/5, Rare may upgrade to Legendary)
-  const scheme = sagaDraw(schemes.filter(c=>!taken.has(c.id)));
-  if(scheme){ taken.add(scheme.id); pulled.push({card:scheme}); }
+  // What's in the pack is decided by rollBooster (src/shared/js/booster-rules-private.js, also used
+  // by the booster generation script); everything below just deals the cards into the decks.
+  const roll = rollBooster(state.cards, setName);
+  if(roll.error){ toast(roll.error); return; }
+  const pulled = roll.pulled;
 
   // Deal them out. A leader / Domination-Quest / Stronghold-Resistance goes into its own slot if
   // that slot is empty, otherwise it's added to the deck list as an extra (flagged in the rules

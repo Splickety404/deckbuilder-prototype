@@ -95,10 +95,32 @@ After the 30 cards are drawn, a deck that contains **at least one** card of a tr
 
 ---
 
+## 5. Booster packs ("Unwrap a Booster")
+
+A booster is 13 cards, added to your decks (nothing is removed). Source: `src/shared/js/booster-rules-private.js`; the dealing into decks is in `05a-booster-private.js`. Full detail in `BOOSTER-GENERATION-GUIDE.md`.
+
+| Slots | Pool | Rarity |
+|---|---|---|
+| 3 | Champion main-deck cards | Common |
+| 4 | Overlord main-deck cards (not Schemes) | Common |
+| 1 | Champion | Uncommon |
+| 1 | Champion | Uncommon, 10% chance to be Rare |
+| 1 | Overlord | Uncommon |
+| 1 | Overlord | Uncommon, 10% chance to be Rare |
+| 1 | Either side (not Schemes) | Rare, 10% chance to be Legendary |
+| 1 | Schemes | normal pull rates (65/30/5, Rare may become Legendary) |
+
+**Special packs (1 in 3):** 3 Overlord Commons instead of 4, plus **1 foil card**, which is any Overlord/Champion card in the whole game. Foil is cosmetic: a shimmering highlight in the deckbuilder and a faint texture on PDF export.
+
+No card repeats inside one pack. If a slot's rarity has nothing left, its base rarity is used, then any unused card of that pool.
+
+---
+
 ## Constants reference
 
 ```
 Manual:  DECK_LIMIT 50 · MAX_COPIES 3 · SCHEME_DECK_SIZE 5 · schemes 1 copy
+Booster: upgrade chance 0.10 · special pack chance 1/3 · 13 cards
 Saga:    mainDeckSize 30 · schemeCount 5 · maxCopies 2 · minSchemeQuest 15
          rarityWeights {common 65, uncommon 30, rare 5} · legendaryUpgrade 0.10 · upgradeChance 0.10
          mainDeckPlan {rare 3, uncommon 6, uncommonUpgradable 2, common 11} · rest fill

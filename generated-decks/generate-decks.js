@@ -5,7 +5,8 @@ const REPO='/Users/smcbride/deckbuilder-prototype';
 const OUT=path.join(REPO,'generated-decks');fs.mkdirSync(OUT,{recursive:true});
 // --- real rules file, loaded as-is
 const ctx={console,Math};vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(REPO+'/src/shared/js/sealed-rules-private.js','utf8')+'\nthis.buildSagaDeck=buildSagaDeck;',ctx);
+// the calibrated per-card weights must be loaded first (the rules read SAGA_CARD_WEIGHTS), exactly as the built app does
+vm.runInContext(fs.readFileSync(REPO+'/src/shared/js/saga-weights-private.js','utf8')+fs.readFileSync(REPO+'/src/shared/js/sealed-rules-private.js','utf8')+'\nthis.buildSagaDeck=buildSagaDeck;',ctx);
 // --- CSV parse
 function parseCSV(t){const rows=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}else if(c=='"')q=true;else if(c==','){r.push(f);f=''}else if(c=='\n'){r.push(f);rows.push(r);r=[];f=''}else if(c!='\r')f+=c}if(f||r.length){r.push(f);rows.push(r)}return rows}
 const rows=parseCSV(fs.readFileSync(REPO+'/EOO Set 1 b9b4147d-f7f0-4b8f-a74c-a2af26207ce3 - Sheet1.csv','utf8'));
@@ -25,12 +26,12 @@ for(const [side,n] of [['champion',6],['overlord',6]]) for(let i=0;i<n;i++){
   decks.push({side,leader,bonus:byId.get(d.bonusCardId),extra:byId.get(d.extraCardId),schemes:d.schemeIds.map(id=>byId.get(id)),main:d.deckOrder.map(id=>[byId.get(id),d.deckCards.get(id)]),lead,deckList,name:`${side==='champion'?'Champion':'Overlord'} ${i+1} - ${leader.name}`});
 }
 // --- CSV (same column-per-deck layout as the Office League decks sheet)
-const cols=decks.map(d=>{const c=[d.name,d.leader.name,d.bonus?d.bonus.name:'',d.extra?d.extra.name:''];d.schemes.forEach(s=>c.push(s.name));d.main.slice().sort((a,b)=>a[0].name.localeCompare(b[0].name)).forEach(([card,k])=>c.push(card.name+(k>1?' x'+k:'')));return c});
+const cols=decks.map(d=>{const c=[d.name,d.leader.name,d.bonus?d.bonus.name:'',d.extra?d.extra.name:''];d.schemes.forEach(s=>c.push(s.name));while(c.length<4+5)c.push('');d.main.slice().sort((a,b)=>a[0].name.localeCompare(b[0].name)).forEach(([card,k])=>c.push(card.name+(k>1?' x'+k:'')));return c});
 const labels=['Deck','Leader','Domination / Quest','Stronghold / Resistance'];
 const max=Math.max(...cols.map(c=>c.length));
 const esc=s=>/[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
 const lines=[];
-for(let r=0;r<max;r++){const lab=r<4?labels[r]:(r<4+Math.max(...decks.map(d=>d.schemes.length))?'Scheme':'Card');lines.push([lab,...cols.map(c=>c[r]||'')].map(esc).join(','));}
+for(let r=0;r<max;r++){const lab=r<4?labels[r]:(r<4+5?'Scheme':'Card');lines.push([lab,...cols.map(c=>c[r]||'')].map(esc).join(','));}
 fs.writeFileSync(path.join(OUT,'generated-decks.csv'),lines.join('\n')+'\n');
 // --- PDF, mirroring optExportPdf
 const sizedUrl=u=>{const b=u.split('#')[0],q=b.indexOf('?');return q===-1?b+'=w900':b.slice(0,q)+'=w900'+b.slice(q)};
