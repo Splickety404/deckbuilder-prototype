@@ -60,3 +60,4 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
 .fly-card{position:fixed;left:0;top:0;width:70px;height:98px;z-index:600;pointer-events:none;border-radius:6px;overflow:hidden;background:var(--surface-2);box-shadow:0 4px 14px rgba(0,0,0,.45);will-change:transform;display:flex;align-items:center;justify-content:center;}
 .fly-card img{width:100%;height:100%;object-fit:cover;display:block;}
 .fly-card img.sideways{width:98px;height:70px;flex:none;transform:rotate(90deg);}
+#deckTypeTabs .tab[data-type="champion"]{margin-left:12px;} /* Overlord + Scheme Deck sit together; Champion is set apart */

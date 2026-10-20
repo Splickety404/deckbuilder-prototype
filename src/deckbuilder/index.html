@@ -99,8 +99,8 @@
 <!--PRIVATE-BEGIN-->
     <div class="tab-group" id="deckTypeTabs">
       <div class="tab" data-type="overlord">Overlord <span class="tab-count" data-count="overlord">0</span></div>
-      <div class="tab" data-type="champion">Champion <span class="tab-count" data-count="champion">0</span></div>
       <div class="tab" data-type="scheme">Scheme Deck <span class="tab-count" data-count="scheme">0</span></div>
+      <div class="tab" data-type="champion">Champion <span class="tab-count" data-count="champion">0</span></div>
     </div>
     <div class="btn" id="btnFeedbackInbox" style="display:none;" title="Read the card feedback people have sent">Feedback</div>
     <div class="btn" id="btnUnwrapBooster" title="Open a booster pack and add its cards to your Overlord and Champion decks — you can open as many as you like">Unwrap a Booster</div>
@@ -292,16 +292,6 @@
 
 
 <!--PRIVATE-BEGIN-->
-  <!-- Booster results -->
-  <div class="modal-overlay hidden" id="boosterModal">
-    <div class="modal-box" style="width:min(460px,92vw);">
-      <div class="modal-header"><h2>Your Booster</h2><div class="btn btn-icon" data-close="boosterModal">✕</div></div>
-      <div class="modal-body">
-        <p style="font-size:13px;color:var(--text-soft);margin-top:0;">These cards were added to your decks.</p>
-        <div id="boosterResultList"></div>
-      </div>
-    </div>
-  </div>
   <!-- Feedback inbox (owner only) -->
   <div class="modal-overlay hidden" id="feedbackInboxModal">
     <div class="modal-box" style="width:min(720px,94vw);">

@@ -79,18 +79,9 @@ function openBooster(setName){
     moves.push({card, key:side});
   });
   renderAll();
-  FlyCards.run(document.getElementById('btnUnwrapBooster'), moves, ()=> showBoosterResults(pulled));
+  FlyCards.run(document.getElementById('btnUnwrapBooster'), moves);
   if(extraLeaders) toast(`Your booster had ${extraLeaders} extra Overlord/Champion card${extraLeaders>1?'s':''} — you now have more than one in a deck. Remove one any time.`);
   else toast('Booster opened — cards added to your decks.');
-}
-
-function showBoosterResults(pulled){
-  const rows = pulled.map(({card,label})=>{
-    const side = card.type.startsWith('O - ') ? 'Overlord' : 'Champion';
-    return `<div class="row-item"><span>${escapeHtml(card.name)} <span style="color:var(--text-soft);font-size:12px;">— ${escapeHtml(card.type.replace(/^[OC] - /,''))}, ${escapeHtml(rarityTier(card))}</span></span><span style="color:var(--text-soft);font-size:12px;">${side}</span></div>`;
-  }).join('');
-  document.getElementById('boosterResultList').innerHTML = rows;
-  document.getElementById('boosterModal').classList.remove('hidden');
 }
 
 document.getElementById('btnUnwrapBooster').addEventListener('click', ()=>{

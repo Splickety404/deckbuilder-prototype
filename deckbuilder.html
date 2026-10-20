@@ -533,6 +533,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
 .fly-card{position:fixed;left:0;top:0;width:70px;height:98px;z-index:600;pointer-events:none;border-radius:6px;overflow:hidden;background:var(--surface-2);box-shadow:0 4px 14px rgba(0,0,0,.45);will-change:transform;display:flex;align-items:center;justify-content:center;}
 .fly-card img{width:100%;height:100%;object-fit:cover;display:block;}
 .fly-card img.sideways{width:98px;height:70px;flex:none;transform:rotate(90deg);}
+#deckTypeTabs .tab[data-type="champion"]{margin-left:12px;} /* Overlord + Scheme Deck sit together; Champion is set apart */
 </style>
 </head>
 <body>
@@ -607,8 +608,8 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     <h1 id="topbarTitle">DECKBUILDER PROTOTYPE</h1>
     <div class="tab-group" id="deckTypeTabs">
       <div class="tab" data-type="overlord">Overlord <span class="tab-count" data-count="overlord">0</span></div>
-      <div class="tab" data-type="champion">Champion <span class="tab-count" data-count="champion">0</span></div>
       <div class="tab" data-type="scheme">Scheme Deck <span class="tab-count" data-count="scheme">0</span></div>
+      <div class="tab" data-type="champion">Champion <span class="tab-count" data-count="champion">0</span></div>
     </div>
     <div class="btn" id="btnFeedbackInbox" style="display:none;" title="Read the card feedback people have sent">Feedback</div>
     <div class="btn" id="btnUnwrapBooster" title="Open a booster pack and add its cards to your Overlord and Champion decks — you can open as many as you like">Unwrap a Booster</div>
@@ -775,16 +776,6 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
   </div>
 
 
-  <!-- Booster results -->
-  <div class="modal-overlay hidden" id="boosterModal">
-    <div class="modal-box" style="width:min(460px,92vw);">
-      <div class="modal-header"><h2>Your Booster</h2><div class="btn btn-icon" data-close="boosterModal">✕</div></div>
-      <div class="modal-body">
-        <p style="font-size:13px;color:var(--text-soft);margin-top:0;">These cards were added to your decks.</p>
-        <div id="boosterResultList"></div>
-      </div>
-    </div>
-  </div>
   <!-- Feedback inbox (owner only) -->
   <div class="modal-overlay hidden" id="feedbackInboxModal">
     <div class="modal-box" style="width:min(720px,94vw);">
@@ -2671,18 +2662,9 @@ function openBooster(setName){
     moves.push({card, key:side});
   });
   renderAll();
-  FlyCards.run(document.getElementById('btnUnwrapBooster'), moves, ()=> showBoosterResults(pulled));
+  FlyCards.run(document.getElementById('btnUnwrapBooster'), moves);
   if(extraLeaders) toast(`Your booster had ${extraLeaders} extra Overlord/Champion card${extraLeaders>1?'s':''} — you now have more than one in a deck. Remove one any time.`);
   else toast('Booster opened — cards added to your decks.');
-}
-
-function showBoosterResults(pulled){
-  const rows = pulled.map(({card,label})=>{
-    const side = card.type.startsWith('O - ') ? 'Overlord' : 'Champion';
-    return `<div class="row-item"><span>${escapeHtml(card.name)} <span style="color:var(--text-soft);font-size:12px;">— ${escapeHtml(card.type.replace(/^[OC] - /,''))}, ${escapeHtml(rarityTier(card))}</span></span><span style="color:var(--text-soft);font-size:12px;">${side}</span></div>`;
-  }).join('');
-  document.getElementById('boosterResultList').innerHTML = rows;
-  document.getElementById('boosterModal').classList.remove('hidden');
 }
 
 document.getElementById('btnUnwrapBooster').addEventListener('click', ()=>{
