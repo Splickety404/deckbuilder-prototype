@@ -3050,7 +3050,7 @@ function isFoil(id){
          d.leaderId===id || d.bonusCardId===id || d.extraCardId===id;
 }
 
-// Subtle holographic texture for a printed card: thin rainbow diagonal lines at ~6% opacity plus a
+// Subtle holographic texture for a printed card: thin rainbow diagonal lines at ~16% opacity plus a
 // few small white glints, clipped to the card's rectangle. Transparent enough to leave text readable.
 function drawFoilTexture(doc, x, y, w, h){
   const hsl = (hue)=>{ // hue 0-360 → soft pastel rgb
@@ -3060,7 +3060,7 @@ function drawFoilTexture(doc, x, y, w, h){
   const GState = doc.GState;
   if(!GState) return;
   doc.saveGraphicsState();
-  doc.setGState(new GState({opacity:0.06, 'stroke-opacity':0.06}) /* jsPDF needs stroke-opacity for lines; opacity alone only affects fills */);
+  doc.setGState(new GState({opacity:0.16, 'stroke-opacity':0.16}) /* jsPDF needs stroke-opacity for lines; opacity alone only affects fills */);
   doc.setLineWidth(1.2);
   const gap = 5;
   for(let c=0, i=0; c < w+h; c+=gap, i++){
@@ -3072,7 +3072,7 @@ function drawFoilTexture(doc, x, y, w, h){
     doc.setDrawColor(r,g,b);
     doc.line(x+x1, y+y1, x+x2, y+y2);
   }
-  doc.setGState(new GState({opacity:0.22, 'stroke-opacity':0.22}));
+  doc.setGState(new GState({opacity:0.4, 'stroke-opacity':0.4}));
   doc.setDrawColor(255,255,255); doc.setLineWidth(0.7);
   let seed = 7;
   const rnd = ()=>{ seed = (seed*9301+49297)%233280; return seed/233280; };
