@@ -36,6 +36,13 @@ const SAGA = {
   upgradeChance: 0.10,                               // chance an upgradable slot moves up one rarity
   loyaltyModifier: { loyal:5/3, standard:1, neutral:5/9 },
   maxCopies: 2,
+  // Tribe minimums (main-deck copies, by Traits column): if a deck contains any card of the tribe it
+  // must contain at least `min`. See sagaEnforceTribes.
+  tribes: [
+    { name:'Shade',          trait:'shade',          deckType:'champion', min:2 },
+    { name:'Nynock',         trait:'nynock',         deckType:'overlord', min:3 },
+    { name:'Undying Legion', trait:'undying legion', deckType:'overlord', min:3 },
+  ],
   mainDeckSize: 30,
   schemeCount: 5,
   // A scheme's "quest" value comes from its deckbuilding-requirement; a deck's 5 schemes must total at least 15.
@@ -92,6 +99,13 @@ function rollRarity(pool, forceRare){
   if(!has.rare) return 'legendary';
   return Math.random()<SAGA.legendaryUpgrade ? 'legendary' : 'rare';
 }
+// Drawing weight inside a rarity. SAGA_CARD_WEIGHTS (saga-weights-private.js, written by
+// scripts/calibrate-saga-weights.js) holds a per-card weight tuned so that cards of one rarity show up
+// in generated decks at nearly the same rate; a card without an entry falls back to its loyalty modifier.
+function sagaCardWeight(c){
+  const w = (typeof SAGA_CARD_WEIGHTS!=='undefined') ? SAGA_CARD_WEIGHTS[c.id] : 0;
+  return w || SAGA.loyaltyModifier[loyaltyClass(c)];
+}
 function loyaltyClass(card){
   if(isNeutral(card)) return 'neutral';
   return card.loyalty==='Loyal' ? 'loyal' : 'standard';
@@ -105,7 +119,7 @@ function sagaDraw(pool, opts){
   const inTier = pool.filter(c=>rarityTier(c)===tier);
   if(!inTier.length) return null;
   if(!opts.useModifiers) return randomOf(inTier);
-  const weightOf = (c)=>SAGA.loyaltyModifier[loyaltyClass(c)];
+  const weightOf = sagaCardWeight;
   let r = Math.random()*inTier.reduce((s,c)=>s+weightOf(c),0);
   for(const c of inTier){ r -= weightOf(c); if(r<=0) return c; }
   return inTier[inTier.length-1];
@@ -174,6 +188,63 @@ function sagaDrawSlot(eligible, slot){
   return null;
 }
 
+function sagaCopyLimit(card, leader){
+  return SAGA.maxCopies + ((leader.name==='Commander Koross' && cardMentions(card,'Undying Legion')) ? 1 : 0);
+}
+function cardHasTrait(card, trait){
+  return String(card.traits||'').split(/[,;\/]/).some(t=>t.trim().toLowerCase()===trait);
+}
+function sagaWeightedPick(list){
+  let r = Math.random()*list.reduce((n,c)=>n+sagaCardWeight(c),0);
+  for(const c of list){ r -= sagaCardWeight(c); if(r<=0) return c; }
+  return list[list.length-1] || null;
+}
+// Tribe minimums. A deck that holds some cards of a tribe but fewer than its minimum is topped up:
+// tribe cards are swapped in for non-tribe cards OF THE SAME RARITY (so the deck's rarity mix never
+// changes). If the legal pool can't reach the minimum, the tribe is swapped out entirely instead.
+// `out` is the drawn card list (draw order), `counts` the id -> copies map; both are updated.
+function sagaEnforceTribes(out, counts, pool, leader, deckType){
+  const tribes = SAGA.tribes.filter(t=>t.deckType===deckType);
+  const inAnyTribe = (c)=>tribes.some(t=>cardHasTrait(c,t.trait));
+  const swap = (i, card)=>{
+    counts.set(out[i].id, (counts.get(out[i].id)||0)-1);
+    counts.set(card.id, (counts.get(card.id)||0)+1);
+    out[i] = card;
+  };
+  // index of a non-tribe card to give up: same rarity as `tier` if possible, else the nearest other rarity
+  const victimFor = (tier)=>{
+    for(const t of [tier].concat(SAGA_TIER_FALLBACK[tier])){
+      const idx = out.map((c,i)=>i).filter(i=>!inAnyTribe(out[i]) && rarityTier(out[i])===t);
+      if(idx.length) return idx[Math.floor(Math.random()*idx.length)];
+    }
+    return -1;
+  };
+  tribes.forEach(t=>{
+    const members = pool.filter(c=>cardHasTrait(c,t.trait));
+    const have = out.filter(c=>cardHasTrait(c,t.trait)).length;
+    if(have===0 || have>=t.min) return;
+    const open = ()=>members.filter(c=>(counts.get(c.id)||0) < sagaCopyLimit(c, leader));
+    const room = open().reduce((n,c)=>n + sagaCopyLimit(c,leader)-(counts.get(c.id)||0), 0);
+    if(room >= t.min-have){
+      for(let k=have;k<t.min;k++){
+        const add = sagaWeightedPick(open());
+        const i = add ? victimFor(rarityTier(add)) : -1;
+        if(i<0) break;
+        swap(i, add);
+      }
+    } else {
+      out.map((c,i)=>i).filter(i=>cardHasTrait(out[i],t.trait)).forEach(i=>{
+        const tier = rarityTier(out[i]);
+        const eligible = pool.filter(c=>!inAnyTribe(c) && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
+        for(const tt of [tier].concat(SAGA_TIER_FALLBACK[tier])){
+          const c = sagaDraw(eligible, {useModifiers:true, tier:tt});
+          if(c){ swap(i, c); return; }
+        }
+      });
+    }
+  });
+}
+
 // Draws cards one at a time into `counts` (id -> copies), never exceeding the copy limit.
 // `slots` (optional) is a list of rarity slots; otherwise n plain rarity-rolled draws.
 function sagaDrawMany(pool, n, counts, leader, opts){
@@ -181,8 +252,7 @@ function sagaDrawMany(pool, n, counts, leader, opts){
   for(let i=0;i<(slots ? slots.length : n);i++){
     const eligible = pool.filter(c=>{
       if(opts && opts.maxCopies) return (counts.get(c.id)||0) < opts.maxCopies; // e.g. schemes: never two of the same
-      const limit = SAGA.maxCopies + ((leader.name==='Commander Koross' && cardMentions(c,'Undying Legion')) ? 1 : 0);
-      return (counts.get(c.id)||0) < limit;
+      return (counts.get(c.id)||0) < sagaCopyLimit(c, leader);
     });
     const c = slots ? sagaDrawSlot(eligible, slots[i]) : sagaDraw(eligible, {useModifiers:true});
     if(!c) break;
@@ -223,8 +293,10 @@ function buildSagaDeck(cards, deckType, inSet){
 
   // 30 main-deck cards, drawn from fixed rarity slots (see sagaMainDeckSlots)
   const mainPool = legal(cards.filter(c=>isMainDeckEligibleType(c, deckType)));
-  sagaDrawMany(mainPool, SAGA.mainDeckSize, deck.deckCards, leader, {slots:sagaMainDeckSlots()})
-    .forEach(c=>{ if(!deck.deckOrder.includes(c.id)) deck.deckOrder.push(c.id); });
+  const drawn = sagaDrawMany(mainPool, SAGA.mainDeckSize, deck.deckCards, leader, {slots:sagaMainDeckSlots()});
+  sagaEnforceTribes(drawn, deck.deckCards, mainPool, leader, deckType); // tribe minimums (Shade / Nynock / Undying Legion)
+  deck.deckCards.forEach((n,id)=>{ if(n<=0) deck.deckCards.delete(id); }); // cards swapped out entirely
+  drawn.forEach(c=>{ if(!deck.deckOrder.includes(c.id)) deck.deckOrder.push(c.id); });
 
   deck.expectedSize = 2 + SAGA.mainDeckSize + (deckType==='overlord' ? SAGA.schemeCount : 0);
   return { deck, leader, hasBonus: !!bonus };

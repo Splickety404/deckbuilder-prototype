@@ -76,8 +76,22 @@ Follows the EoO Set 1 Saga Deck Rules doc. Cards are drawn only from the chosen 
 
 - If a rarity has nothing left to draw, the nearest other rarity is used (fallback order, e.g. Rare → Legendary → Uncommon → Common).
 
-### Loyalty weighting (within a rarity, main deck only)
-Drawing weight by card loyalty class: **Loyal = 5/3**, **Standard = 1**, **Neutral = 5/9**. All card types weigh 1. Leaders use no modifiers.
+### Per-card weighting (within a rarity, main deck only)
+Within a rarity, each card is drawn with its own **calibrated weight** (`SAGA_CARD_WEIGHTS` in `src/shared/js/saga-weights-private.js`, written by `scripts/calibrate-saga-weights.js`). The script simulates many decks through the real generator and tunes the weights until every card of a rarity appears in generated decks at nearly the same rate (currently within roughly ±3–6% of that rarity's average; Legendary is noisier because it is so rare). Re-run it whenever the card set or these rules change. A card with no calibrated weight falls back to the old loyalty modifier (**Loyal = 5/3**, **Standard = 1**, **Neutral = 5/9**). Leaders use no weights.
+
+### Tribe minimums (main deck, counted in copies by the Traits column)
+After the 30 cards are drawn, a deck that contains **at least one** card of a tribe must contain at least the minimum:
+
+| Tribe (trait) | Deck | Minimum |
+|---|---|---|
+| Shade | Champion | 2 |
+| Nynock | Overlord | 3 |
+| Undying Legion | Overlord | 3 |
+
+- The leader does not count (e.g. Hob).
+- A short tribe is topped up by swapping tribe cards in for non-tribe cards **of the same rarity**, so the deck's rarity mix is unchanged. Copy limits still apply (Commander Koross allows a 3rd Undying Legion copy).
+- If the legal pool cannot reach the minimum, the tribe is swapped out entirely instead.
+- The calibration includes this step, so the tribes' extra copies are offset in their weights.
 
 ---
 
@@ -88,7 +102,8 @@ Manual:  DECK_LIMIT 50 · MAX_COPIES 3 · SCHEME_DECK_SIZE 5 · schemes 1 copy
 Saga:    mainDeckSize 30 · schemeCount 5 · maxCopies 2 · minSchemeQuest 15
          rarityWeights {common 65, uncommon 30, rare 5} · legendaryUpgrade 0.10 · upgradeChance 0.10
          mainDeckPlan {rare 3, uncommon 6, uncommonUpgradable 2, common 11} · rest fill
-         loyaltyModifier {loyal 5/3, standard 1, neutral 5/9}
+         loyaltyModifier {loyal 5/3, standard 1, neutral 5/9} (fallback only; see per-card weighting)
+         tribes {Shade champion min 2 · Nynock overlord min 3 · Undying Legion overlord min 3}
          questValue {empty 2, default 3, full 4}
 ```
 
