@@ -84,10 +84,11 @@ A card's `traits-to-packet` column lists traits, **one entry per copy wanted** (
 
 - **The moment a card with a packet appears** in the deck (leader, Domination/Quest, Stronghold/Resistance, any scheme, or any main-deck card), main-deck cards of that trait are added until the deck holds that many cards with the trait, **not counting the card that asked** (one copy of it is excluded).
 - "In the deck" counts every card: leader, bonus, extra, schemes and main-deck copies.
-- Added cards **replace main-deck cards of the same rarity**, so the deck stays at 30 and the rarity mix does not change. A replaced card is never one with a packet of its own or one sharing a trait that was already asked for.
+- **Rare and Legendary are never affected.** Packets only pull in Common or Uncommon cards, and only replace Common or Uncommon cards (a Common is replaced by a Common, or an Uncommon if no Common qualifies, and vice versa). A Rare/Legendary card is never added or removed by a packet, so those cards' appearance rates are unchanged (checked: 40,000 decks per side with packets on vs off gave the same average Rare and Legendary rates, per-card differences within sampling noise).
+- The deck stays at 30 and the rarity mix does not change. A replaced card is never one with a packet of its own or one sharing a trait that was already asked for.
 - Copy limits apply (2 per card, 3 for Commander Koross's Undying Legion cards). Added cards are picked by their calibrated weight.
 - Added cards with packets of their own trigger the same rule.
-- If the legal pool cannot supply enough, a main-deck card that asked is swapped for a plain card of the same rarity. A leader, bonus, extra or scheme that asked just gets as many as the pool allows.
+- If the legal pool cannot supply enough, a Common/Uncommon main-deck card that asked is swapped for a plain Common/Uncommon card. A Rare/Legendary asker is never swapped out. A leader, bonus, extra or scheme that asked just gets as many as the pool allows.
 - Calibration runs through this rule, so the extra pulls are offset in the per-card weights.
 
 ---

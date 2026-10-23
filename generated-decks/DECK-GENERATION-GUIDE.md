@@ -23,6 +23,8 @@ The user asked for "the exact rules currently used in the deckbuilder" and "the 
 
 ## 2. Data source
 
+**Always use the live Google Sheet, never a local CSV** (Seth's standing instruction; the old `EOO Set 1 ... Sheet1.csv` in the repo root is stale and untracked). Sheet id `1UbIktPwJYY2SV5xeBBqBr5WLKiCHztMUJ06QO1ghD4A`. Fetch it with the Drive connector's `download_file_content` (`fileId` = that id). The result is too big to print, so it is saved to a file as JSON with a base64 `content` field: `jq -r .content <saved file> | base64 -D > live.csv` (macOS; `-d` on Linux) into the scratchpad, never the repo. Use that path for the generator and for `node scripts/calibrate-saga-weights.js live.csv`. Fetch it fresh each time. The older text below that says the local CSV is the source is superseded by this paragraph.
+
 - Local card database: `EOO Set 1 b9b4147d-f7f0-4b8f-a74c-a2af26207ce3 - Sheet1.csv` in the repo root. 276 rows. It is **untracked**, and the repo is public, so never commit it.
 - The live app gets the same rows from a Google Sheet through an Apps Script Web App, behind Google Sign-In. Neither works headlessly, so the local CSV substitutes.
 - Columns used: `id, type, name, is_double_sided, aspect, loyalty, rarity, traits, deckbuilding-requirement, front-image-url, back-image-url`.
@@ -62,9 +64,9 @@ Per deck (call it independently for each deck, since results are random and lead
    - The drawn list is then passed to the packet step (7) before `deckOrder` is built. `deckOrder` is the order each card was **first drawn** (so Rares first, fill last, with any packet swaps in the slot of the card they replaced), and `deckCards` is a Map of id to copy count (entries that fall to 0 copies are removed).
 7. **Packets** (`sagaApplyPackets`; the column is `traits-to-packet`, a list like `Trap / Trap / Trap` where each entry is one wanted copy, and the trait need not be on the card itself):
    - Applied to the fixed cards (leader, Domination/Quest, Stronghold/Resistance, schemes) first, then to main-deck cards in draw order.
-   - For each trait a card asks for: `have` = cards in the whole deck (all zones, copies counted) with that trait, minus one if the asking card has the trait itself. While `have` is below the amount, a main-deck card of that trait (legal, under the copy limit, not the asking card, picked by calibrated weight) replaces a main-deck card **of the same rarity** (nearest rarity if none). Replaced cards never have a packet and never share a trait already asked for.
+   - For each trait a card asks for: `have` = cards in the whole deck (all zones, copies counted) with that trait, minus one if the asking card has the trait itself. While `have` is below the amount, a main-deck card of that trait (legal, under the copy limit, not the asking card, picked by calibrated weight) replaces a main-deck card of the same rarity. **Rare and Legendary are never pulled in or replaced** (`packetPullable`, `PACKET_TIER_ORDER`): only Common/Uncommon are candidates, and a Common/Uncommon victim falls back to the other of the two if its own rarity has none. Replaced cards never have a packet and never share a trait already asked for.
    - Added cards with packets are queued and handled the same way.
-   - If the legal pool cannot supply enough and the asker is a main-deck card, it is swapped for a plain card of the same rarity. A fixed asker gets as many as the pool allows.
+   - If the legal pool cannot supply enough and the asker is a Common/Uncommon main-deck card, it is swapped for a plain Common/Uncommon card; a Rare/Legendary asker is never swapped out. A fixed asker gets as many as the pool allows.
 8. Returns `{deck:{leaderId, bonusCardId, bonusAspect, extraCardId, schemeIds, deckCards, deckOrder, expectedSize}, leader, hasBonus}`. `expectedSize` is 32 for Champion (2 + 30) and 37 for Overlord (adds 5 schemes). This excludes the Stronghold/Resistance slot's own card, as the app's toast counts it.
 
 Rarity weights: Common 65, Uncommon 30, Rare 5. Unspecified rarity counts as Common. See `deckbuilding-rules.md` for the constants.
@@ -123,7 +125,7 @@ The layout copies the user's `Echo of Omens Office League (Responses) - Decks.cs
 # one-time, in a scratch dir (NOT the repo; don't add node_modules to a public repo)
 npm init -y && npm i jspdf@2.5.1 sharp
 # copy generate-decks.js there, then:
-node generate-decks.js
+node generate-decks.js /path/to/live.csv   # the fresh export of the live sheet (section 2)
 ```
 Notes:
 - jspdf's Node entry is `require('jspdf/dist/jspdf.node.min.js')`. Pin 2.5.1, the version `deckbuilder.html` loads from cdnjs.
@@ -137,6 +139,7 @@ Notes:
 - Image count is 36 (Champion) or 41 (Overlord).
 - Each CSV deck column totals 30 main-deck cards (count `xN`), and Overlord columns have exactly 5 schemes.
 - No card above 2 copies (3 for Koross's Undying Legion cards).
+- Rare/Legendary unaffected: packets on vs off give the same Rare/Legendary appearance rates (compare 40,000 decks per side with `packetNeeds` stubbed to return `[]`).
 - Packets hold: for every card with a `traits-to-packet` entry, the rest of the deck holds at least that many cards with the trait (a 3000-deck-per-side simulation found 0 unmet). Trait comparison is case-insensitive.
 - Domination/Quest aspect differs from the leader's aspect. All cards are legal for the leader and bonus aspects.
 - `pdftoppm` is not installed on this machine, so there was no visual render check. The Read tool can open a PDF with `pages` for a visual check.

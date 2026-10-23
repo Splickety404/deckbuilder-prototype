@@ -1,6 +1,7 @@
 const fs=require('fs'),vm=require('vm'),path=require('path');
 const {jsPDF}=require('jspdf/dist/jspdf.node.min.js');
 const sharp=require('sharp');
+if(!process.argv[2]){console.error('usage: node generate-decks.js <live-sheet.csv>');process.exit(1)}
 const REPO='/Users/smcbride/deckbuilder-prototype';
 const OUT=path.join(REPO,'generated-decks');fs.mkdirSync(OUT,{recursive:true});
 // --- real rules file, loaded as-is
@@ -9,7 +10,7 @@ const ctx={console,Math};vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(REPO+'/src/shared/js/saga-weights-private.js','utf8')+fs.readFileSync(REPO+'/src/shared/js/sealed-rules-private.js','utf8')+'\nthis.buildSagaDeck=buildSagaDeck;',ctx);
 // --- CSV parse
 function parseCSV(t){const rows=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}else if(c=='"')q=true;else if(c==','){r.push(f);f=''}else if(c=='\n'){r.push(f);rows.push(r);r=[];f=''}else if(c!='\r')f+=c}if(f||r.length){r.push(f);rows.push(r)}return rows}
-const rows=parseCSV(fs.readFileSync(REPO+'/EOO Set 1 b9b4147d-f7f0-4b8f-a74c-a2af26207ce3 - Sheet1.csv','utf8'));
+const rows=parseCSV(fs.readFileSync(process.argv[2],'utf8') /* path to a fresh export of the LIVE sheet — see DECK-GENERATION-GUIDE.md section 2 */);
 const hdr=rows[0];let cards=rows.slice(1).filter(r=>r.length>1).map(r=>Object.fromEntries(hdr.map((h,i)=>[h,r[i]||''])));
 // Echo keepRow
 cards=cards.filter(r=>{const t=(r.type||'').trim();if(!t||t.startsWith('Q - '))return false;if(t.startsWith('Z - '))return t==='Z - Custom'&&(r.name==='Resistance'||r.name==='Stronghold');return true});

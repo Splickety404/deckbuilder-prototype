@@ -211,6 +211,9 @@ function sagaWeightedPick(list){
 // out instead (a fixed card just gets as many as the pool allows).
 // `fixed` = the non-main cards, `out` = the drawn main-deck list (draw order), `counts` = id -> copies
 // (main deck); `out` and `counts` are updated.
+// Packets never touch Rare or Legendary: those cards are neither pulled in by a packet nor swapped out for one.
+const PACKET_TIER_ORDER = { common:['common','uncommon'], uncommon:['uncommon','common'] };
+function packetPullable(c){ const t = rarityTier(c); return t==='common' || t==='uncommon'; }
 function sagaApplyPackets(fixed, out, counts, pool, leader){
   const swap = (i, card)=>{
     counts.set(out[i].id, (counts.get(out[i].id)||0)-1);
@@ -221,7 +224,7 @@ function sagaApplyPackets(fixed, out, counts, pool, leader){
   const handled = new Set();    // card ids whose packet has been applied
   const queue = fixed.concat(out);
   const victimFor = (tier, keepId)=>{
-    for(const t of [tier].concat(SAGA_TIER_FALLBACK[tier])){
+    for(const t of PACKET_TIER_ORDER[tier]){
       const idx = out.map((c,i)=>i).filter(i=>{
         const c = out[i];
         return c.id!==keepId && rarityTier(c)===t && !packetNeeds(c).length && !cardTraitList(c).some(x=>asked.has(x));
@@ -243,14 +246,14 @@ function sagaApplyPackets(fixed, out, counts, pool, leader){
       const have = inDeck.filter(c=>cardHasTrait(c,trait)).length - (cardHasTrait(card,trait) ? 1 : 0);
       let short = amount - have;
       if(short<=0) continue;
-      const open = ()=>pool.filter(c=>c.id!==card.id && cardHasTrait(c,trait) && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
+      const open = ()=>pool.filter(c=>c.id!==card.id && packetPullable(c) && cardHasTrait(c,trait) && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
       const room = open().reduce((n,c)=>n + sagaCopyLimit(c,leader)-(counts.get(c.id)||0), 0);
-      if(isMain && room<short){
+      if(isMain && room<short && packetPullable(card)){
         // can't be met: give up the card that asked, for a plain card of the same rarity
         const i = out.indexOf(card);
         const tier = rarityTier(card);
         const eligible = pool.filter(c=>!packetNeeds(c).length && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
-        for(const tt of [tier].concat(SAGA_TIER_FALLBACK[tier])){
+        for(const tt of PACKET_TIER_ORDER[tier]){
           const c = sagaDraw(eligible, {useModifiers:true, tier:tt});
           if(c){ swap(i, c); break; }
         }
