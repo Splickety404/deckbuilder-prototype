@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Tunes the per-card drawing weights used by the Saga (sealed) deck generator so that, within a
 // rarity, every card appears in generated decks at nearly the same rate. It simulates many decks
-// through the REAL generator (src/shared/js/sealed-rules-private.js, tribe minimums included),
+// through the REAL generator (src/shared/js/sealed-rules-private.js, packets included),
 // nudges each card's weight toward its rarity's average appearance rate, repeats, then writes
 // src/shared/js/saga-weights-private.js (card ids -> weights; no card names).
 //

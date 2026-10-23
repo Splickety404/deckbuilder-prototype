@@ -36,13 +36,6 @@ const SAGA = {
   upgradeChance: 0.10,                               // chance an upgradable slot moves up one rarity
   loyaltyModifier: { loyal:5/3, standard:1, neutral:5/9 },
   maxCopies: 2,
-  // Tribe minimums (main-deck copies, by Traits column): if a deck contains any card of the tribe it
-  // must contain at least `min`. See sagaEnforceTribes.
-  tribes: [
-    { name:'Shade',          trait:'shade',          deckType:'champion', min:2 },
-    { name:'Nynock',         trait:'nynock',         deckType:'overlord', min:3 },
-    { name:'Undying Legion', trait:'undying legion', deckType:'overlord', min:3 },
-  ],
   mainDeckSize: 30,
   schemeCount: 5,
   // A scheme's "quest" value comes from its deckbuilding-requirement; a deck's 5 schemes must total at least 15.
@@ -191,58 +184,88 @@ function sagaDrawSlot(eligible, slot){
 function sagaCopyLimit(card, leader){
   return SAGA.maxCopies + ((leader.name==='Commander Koross' && cardMentions(card,'Undying Legion')) ? 1 : 0);
 }
-function cardHasTrait(card, trait){
-  return String(card.traits||'').split(/[,;\/]/).some(t=>t.trim().toLowerCase()===trait);
+// A card's own traits (the Traits column, "A / B / C").
+function cardTraitList(card){
+  return String(card.traits||'').split(/[,;\/]/).map(t=>t.trim().toLowerCase()).filter(Boolean);
+}
+function cardHasTrait(card, trait){ return cardTraitList(card).includes(trait); }
+// A card's packet: the "traits-to-packet" column lists traits, one entry per copy wanted
+// ("Trap / Trap / Trap" = 3 Trap cards). Returns [[trait, amount], ...].
+function packetNeeds(card){
+  const tally = new Map();
+  String(card['traits-to-packet']||'').split(/[,;\/]/).map(t=>t.trim().toLowerCase()).filter(Boolean)
+    .forEach(t=>tally.set(t,(tally.get(t)||0)+1));
+  return [...tally.entries()];
 }
 function sagaWeightedPick(list){
   let r = Math.random()*list.reduce((n,c)=>n+sagaCardWeight(c),0);
   for(const c of list){ r -= sagaCardWeight(c); if(r<=0) return c; }
   return list[list.length-1] || null;
 }
-// Tribe minimums. A deck that holds some cards of a tribe but fewer than its minimum is topped up:
-// tribe cards are swapped in for non-tribe cards OF THE SAME RARITY (so the deck's rarity mix never
-// changes). If the legal pool can't reach the minimum, the tribe is swapped out entirely instead.
-// `out` is the drawn card list (draw order), `counts` the id -> copies map; both are updated.
-function sagaEnforceTribes(out, counts, pool, leader, deckType){
-  const tribes = SAGA.tribes.filter(t=>t.deckType===deckType);
-  const inAnyTribe = (c)=>tribes.some(t=>cardHasTrait(c,t.trait));
+// Packets. The moment a card with a packet appears in the deck (leader, Domination/Quest, Stronghold/
+// Resistance, schemes, or a main-deck card), main-deck cards of the packet's trait are swapped in until
+// the deck holds that many cards with the trait, not counting the card that asked. The incoming card
+// replaces a main-deck card OF THE SAME RARITY (so the rarity mix never changes), never one that has a
+// packet itself or shares a trait already asked for. Cards swapped in may have packets of their own, and
+// are handled the same way. If the legal pool can't supply enough, a main-deck card that asked is swapped
+// out instead (a fixed card just gets as many as the pool allows).
+// `fixed` = the non-main cards, `out` = the drawn main-deck list (draw order), `counts` = id -> copies
+// (main deck); `out` and `counts` are updated.
+function sagaApplyPackets(fixed, out, counts, pool, leader){
   const swap = (i, card)=>{
     counts.set(out[i].id, (counts.get(out[i].id)||0)-1);
     counts.set(card.id, (counts.get(card.id)||0)+1);
     out[i] = card;
   };
-  // index of a non-tribe card to give up: same rarity as `tier` if possible, else the nearest other rarity
-  const victimFor = (tier)=>{
+  const asked = new Set();      // trait names already asked for
+  const handled = new Set();    // card ids whose packet has been applied
+  const queue = fixed.concat(out);
+  const victimFor = (tier, keepId)=>{
     for(const t of [tier].concat(SAGA_TIER_FALLBACK[tier])){
-      const idx = out.map((c,i)=>i).filter(i=>!inAnyTribe(out[i]) && rarityTier(out[i])===t);
+      const idx = out.map((c,i)=>i).filter(i=>{
+        const c = out[i];
+        return c.id!==keepId && rarityTier(c)===t && !packetNeeds(c).length && !cardTraitList(c).some(x=>asked.has(x));
+      });
       if(idx.length) return idx[Math.floor(Math.random()*idx.length)];
     }
     return -1;
   };
-  tribes.forEach(t=>{
-    const members = pool.filter(c=>cardHasTrait(c,t.trait));
-    const have = out.filter(c=>cardHasTrait(c,t.trait)).length;
-    if(have===0 || have>=t.min) return;
-    const open = ()=>members.filter(c=>(counts.get(c.id)||0) < sagaCopyLimit(c, leader));
-    const room = open().reduce((n,c)=>n + sagaCopyLimit(c,leader)-(counts.get(c.id)||0), 0);
-    if(room >= t.min-have){
-      for(let k=have;k<t.min;k++){
-        const add = sagaWeightedPick(open());
-        const i = add ? victimFor(rarityTier(add)) : -1;
-        if(i<0) break;
-        swap(i, add);
-      }
-    } else {
-      out.map((c,i)=>i).filter(i=>cardHasTrait(out[i],t.trait)).forEach(i=>{
-        const tier = rarityTier(out[i]);
-        const eligible = pool.filter(c=>!inAnyTribe(c) && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
+  for(let qi=0; qi<queue.length && qi<500; qi++){
+    const card = queue[qi];
+    if(handled.has(card.id)) continue;
+    const isMain = out.includes(card);
+    if(!isMain && !fixed.includes(card)) continue; // was swapped out before its turn
+    handled.add(card.id);
+    const needs = packetNeeds(card);
+    needs.forEach(([trait])=>asked.add(trait));
+    for(const [trait, amount] of needs){
+      const inDeck = fixed.concat(out);
+      const have = inDeck.filter(c=>cardHasTrait(c,trait)).length - (cardHasTrait(card,trait) ? 1 : 0);
+      let short = amount - have;
+      if(short<=0) continue;
+      const open = ()=>pool.filter(c=>c.id!==card.id && cardHasTrait(c,trait) && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
+      const room = open().reduce((n,c)=>n + sagaCopyLimit(c,leader)-(counts.get(c.id)||0), 0);
+      if(isMain && room<short){
+        // can't be met: give up the card that asked, for a plain card of the same rarity
+        const i = out.indexOf(card);
+        const tier = rarityTier(card);
+        const eligible = pool.filter(c=>!packetNeeds(c).length && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
         for(const tt of [tier].concat(SAGA_TIER_FALLBACK[tier])){
           const c = sagaDraw(eligible, {useModifiers:true, tier:tt});
-          if(c){ swap(i, c); return; }
+          if(c){ swap(i, c); break; }
         }
-      });
+        break;
+      }
+      while(short>0){
+        const add = sagaWeightedPick(open());
+        const i = add ? victimFor(rarityTier(add), card.id) : -1;
+        if(i<0) break;
+        swap(i, add);
+        queue.push(add);
+        short--;
+      }
     }
-  });
+  }
 }
 
 // Draws cards one at a time into `counts` (id -> copies), never exceeding the copy limit.
@@ -294,7 +317,7 @@ function buildSagaDeck(cards, deckType, inSet){
   // 30 main-deck cards, drawn from fixed rarity slots (see sagaMainDeckSlots)
   const mainPool = legal(cards.filter(c=>isMainDeckEligibleType(c, deckType)));
   const drawn = sagaDrawMany(mainPool, SAGA.mainDeckSize, deck.deckCards, leader, {slots:sagaMainDeckSlots()});
-  sagaEnforceTribes(drawn, deck.deckCards, mainPool, leader, deckType); // tribe minimums (Shade / Nynock / Undying Legion)
+  sagaApplyPackets([leader, bonus, extra].filter(Boolean).concat(deck.schemeIds.map(id=>cards.find(c=>c.id===id))), drawn, deck.deckCards, mainPool, leader); // packets (traits-to-packet)
   deck.deckCards.forEach((n,id)=>{ if(n<=0) deck.deckCards.delete(id); }); // cards swapped out entirely
   drawn.forEach(c=>{ if(!deck.deckOrder.includes(c.id)) deck.deckOrder.push(c.id); });
 

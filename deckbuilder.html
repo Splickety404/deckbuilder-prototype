@@ -994,224 +994,219 @@ function rollBooster(cards, setName, special){
    card set or the generator rules change. Per-card drawing weights (card id -> weight) for the Saga
    deck generator: tuned so cards of one rarity appear in generated decks at nearly the same rate. */
 const SAGA_CARD_WEIGHTS = {
-  "033caf64-2ef6-484d-b44b-882292c8d960": 0.834,
-  "058d84d3-e039-47fe-83f1-0be32e915750": 4.055,
-  "06cf1e04-f834-49a4-91d9-668502e04770": 0.896,
-  "075ebb8d-b21c-48c8-a45a-b07f10fc3334": 0.611,
-  "0b1b06c6-0024-4695-a33b-5f45ff55f050": 0.484,
-  "0c18cd55-b67a-4dcd-895f-0d9a07787c08": 3.425,
-  "0c6ce778-995c-4902-be08-3fbee3e8bebd": 0.836,
-  "0ce320c4-4969-4d54-b542-5fd52b7a3305": 0.35,
-  "0fdb5c4e-b3ae-4f1a-8fc3-fb057e39c9dc": 0.923,
-  "15136b9b-9de6-47be-92fa-aabcfd7bd9be": 0.489,
-  "15389241-5589-454e-9c22-bd645596b348": 2.048,
-  "15c5edc0-3ffd-440f-adc4-944da8ccf0ba": 0.826,
-  "19e034f7-7e31-4353-aee6-b98c34b999fe": 0.891,
-  "1a6ecbfa-d1a9-4f27-9ef1-75128dc42b19": 3.874,
-  "1e85ee76-e4f0-4b86-adbe-c95987b7d089": 0.909,
-  "1efc6f2e-f477-46bb-833a-e71cf927c4f9": 0.974,
-  "1f287ea7-fb11-4aa9-aded-9110575f68af": 0.804,
-  "208860e6-f7e9-4da7-a058-52062d14158b": 1.985,
-  "225afbab-d8a4-42e5-afa7-4487076ad3be": 2.55,
-  "227f1322-4f32-4415-8432-340809d5c684": 0.837,
-  "228149ca-1f94-465c-91fd-069de149e3b8": 0.492,
-  "22885517-450b-4dca-8819-a5c60f187661": 0.491,
-  "247b8b6d-b35c-42c3-aa46-81a791aa169a": 0.609,
-  "26e6aba5-1c7f-4ba2-87b7-56b8274c8cd8": 2.173,
-  "26fb64f8-9a48-4b91-a147-df6aed647ed3": 0.807,
-  "27d48d14-d04e-4dfe-9dc8-e66e9b436b05": 3.846,
-  "28898051-9fc9-484e-b1a7-f096066e9cb0": 0.87,
-  "28cffd8b-010e-4c35-acda-586018a54ac9": 0.843,
-  "29c34dea-047c-40aa-bdbf-77869863e4b7": 1.887,
-  "2a6865aa-43d4-4f20-b2b3-085bc9394c49": 0.881,
-  "2bca02c6-c3e3-46ff-a651-89c4a7073ec1": 0.829,
-  "2c596141-ecb9-417a-a80f-b314fd39eeab": 2.028,
-  "2c9263b7-8ae8-440a-9f61-e26edc9008b9": 0.855,
-  "2cf2d278-1982-4547-9a8f-a05b4e45a96a": 0.864,
-  "2da76b2f-cbff-4f29-9b2d-967a1ddaf10b": 0.465,
-  "2e9c89a3-82ff-4c97-8ca6-6c6518ef0fbc": 0.492,
-  "2eb0d240-881b-41bf-9e34-d455ca423fb8": 0.623,
-  "320432a0-8fc7-4b0b-8973-11a53ed87720": 0.818,
-  "32d8c912-0ee4-4226-97ef-51b26d206fcd": 1.925,
-  "33542a09-043f-4dcb-bffc-86086548de82": 3.56,
-  "34148b72-966c-4183-a57b-b941f304f642": 0.606,
-  "36da0a74-d438-4971-8b35-e5d2e217b3a8": 0.978,
-  "38f8850f-124b-473a-8fbd-0557cafe37a7": 0.958,
-  "3977f274-7663-4052-a6a9-8046ed6a88e7": 0.874,
-  "3a045af1-d060-43b9-8bf8-81131e77ef75": 2.094,
-  "3a21c0c5-f7fe-4c86-b500-1321d5aeb054": 2.197,
-  "3a587060-1887-42e4-9e10-f08508306ce3": 2.563,
-  "3a739b5b-9723-4514-ade4-86f5749554a6": 2.587,
-  "3e191c05-afce-4310-8d8a-9e4b6afae279": 0.961,
-  "3e658281-7866-4e68-996b-e5a433442bdf": 0.797,
-  "41608877-ca58-4553-b1fd-b8d16e47255c": 0.939,
-  "432602b9-ce12-498d-ba3f-b96db8aa2fe4": 0.606,
-  "43f92f80-c98a-4616-aa5f-2d52878a6a66": 0.925,
-  "4731f99d-4d81-472a-9e80-7eb842f4f11a": 3.82,
-  "4750fa00-9d12-4b4e-9815-05c0b00713fc": 3.525,
-  "48756162-b48e-4ede-b5ca-b718df3818eb": 0.943,
-  "488e5135-55ed-4382-b44c-8c37a4d211dd": 0.898,
-  "48f4b09a-97ea-45da-8daa-11235b408d4f": 2.152,
-  "4b693424-302d-4774-96b1-38fb9f4d4160": 0.909,
-  "4dfa1f54-a17d-4322-be8e-1fd0ddda2dc3": 2.147,
-  "4f699ad2-273a-4821-a8b5-6a4ad9ac9bd3": 0.984,
-  "5065f945-7cb5-4305-9ede-8b6934a95216": 0.995,
-  "51932b64-69fc-4158-a440-dcbf0a36f065": 0.952,
-  "51b51098-a3fc-4545-90f6-b6e86fb8ac89": 2.171,
-  "52354399-31ec-4434-bce1-3d239dd42957": 0.911,
-  "5248db68-63fd-4f04-a3bb-940bac56b34a": 0.817,
-  "5281b7b9-8a09-49d3-93ff-b3096de9c217": 0.838,
-  "54c35378-a0b8-46fb-b55a-171524e5f448": 0.919,
-  "5517f545-ed11-4a3b-a348-45159edaa2d2": 0.721,
-  "57d55897-6cac-499c-bf95-34c6d235cc37": 3.875,
-  "58a02ad3-b468-43ec-ba1e-b2d32140ad98": 0.933,
-  "58f74e95-b590-460c-8a6a-13252fd34e66": 3.377,
-  "598b343f-0f19-4732-a84a-58c2ad25d771": 1.93,
-  "5ae4bfae-54d9-4c50-ad5f-1d1e488e8c5a": 2.577,
-  "5c711d70-3fb4-4809-8060-8a1b9ff93bdf": 0.954,
-  "5d457389-c8f1-4d9d-88cb-8c7d7f991fc1": 2.174,
-  "5de18325-9a98-41b9-8cfb-6775f09a76c9": 0.92,
-  "609e0035-fb67-4641-9f37-d3b6c6ca9f34": 0.942,
-  "61def420-f1b6-45fb-861c-f812154686c0": 0.497,
-  "64eeeb7a-38a9-48ad-9e3d-311454eaeb4d": 3.89,
-  "68da1fac-571f-4c71-b8fc-016d6d78e191": 0.933,
-  "6ab29c6c-9390-4106-8d68-ace729cf397f": 0.553,
-  "6ca6d3f2-0785-4e9b-a4e9-3492ba7d4b8f": 0.981,
-  "6d1a2d84-29e1-4ea7-8bf2-bb1b1e17981d": 2.149,
-  "6d589eff-3290-4e20-b14b-847586c0837a": 0.806,
-  "6ebd1997-5c56-4f09-8994-05375b9ffa2a": 0.607,
-  "6fa5b5ec-6eea-47ec-8bb8-6d220f90dc68": 0.817,
-  "6fe2c264-562c-4cf1-812e-0342cab86fbd": 4.022,
-  "700de7c0-2094-4642-bdf3-ff431b1353be": 1.943,
-  "70a5e761-b275-4dd6-8b0e-e2382c2752be": 0.489,
-  "717d7203-4377-4653-8f9e-fe9e9a4ced65": 0.854,
-  "732e9f9f-6014-4e44-8ebe-a5ccdf2dfc51": 0.477,
-  "735a24ba-be2c-46ec-88ee-dbc0023d8c15": 0.629,
-  "7574640a-6fbe-4508-8f40-24e9d6f4cae2": 0.977,
-  "773a6036-d1fd-4c28-a414-5443dadf85c4": 0.998,
+  "033caf64-2ef6-484d-b44b-882292c8d960": 0.921,
+  "058d84d3-e039-47fe-83f1-0be32e915750": 4.226,
+  "06cf1e04-f834-49a4-91d9-668502e04770": 0.936,
+  "075ebb8d-b21c-48c8-a45a-b07f10fc3334": 0.666,
+  "0b1b06c6-0024-4695-a33b-5f45ff55f050": 0.539,
+  "0c18cd55-b67a-4dcd-895f-0d9a07787c08": 3.491,
+  "0c6ce778-995c-4902-be08-3fbee3e8bebd": 0.856,
+  "0ce320c4-4969-4d54-b542-5fd52b7a3305": 0.365,
+  "0fdb5c4e-b3ae-4f1a-8fc3-fb057e39c9dc": 1.27,
+  "15136b9b-9de6-47be-92fa-aabcfd7bd9be": 0.507,
+  "15389241-5589-454e-9c22-bd645596b348": 2.128,
+  "15c5edc0-3ffd-440f-adc4-944da8ccf0ba": 0.935,
+  "19e034f7-7e31-4353-aee6-b98c34b999fe": 0.925,
+  "1a6ecbfa-d1a9-4f27-9ef1-75128dc42b19": 3.611,
+  "1e85ee76-e4f0-4b86-adbe-c95987b7d089": 0.9,
+  "1efc6f2e-f477-46bb-833a-e71cf927c4f9": 0.964,
+  "1f287ea7-fb11-4aa9-aded-9110575f68af": 0.877,
+  "208860e6-f7e9-4da7-a058-52062d14158b": 0.618,
+  "225afbab-d8a4-42e5-afa7-4487076ad3be": 2.788,
+  "227f1322-4f32-4415-8432-340809d5c684": 0.947,
+  "228149ca-1f94-465c-91fd-069de149e3b8": 0.536,
+  "22885517-450b-4dca-8819-a5c60f187661": 0.476,
+  "247b8b6d-b35c-42c3-aa46-81a791aa169a": 0.737,
+  "26e6aba5-1c7f-4ba2-87b7-56b8274c8cd8": 2.198,
+  "26fb64f8-9a48-4b91-a147-df6aed647ed3": 0.893,
+  "27d48d14-d04e-4dfe-9dc8-e66e9b436b05": 4.261,
+  "28898051-9fc9-484e-b1a7-f096066e9cb0": 0.899,
+  "28cffd8b-010e-4c35-acda-586018a54ac9": 0.934,
+  "29c34dea-047c-40aa-bdbf-77869863e4b7": 2.044,
+  "2a6865aa-43d4-4f20-b2b3-085bc9394c49": 0.889,
+  "2bca02c6-c3e3-46ff-a651-89c4a7073ec1": 0.948,
+  "2c596141-ecb9-417a-a80f-b314fd39eeab": 2.98,
+  "2c9263b7-8ae8-440a-9f61-e26edc9008b9": 0.858,
+  "2cf2d278-1982-4547-9a8f-a05b4e45a96a": 0.878,
+  "2da76b2f-cbff-4f29-9b2d-967a1ddaf10b": 0.28,
+  "2e9c89a3-82ff-4c97-8ca6-6c6518ef0fbc": 0.506,
+  "2eb0d240-881b-41bf-9e34-d455ca423fb8": 0.666,
+  "320432a0-8fc7-4b0b-8973-11a53ed87720": 0.857,
+  "32d8c912-0ee4-4226-97ef-51b26d206fcd": 0.284,
+  "33542a09-043f-4dcb-bffc-86086548de82": 3.953,
+  "34148b72-966c-4183-a57b-b941f304f642": 0.678,
+  "36da0a74-d438-4971-8b35-e5d2e217b3a8": 0.923,
+  "38f8850f-124b-473a-8fbd-0557cafe37a7": 1.338,
+  "3977f274-7663-4052-a6a9-8046ed6a88e7": 0.88,
+  "3a045af1-d060-43b9-8bf8-81131e77ef75": 2.201,
+  "3a21c0c5-f7fe-4c86-b500-1321d5aeb054": 2.206,
+  "3a587060-1887-42e4-9e10-f08508306ce3": 2.588,
+  "3a739b5b-9723-4514-ade4-86f5749554a6": 2.601,
+  "3e191c05-afce-4310-8d8a-9e4b6afae279": 1.036,
+  "3e658281-7866-4e68-996b-e5a433442bdf": 0.885,
+  "41608877-ca58-4553-b1fd-b8d16e47255c": 1.038,
+  "432602b9-ce12-498d-ba3f-b96db8aa2fe4": 0.659,
+  "43f92f80-c98a-4616-aa5f-2d52878a6a66": 0.983,
+  "4731f99d-4d81-472a-9e80-7eb842f4f11a": 4.312,
+  "4750fa00-9d12-4b4e-9815-05c0b00713fc": 3.892,
+  "48756162-b48e-4ede-b5ca-b718df3818eb": 0.894,
+  "488e5135-55ed-4382-b44c-8c37a4d211dd": 0.657,
+  "48f4b09a-97ea-45da-8daa-11235b408d4f": 2.065,
+  "4b693424-302d-4774-96b1-38fb9f4d4160": 0.906,
+  "4dfa1f54-a17d-4322-be8e-1fd0ddda2dc3": 2.377,
+  "4f699ad2-273a-4821-a8b5-6a4ad9ac9bd3": 1.074,
+  "5065f945-7cb5-4305-9ede-8b6934a95216": 0.967,
+  "51932b64-69fc-4158-a440-dcbf0a36f065": 0.977,
+  "51b51098-a3fc-4545-90f6-b6e86fb8ac89": 2.554,
+  "52354399-31ec-4434-bce1-3d239dd42957": 0.923,
+  "5248db68-63fd-4f04-a3bb-940bac56b34a": 0.842,
+  "5281b7b9-8a09-49d3-93ff-b3096de9c217": 0.861,
+  "54c35378-a0b8-46fb-b55a-171524e5f448": 0.992,
+  "5517f545-ed11-4a3b-a348-45159edaa2d2": 0.882,
+  "57d55897-6cac-499c-bf95-34c6d235cc37": 4.309,
+  "58a02ad3-b468-43ec-ba1e-b2d32140ad98": 0.99,
+  "58f74e95-b590-460c-8a6a-13252fd34e66": 3.455,
+  "598b343f-0f19-4732-a84a-58c2ad25d771": 1.986,
+  "5ae4bfae-54d9-4c50-ad5f-1d1e488e8c5a": 2.673,
+  "5c711d70-3fb4-4809-8060-8a1b9ff93bdf": 1.326,
+  "5d457389-c8f1-4d9d-88cb-8c7d7f991fc1": 2.4,
+  "5de18325-9a98-41b9-8cfb-6775f09a76c9": 1.03,
+  "609e0035-fb67-4641-9f37-d3b6c6ca9f34": 1.351,
+  "61def420-f1b6-45fb-861c-f812154686c0": 0.504,
+  "64eeeb7a-38a9-48ad-9e3d-311454eaeb4d": 4.332,
+  "68da1fac-571f-4c71-b8fc-016d6d78e191": 0.948,
+  "6ab29c6c-9390-4106-8d68-ace729cf397f": 0.555,
+  "6ca6d3f2-0785-4e9b-a4e9-3492ba7d4b8f": 0.872,
+  "6d1a2d84-29e1-4ea7-8bf2-bb1b1e17981d": 2.074,
+  "6d589eff-3290-4e20-b14b-847586c0837a": 0.881,
+  "6ebd1997-5c56-4f09-8994-05375b9ffa2a": 0.731,
+  "6fa5b5ec-6eea-47ec-8bb8-6d220f90dc68": 0.839,
+  "6fe2c264-562c-4cf1-812e-0342cab86fbd": 3.012,
+  "700de7c0-2094-4642-bdf3-ff431b1353be": 1.918,
+  "70a5e761-b275-4dd6-8b0e-e2382c2752be": 0.512,
+  "717d7203-4377-4653-8f9e-fe9e9a4ced65": 0.86,
+  "732e9f9f-6014-4e44-8ebe-a5ccdf2dfc51": 0.455,
+  "735a24ba-be2c-46ec-88ee-dbc0023d8c15": 0.667,
+  "7574640a-6fbe-4508-8f40-24e9d6f4cae2": 1.003,
+  "773a6036-d1fd-4c28-a414-5443dadf85c4": 1.074,
   "7a4f701e-98bd-4217-9a0f-a1664661edff": 0.913,
-  "7b1d5c65-5a23-47e3-b6b5-5fb8002b873c": 2.206,
-  "7bb2ee40-a0bf-442e-8036-c4964bc3b682": 0.933,
-  "7bc2984b-1c2b-4c0c-ae40-055c76eca882": 0.618,
-  "7dd81bc6-1f42-4500-93ff-d32dbf954603": 0.91,
-  "7ee3c993-7b8a-4a16-8d56-bba381e7d2e8": 0.831,
-  "7fb81388-7104-4b93-a0b5-d8bd2e0e55f8": 1.831,
-  "81016860-4087-461d-b34d-dfcc1f3aa60d": 0.494,
-  "82400960-dd6b-4d0c-8c8e-c0a03ea10e2d": 0.911,
-  "828e890e-a651-4fda-9164-e7142fc2a9ff": 2.139,
-  "8592ad0b-9e45-4ee8-a70d-cc2993aa8818": 0.91,
-  "873c2c31-3b4c-4af5-9595-4c18fb58f893": 0.483,
-  "8da56c29-240f-4026-83e6-01cf4e993a15": 0.911,
-  "8efcb779-c178-4a44-b19d-75f1f87ad238": 4.021,
-  "90437b24-1b91-4761-89d6-6ce0a7fd8067": 0.913,
-  "910e4292-dd67-46fe-899b-24b0c5b0c807": 0.491,
-  "9370156f-98ca-4d9d-aa31-248fc5b4d67d": 0.932,
-  "9480884e-c2c5-4e2e-95ed-653ecdfa018b": 1.001,
-  "94dcce38-4a14-45d6-9a79-53b02a97cf80": 0.904,
-  "9802f3e1-7cfa-4911-b88b-cd98bae0cc09": 0.35,
-  "98c6e017-61eb-494b-91c2-058900ceffed": 0.608,
-  "990efe63-47bd-497d-83a7-6d173fb9b1b2": 1.83,
-  "9ab25908-049d-4b48-9325-7b4e291a40cd": 0.901,
-  "9dd88b4e-f116-4775-801a-b1d2ba804d11": 0.977,
-  "9df65c1f-a190-4082-a372-22008d058e8e": 3.819,
-  "9f33a3ea-cf8a-4c78-9b5d-f21ef6256a73": 0.496,
-  "a0b53bff-42d2-4e50-a794-0f093eeda001": 0.936,
-  "a1013543-8002-4922-9b7d-765b56f62e4b": 0.935,
-  "a259c557-7021-4455-8e16-575713fe251e": 0.899,
-  "a38e8eef-5f14-43b5-b361-820a459dd814": 0.857,
-  "a5b0ecfa-ddf5-4980-bc85-beec70fdccb9": 3.811,
-  "a62916c9-e93e-42b7-81b7-004e977c349e": 0.362,
-  "a65a7713-5a84-47ab-a194-2b8107505aa8": 0.932,
-  "abcee1d9-2eaf-4cf7-a789-83775481dd3e": 0.846,
-  "abdfde2e-10c2-425f-9bc7-428adc7f57b2": 0.599,
-  "ac31949c-b759-4a2b-84d3-50f2edb23d01": 0.553,
-  "acd7b22b-ab2e-47c3-af0c-dfd228704f2c": 1.02,
-  "ad3ecd5c-5865-423f-b97d-4b7d532ecfa6": 0.916,
-  "adc6644e-ced3-462f-b93a-9fbd2ab983ef": 0.828,
-  "ae95deaa-80c7-4227-a40a-8b04c321bc02": 0.885,
-  "b0db4ead-53df-49bb-bf45-f3d1761dea97": 0.829,
-  "b12c470b-8fde-44f4-b6a2-908d0dfb1da8": 0.917,
-  "b1fbe8c8-f4a5-4ab7-8ad4-ea87a486000f": 0.495,
-  "b241e1f4-1e0d-4f6d-ad1f-d36d768f716c": 0.613,
-  "b2aa53a2-6c5f-4757-b775-31d9a9b31033": 1.853,
-  "b3cd7756-a195-489b-970a-e262e581f053": 2.037,
-  "b423d497-bb8b-4360-849a-09307e1177b4": 1.991,
-  "b713f153-4d35-48c9-a24a-e6c781d58c17": 0.838,
-  "b7dfa14f-14c7-4d2b-bfee-973e2825e9b6": 0.496,
-  "b8a37183-e602-405a-9754-f7af53cc1f47": 0.851,
-  "b93bdf59-2ae4-4228-86f7-7fa5c525455e": 0.908,
-  "b9c70171-c34f-4918-86d3-25ed1e9a2a75": 1.002,
-  "ba47ff58-2907-48a3-b594-624fb1c76d7c": 2.203,
-  "ba8140b6-de80-4b5a-932c-c0b8cfd631cb": 2.584,
-  "bb260578-7857-4fd8-aeb1-9b25578d262f": 0.933,
-  "bca4f06c-12c4-4c81-9be9-094a15876b88": 2.592,
-  "bcbb17ca-01f8-483e-a4eb-1b1bd42042a9": 0.995,
-  "bd74867c-d318-4336-8656-0a571be58262": 2.204,
-  "bfad9e4f-cf44-4b73-814b-6892ae378135": 3.966,
-  "c1b50578-fb1e-488b-8cf6-218a48165e45": 0.815,
-  "c2bae6ab-3fcc-4565-bea0-a50f0ec62387": 1.823,
-  "c2fc8473-03f7-4687-a54e-965238f8544d": 2.618,
-  "c39492de-eea8-4b88-8ac3-b4a34c179d15": 1.004,
-  "c48089e5-5761-4007-8f4e-dd4e663b185f": 3.543,
-  "c7c72253-a6c1-4907-a5ab-1f1a3dd936af": 1.984,
-  "c7e6332b-0108-4a50-a625-5e184f03bf8e": 0.615,
-  "c8cde476-9788-434e-8a76-0e1d985336b5": 0.827,
-  "c9f2b546-93ef-459a-b85d-3a5b172dfb0c": 0.876,
-  "cadc298a-e57f-442a-8834-37b722140762": 0.828,
-  "caf2be78-6bcd-4a6e-8dc8-5a1260483365": 0.82,
-  "cb58f767-6629-471e-a08f-2efac0f40400": 2.563,
-  "cc08cfe3-7e84-40b1-9412-13f4f02a86f1": 0.493,
-  "cd561d21-da41-4824-8f0a-1c78ddc4fa96": 0.917,
-  "ce1f00e9-9527-4663-aea5-72951e0e858e": 0.486,
-  "ce4b53a6-747e-4c84-a63e-0610885a3a29": 0.474,
-  "cfd1faaa-44e7-46bb-b6e5-91b1b385d60e": 0.939,
-  "cfe84234-6b9a-4b2d-a804-859ad18a8fa1": 0.818,
-  "d0e1952e-8ce3-4573-b6fe-2f5c2beef993": 2.043,
-  "d0e36294-cab6-4569-97fc-c4254a89176d": 0.865,
-  "d1a8596f-a008-4f22-97f1-7473fded9b39": 1.895,
-  "d241be6b-7a66-4733-8988-9a91f560b17d": 0.92,
-  "d3206418-4493-4957-8508-a99970633097": 0.929,
-  "d56b35e7-cde2-4b48-8754-cb6f9cd00747": 0.937,
-  "d5f64a16-c5c2-4f70-ab41-37c02a4c8423": 4.065,
-  "d69b00fd-41de-4cb8-85d5-d55f573efe84": 0.493,
-  "d789f21d-537d-43d5-b914-9d4e11d657f5": 0.817,
-  "d799a4fc-fcbf-4cf1-abca-2b46e5d95245": 0.923,
-  "d8d4eba0-8f50-458f-a30f-b170f5fc9bc5": 2.166,
-  "d93f9be1-2199-48f6-b4c9-891cf7e32cda": 0.911,
-  "dbf71ada-3fda-42a5-9926-3a18be7cd715": 0.484,
-  "dc5fe62a-c95d-4f79-b541-af48ba6807db": 0.616,
-  "df4fbec8-10b3-44ab-945d-51630010fe4b": 0.543,
-  "e0f24905-76d8-4ce4-ba5d-9c86bdb5d607": 0.479,
-  "e1cda07b-6afd-43db-9732-9429ccce9dfb": 0.823,
-  "e2231ed3-d090-470f-80d5-8a6b7f66d982": 0.867,
-  "e3409ae3-95be-4015-9378-a08f770625ba": 0.913,
-  "e346d301-08ca-4a41-9832-7a2b472adbbb": 0.464,
-  "e3843ee8-a339-4f3c-a9e8-c21301634517": 0.552,
-  "e3e6770f-2977-46ff-b572-4ff2ab044ff0": 0.803,
-  "e3f103dd-63c6-4219-85da-f0a8de818c35": 0.61,
-  "e7b985a8-c52a-4cbe-9243-1978f21bfaf2": 1.015,
-  "eacbbbff-574a-4b53-9ed1-5c1385c05a53": 0.608,
-  "ed3ef663-dd3d-4262-827e-2bb69063b467": 2.6,
-  "edafc76f-7c1f-4c98-9ca3-c41587bcbb89": 2.559,
+  "7b1d5c65-5a23-47e3-b6b5-5fb8002b873c": 2.132,
+  "7bb2ee40-a0bf-442e-8036-c4964bc3b682": 1.048,
+  "7bc2984b-1c2b-4c0c-ae40-055c76eca882": 0.668,
+  "7dd81bc6-1f42-4500-93ff-d32dbf954603": 1.036,
+  "7ee3c993-7b8a-4a16-8d56-bba381e7d2e8": 0.722,
+  "81016860-4087-461d-b34d-dfcc1f3aa60d": 0.502,
+  "82400960-dd6b-4d0c-8c8e-c0a03ea10e2d": 0.928,
+  "828e890e-a651-4fda-9164-e7142fc2a9ff": 2.396,
+  "8592ad0b-9e45-4ee8-a70d-cc2993aa8818": 0.889,
+  "873c2c31-3b4c-4af5-9595-4c18fb58f893": 0.398,
+  "8da56c29-240f-4026-83e6-01cf4e993a15": 0.912,
+  "8efcb779-c178-4a44-b19d-75f1f87ad238": 4.271,
+  "90437b24-1b91-4761-89d6-6ce0a7fd8067": 1.03,
+  "910e4292-dd67-46fe-899b-24b0c5b0c807": 0.504,
+  "9370156f-98ca-4d9d-aa31-248fc5b4d67d": 0.921,
+  "9480884e-c2c5-4e2e-95ed-653ecdfa018b": 1.104,
+  "94dcce38-4a14-45d6-9a79-53b02a97cf80": 0.924,
+  "9802f3e1-7cfa-4911-b88b-cd98bae0cc09": 0.391,
+  "98c6e017-61eb-494b-91c2-058900ceffed": 0.671,
+  "990efe63-47bd-497d-83a7-6d173fb9b1b2": 1.677,
+  "9ab25908-049d-4b48-9325-7b4e291a40cd": 0.977,
+  "9dd88b4e-f116-4775-801a-b1d2ba804d11": 0.909,
+  "9df65c1f-a190-4082-a372-22008d058e8e": 4.074,
+  "9f33a3ea-cf8a-4c78-9b5d-f21ef6256a73": 0.393,
+  "a0b53bff-42d2-4e50-a794-0f093eeda001": 1.001,
+  "a1013543-8002-4922-9b7d-765b56f62e4b": 0.882,
+  "a259c557-7021-4455-8e16-575713fe251e": 0.937,
+  "a38e8eef-5f14-43b5-b361-820a459dd814": 0.765,
+  "a5b0ecfa-ddf5-4980-bc85-beec70fdccb9": 4.151,
+  "a62916c9-e93e-42b7-81b7-004e977c349e": 0.108,
+  "a65a7713-5a84-47ab-a194-2b8107505aa8": 1.04,
+  "abcee1d9-2eaf-4cf7-a789-83775481dd3e": 0.912,
+  "abdfde2e-10c2-425f-9bc7-428adc7f57b2": 0.798,
+  "ac31949c-b759-4a2b-84d3-50f2edb23d01": 0.384,
+  "acd7b22b-ab2e-47c3-af0c-dfd228704f2c": 1.044,
+  "ad3ecd5c-5865-423f-b97d-4b7d532ecfa6": 1.043,
+  "adc6644e-ced3-462f-b93a-9fbd2ab983ef": 0.945,
+  "ae95deaa-80c7-4227-a40a-8b04c321bc02": 0.887,
+  "b0db4ead-53df-49bb-bf45-f3d1761dea97": 0.942,
+  "b12c470b-8fde-44f4-b6a2-908d0dfb1da8": 1.047,
+  "b1fbe8c8-f4a5-4ab7-8ad4-ea87a486000f": 0.514,
+  "b241e1f4-1e0d-4f6d-ad1f-d36d768f716c": 0.675,
+  "b2aa53a2-6c5f-4757-b775-31d9a9b31033": 2.133,
+  "b3cd7756-a195-489b-970a-e262e581f053": 2.197,
+  "b423d497-bb8b-4360-849a-09307e1177b4": 2.484,
+  "b713f153-4d35-48c9-a24a-e6c781d58c17": 0.925,
+  "b7dfa14f-14c7-4d2b-bfee-973e2825e9b6": 0.509,
+  "b8a37183-e602-405a-9754-f7af53cc1f47": 0.909,
+  "b93bdf59-2ae4-4228-86f7-7fa5c525455e": 0.93,
+  "ba47ff58-2907-48a3-b594-624fb1c76d7c": 2.179,
+  "ba8140b6-de80-4b5a-932c-c0b8cfd631cb": 2.703,
+  "bb260578-7857-4fd8-aeb1-9b25578d262f": 1.226,
+  "bca4f06c-12c4-4c81-9be9-094a15876b88": 2.702,
+  "bcbb17ca-01f8-483e-a4eb-1b1bd42042a9": 1.074,
+  "bfad9e4f-cf44-4b73-814b-6892ae378135": 4.184,
+  "c1b50578-fb1e-488b-8cf6-218a48165e45": 0.846,
+  "c2bae6ab-3fcc-4565-bea0-a50f0ec62387": 2.084,
+  "c2fc8473-03f7-4687-a54e-965238f8544d": 2.575,
+  "c48089e5-5761-4007-8f4e-dd4e663b185f": 3.889,
+  "c7c72253-a6c1-4907-a5ab-1f1a3dd936af": 2.063,
+  "c7e6332b-0108-4a50-a625-5e184f03bf8e": 0.659,
+  "c8cde476-9788-434e-8a76-0e1d985336b5": 0.925,
+  "c9f2b546-93ef-459a-b85d-3a5b172dfb0c": 0.869,
+  "cadc298a-e57f-442a-8834-37b722140762": 0.855,
+  "caf2be78-6bcd-4a6e-8dc8-5a1260483365": 0.864,
+  "cb58f767-6629-471e-a08f-2efac0f40400": 2.844,
+  "cc08cfe3-7e84-40b1-9412-13f4f02a86f1": 0.394,
+  "cd561d21-da41-4824-8f0a-1c78ddc4fa96": 1,
+  "ce1f00e9-9527-4663-aea5-72951e0e858e": 0.389,
+  "ce4b53a6-747e-4c84-a63e-0610885a3a29": 0.192,
+  "cfd1faaa-44e7-46bb-b6e5-91b1b385d60e": 0.645,
+  "cfe84234-6b9a-4b2d-a804-859ad18a8fa1": 0.845,
+  "d0e1952e-8ce3-4573-b6fe-2f5c2beef993": 2.809,
+  "d0e36294-cab6-4569-97fc-c4254a89176d": 0.888,
+  "d1a8596f-a008-4f22-97f1-7473fded9b39": 1.731,
+  "d241be6b-7a66-4733-8988-9a91f560b17d": 1.004,
+  "d3206418-4493-4957-8508-a99970633097": 0.916,
+  "d56b35e7-cde2-4b48-8754-cb6f9cd00747": 1.043,
+  "d5f64a16-c5c2-4f70-ab41-37c02a4c8423": 4.233,
+  "d69b00fd-41de-4cb8-85d5-d55f573efe84": 0.498,
+  "d789f21d-537d-43d5-b914-9d4e11d657f5": 0.843,
+  "d799a4fc-fcbf-4cf1-abca-2b46e5d95245": 1.153,
+  "d8d4eba0-8f50-458f-a30f-b170f5fc9bc5": 1.176,
+  "d93f9be1-2199-48f6-b4c9-891cf7e32cda": 1.019,
+  "dbf71ada-3fda-42a5-9926-3a18be7cd715": 0.534,
+  "dc5fe62a-c95d-4f79-b541-af48ba6807db": 0.664,
+  "df4fbec8-10b3-44ab-945d-51630010fe4b": 0.384,
+  "e0f24905-76d8-4ce4-ba5d-9c86bdb5d607": 0.571,
+  "e1cda07b-6afd-43db-9732-9429ccce9dfb": 0.837,
+  "e3409ae3-95be-4015-9378-a08f770625ba": 0.98,
+  "e346d301-08ca-4a41-9832-7a2b472adbbb": 0.193,
+  "e3843ee8-a339-4f3c-a9e8-c21301634517": 0.566,
+  "e3e6770f-2977-46ff-b572-4ff2ab044ff0": 0.875,
+  "e3f103dd-63c6-4219-85da-f0a8de818c35": 0.671,
+  "e7b985a8-c52a-4cbe-9243-1978f21bfaf2": 1.081,
+  "eacbbbff-574a-4b53-9ed1-5c1385c05a53": 0.669,
+  "ed3ef663-dd3d-4262-827e-2bb69063b467": 2.531,
+  "edafc76f-7c1f-4c98-9ca3-c41587bcbb89": 2.87,
   "edb5ae5d-f316-45e9-97d5-5dd4411ab9dc": 0.553,
-  "f079099c-9c36-477f-8eae-e941c17fb0ab": 0.847,
-  "f48eb622-1c57-4946-b986-e90b77873c30": 0.841,
-  "f4ac42c0-c7bd-4fda-ba23-042b37600660": 3.801,
-  "f4e523c7-de06-41f2-a1a3-6dce19b2ebe6": 0.8,
-  "f4ea05ab-ce27-4ccd-af4c-4473b6133cdb": 0.916,
-  "f5ddb1f5-83ec-4b0f-a503-e9e0d50451db": 0.494,
-  "f5fa52dd-243d-4557-a207-1fdaba61b202": 0.855,
-  "f70f0316-7cab-413f-b356-250c739e8e4b": 0.921,
-  "f7374ceb-4633-476c-a302-8dcab1d3fa8a": 2.06,
-  "f791a428-f986-43e3-a3ed-f16d15dc14ff": 0.838,
-  "f79e77c2-aae8-4c80-a8a6-e4ce37abfdba": 0.546,
-  "f8600737-6785-4d52-a27d-f0b6de32fa3f": 1.001,
-  "f90cefc4-65b5-4230-8ce9-ad8572d46049": 0.837,
-  "fc605359-6f7e-4d23-818e-b1a9a14d7588": 0.953,
-  "fd1fe0b9-c5b8-4480-ba5b-b2ecfad7c374": 4.021,
-  "fd49b9db-4cac-4d2c-a1ed-0807c5f593a2": 0.491,
-  "fdc53cfc-1c1a-42be-8617-6f7cc65dab6a": 0.946,
-  "fe3a5036-8639-4f44-b6a8-57d7b1227649": 0.872,
+  "f079099c-9c36-477f-8eae-e941c17fb0ab": 0.879,
+  "f48eb622-1c57-4946-b986-e90b77873c30": 0.875,
+  "f4ac42c0-c7bd-4fda-ba23-042b37600660": 3.835,
+  "f4e523c7-de06-41f2-a1a3-6dce19b2ebe6": 0.896,
+  "f4ea05ab-ce27-4ccd-af4c-4473b6133cdb": 1.033,
+  "f5ddb1f5-83ec-4b0f-a503-e9e0d50451db": 0.501,
+  "f5fa52dd-243d-4557-a207-1fdaba61b202": 0.878,
+  "f70f0316-7cab-413f-b356-250c739e8e4b": 0.914,
+  "f7374ceb-4633-476c-a302-8dcab1d3fa8a": 2.168,
+  "f791a428-f986-43e3-a3ed-f16d15dc14ff": 0.751,
+  "f79e77c2-aae8-4c80-a8a6-e4ce37abfdba": 0.381,
+  "f8600737-6785-4d52-a27d-f0b6de32fa3f": 1.074,
+  "f90cefc4-65b5-4230-8ce9-ad8572d46049": 0.923,
+  "fc605359-6f7e-4d23-818e-b1a9a14d7588": 0.977,
+  "fd1fe0b9-c5b8-4480-ba5b-b2ecfad7c374": 3.85,
+  "fd49b9db-4cac-4d2c-a1ed-0807c5f593a2": 0.508,
+  "fdc53cfc-1c1a-42be-8617-6f7cc65dab6a": 0.953,
+  "fe3a5036-8639-4f44-b6a8-57d7b1227649": 0.912,
 };
 /* =========================================================================
    SAGA (SEALED) DECK RULES — the ONE place the "Get Sealed Deck" rules live, used
@@ -1251,13 +1246,6 @@ const SAGA = {
   upgradeChance: 0.10,                               // chance an upgradable slot moves up one rarity
   loyaltyModifier: { loyal:5/3, standard:1, neutral:5/9 },
   maxCopies: 2,
-  // Tribe minimums (main-deck copies, by Traits column): if a deck contains any card of the tribe it
-  // must contain at least `min`. See sagaEnforceTribes.
-  tribes: [
-    { name:'Shade',          trait:'shade',          deckType:'champion', min:2 },
-    { name:'Nynock',         trait:'nynock',         deckType:'overlord', min:3 },
-    { name:'Undying Legion', trait:'undying legion', deckType:'overlord', min:3 },
-  ],
   mainDeckSize: 30,
   schemeCount: 5,
   // A scheme's "quest" value comes from its deckbuilding-requirement; a deck's 5 schemes must total at least 15.
@@ -1406,58 +1394,88 @@ function sagaDrawSlot(eligible, slot){
 function sagaCopyLimit(card, leader){
   return SAGA.maxCopies + ((leader.name==='Commander Koross' && cardMentions(card,'Undying Legion')) ? 1 : 0);
 }
-function cardHasTrait(card, trait){
-  return String(card.traits||'').split(/[,;\/]/).some(t=>t.trim().toLowerCase()===trait);
+// A card's own traits (the Traits column, "A / B / C").
+function cardTraitList(card){
+  return String(card.traits||'').split(/[,;\/]/).map(t=>t.trim().toLowerCase()).filter(Boolean);
+}
+function cardHasTrait(card, trait){ return cardTraitList(card).includes(trait); }
+// A card's packet: the "traits-to-packet" column lists traits, one entry per copy wanted
+// ("Trap / Trap / Trap" = 3 Trap cards). Returns [[trait, amount], ...].
+function packetNeeds(card){
+  const tally = new Map();
+  String(card['traits-to-packet']||'').split(/[,;\/]/).map(t=>t.trim().toLowerCase()).filter(Boolean)
+    .forEach(t=>tally.set(t,(tally.get(t)||0)+1));
+  return [...tally.entries()];
 }
 function sagaWeightedPick(list){
   let r = Math.random()*list.reduce((n,c)=>n+sagaCardWeight(c),0);
   for(const c of list){ r -= sagaCardWeight(c); if(r<=0) return c; }
   return list[list.length-1] || null;
 }
-// Tribe minimums. A deck that holds some cards of a tribe but fewer than its minimum is topped up:
-// tribe cards are swapped in for non-tribe cards OF THE SAME RARITY (so the deck's rarity mix never
-// changes). If the legal pool can't reach the minimum, the tribe is swapped out entirely instead.
-// `out` is the drawn card list (draw order), `counts` the id -> copies map; both are updated.
-function sagaEnforceTribes(out, counts, pool, leader, deckType){
-  const tribes = SAGA.tribes.filter(t=>t.deckType===deckType);
-  const inAnyTribe = (c)=>tribes.some(t=>cardHasTrait(c,t.trait));
+// Packets. The moment a card with a packet appears in the deck (leader, Domination/Quest, Stronghold/
+// Resistance, schemes, or a main-deck card), main-deck cards of the packet's trait are swapped in until
+// the deck holds that many cards with the trait, not counting the card that asked. The incoming card
+// replaces a main-deck card OF THE SAME RARITY (so the rarity mix never changes), never one that has a
+// packet itself or shares a trait already asked for. Cards swapped in may have packets of their own, and
+// are handled the same way. If the legal pool can't supply enough, a main-deck card that asked is swapped
+// out instead (a fixed card just gets as many as the pool allows).
+// `fixed` = the non-main cards, `out` = the drawn main-deck list (draw order), `counts` = id -> copies
+// (main deck); `out` and `counts` are updated.
+function sagaApplyPackets(fixed, out, counts, pool, leader){
   const swap = (i, card)=>{
     counts.set(out[i].id, (counts.get(out[i].id)||0)-1);
     counts.set(card.id, (counts.get(card.id)||0)+1);
     out[i] = card;
   };
-  // index of a non-tribe card to give up: same rarity as `tier` if possible, else the nearest other rarity
-  const victimFor = (tier)=>{
+  const asked = new Set();      // trait names already asked for
+  const handled = new Set();    // card ids whose packet has been applied
+  const queue = fixed.concat(out);
+  const victimFor = (tier, keepId)=>{
     for(const t of [tier].concat(SAGA_TIER_FALLBACK[tier])){
-      const idx = out.map((c,i)=>i).filter(i=>!inAnyTribe(out[i]) && rarityTier(out[i])===t);
+      const idx = out.map((c,i)=>i).filter(i=>{
+        const c = out[i];
+        return c.id!==keepId && rarityTier(c)===t && !packetNeeds(c).length && !cardTraitList(c).some(x=>asked.has(x));
+      });
       if(idx.length) return idx[Math.floor(Math.random()*idx.length)];
     }
     return -1;
   };
-  tribes.forEach(t=>{
-    const members = pool.filter(c=>cardHasTrait(c,t.trait));
-    const have = out.filter(c=>cardHasTrait(c,t.trait)).length;
-    if(have===0 || have>=t.min) return;
-    const open = ()=>members.filter(c=>(counts.get(c.id)||0) < sagaCopyLimit(c, leader));
-    const room = open().reduce((n,c)=>n + sagaCopyLimit(c,leader)-(counts.get(c.id)||0), 0);
-    if(room >= t.min-have){
-      for(let k=have;k<t.min;k++){
-        const add = sagaWeightedPick(open());
-        const i = add ? victimFor(rarityTier(add)) : -1;
-        if(i<0) break;
-        swap(i, add);
-      }
-    } else {
-      out.map((c,i)=>i).filter(i=>cardHasTrait(out[i],t.trait)).forEach(i=>{
-        const tier = rarityTier(out[i]);
-        const eligible = pool.filter(c=>!inAnyTribe(c) && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
+  for(let qi=0; qi<queue.length && qi<500; qi++){
+    const card = queue[qi];
+    if(handled.has(card.id)) continue;
+    const isMain = out.includes(card);
+    if(!isMain && !fixed.includes(card)) continue; // was swapped out before its turn
+    handled.add(card.id);
+    const needs = packetNeeds(card);
+    needs.forEach(([trait])=>asked.add(trait));
+    for(const [trait, amount] of needs){
+      const inDeck = fixed.concat(out);
+      const have = inDeck.filter(c=>cardHasTrait(c,trait)).length - (cardHasTrait(card,trait) ? 1 : 0);
+      let short = amount - have;
+      if(short<=0) continue;
+      const open = ()=>pool.filter(c=>c.id!==card.id && cardHasTrait(c,trait) && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
+      const room = open().reduce((n,c)=>n + sagaCopyLimit(c,leader)-(counts.get(c.id)||0), 0);
+      if(isMain && room<short){
+        // can't be met: give up the card that asked, for a plain card of the same rarity
+        const i = out.indexOf(card);
+        const tier = rarityTier(card);
+        const eligible = pool.filter(c=>!packetNeeds(c).length && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
         for(const tt of [tier].concat(SAGA_TIER_FALLBACK[tier])){
           const c = sagaDraw(eligible, {useModifiers:true, tier:tt});
-          if(c){ swap(i, c); return; }
+          if(c){ swap(i, c); break; }
         }
-      });
+        break;
+      }
+      while(short>0){
+        const add = sagaWeightedPick(open());
+        const i = add ? victimFor(rarityTier(add), card.id) : -1;
+        if(i<0) break;
+        swap(i, add);
+        queue.push(add);
+        short--;
+      }
     }
-  });
+  }
 }
 
 // Draws cards one at a time into `counts` (id -> copies), never exceeding the copy limit.
@@ -1509,7 +1527,7 @@ function buildSagaDeck(cards, deckType, inSet){
   // 30 main-deck cards, drawn from fixed rarity slots (see sagaMainDeckSlots)
   const mainPool = legal(cards.filter(c=>isMainDeckEligibleType(c, deckType)));
   const drawn = sagaDrawMany(mainPool, SAGA.mainDeckSize, deck.deckCards, leader, {slots:sagaMainDeckSlots()});
-  sagaEnforceTribes(drawn, deck.deckCards, mainPool, leader, deckType); // tribe minimums (Shade / Nynock / Undying Legion)
+  sagaApplyPackets([leader, bonus, extra].filter(Boolean).concat(deck.schemeIds.map(id=>cards.find(c=>c.id===id))), drawn, deck.deckCards, mainPool, leader); // packets (traits-to-packet)
   deck.deckCards.forEach((n,id)=>{ if(n<=0) deck.deckCards.delete(id); }); // cards swapped out entirely
   drawn.forEach(c=>{ if(!deck.deckOrder.includes(c.id)) deck.deckOrder.push(c.id); });
 
@@ -1551,7 +1569,7 @@ const HOVER_FETCH_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 1.3); // fetched a bi
 // Bookkeeping columns the Card Updater writes alongside the card data (which
 // fields a card's record had, art fingerprints, small-image links) — never card fields.
 const CARD_UPDATER_COLUMNS = ['record-fields','image-hash','back-image-hash','front-image-sm-url','back-image-sm-url'];
-const NEVER_FIELDS = new Set(['name','ability','id','is_double_sided','front-image-url','back-image-url','last-updated','is-double-sided','rotate', ...CARD_UPDATER_COLUMNS]);
+const NEVER_FIELDS = new Set(['traits-to-packet','name','ability','id','is_double_sided','front-image-url','back-image-url','last-updated','is-double-sided','rotate', ...CARD_UPDATER_COLUMNS]);
 // Numeric stat fields where a literal 0 means "doesn't have this stat" (as opposed to
 // cost/difficulty, which already correctly use a blank cell for "not applicable").
 const ZERO_AS_ABSENT = new Set(['health-number','attack','block','inherent-arcane','inherent-diplomacy','inherent-stealth','leadership','willpower']);

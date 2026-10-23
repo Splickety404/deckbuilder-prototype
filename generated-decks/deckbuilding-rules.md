@@ -79,19 +79,16 @@ Follows the EoO Set 1 Saga Deck Rules doc. Cards are drawn only from the chosen 
 ### Per-card weighting (within a rarity, main deck only)
 Within a rarity, each card is drawn with its own **calibrated weight** (`SAGA_CARD_WEIGHTS` in `src/shared/js/saga-weights-private.js`, written by `scripts/calibrate-saga-weights.js`). The script simulates many decks through the real generator and tunes the weights until every card of a rarity appears in generated decks at nearly the same rate (currently within roughly ±3–6% of that rarity's average; Legendary is noisier because it is so rare). Re-run it whenever the card set or these rules change. A card with no calibrated weight falls back to the old loyalty modifier (**Loyal = 5/3**, **Standard = 1**, **Neutral = 5/9**). Leaders use no weights.
 
-### Tribe minimums (main deck, counted in copies by the Traits column)
-After the 30 cards are drawn, a deck that contains **at least one** card of a tribe must contain at least the minimum:
+### Packets (`traits-to-packet`, Saga decks only)
+A card's `traits-to-packet` column lists traits, **one entry per copy wanted** (e.g. `Trap / Trap / Trap` = 3 Traps). The trait does not have to be one of the card's own traits. The column is not a filter in the deckbuilder.
 
-| Tribe (trait) | Deck | Minimum |
-|---|---|---|
-| Shade | Champion | 2 |
-| Nynock | Overlord | 3 |
-| Undying Legion | Overlord | 3 |
-
-- The leader does not count (e.g. Hob).
-- A short tribe is topped up by swapping tribe cards in for non-tribe cards **of the same rarity**, so the deck's rarity mix is unchanged. Copy limits still apply (Commander Koross allows a 3rd Undying Legion copy).
-- If the legal pool cannot reach the minimum, the tribe is swapped out entirely instead.
-- The calibration includes this step, so the tribes' extra copies are offset in their weights.
+- **The moment a card with a packet appears** in the deck (leader, Domination/Quest, Stronghold/Resistance, any scheme, or any main-deck card), main-deck cards of that trait are added until the deck holds that many cards with the trait, **not counting the card that asked** (one copy of it is excluded).
+- "In the deck" counts every card: leader, bonus, extra, schemes and main-deck copies.
+- Added cards **replace main-deck cards of the same rarity**, so the deck stays at 30 and the rarity mix does not change. A replaced card is never one with a packet of its own or one sharing a trait that was already asked for.
+- Copy limits apply (2 per card, 3 for Commander Koross's Undying Legion cards). Added cards are picked by their calibrated weight.
+- Added cards with packets of their own trigger the same rule.
+- If the legal pool cannot supply enough, a main-deck card that asked is swapped for a plain card of the same rarity. A leader, bonus, extra or scheme that asked just gets as many as the pool allows.
+- Calibration runs through this rule, so the extra pulls are offset in the per-card weights.
 
 ---
 
@@ -125,7 +122,7 @@ Saga:    mainDeckSize 30 · schemeCount 5 · maxCopies 2 · minSchemeQuest 15
          rarityWeights {common 65, uncommon 30, rare 5} · legendaryUpgrade 0.10 · upgradeChance 0.10
          mainDeckPlan {rare 3, uncommon 6, uncommonUpgradable 2, common 11} · rest fill
          loyaltyModifier {loyal 5/3, standard 1, neutral 5/9} (fallback only; see per-card weighting)
-         tribes {Shade champion min 2 · Nynock overlord min 3 · Undying Legion overlord min 3}
+         packets: traits-to-packet column (one entry per wanted copy), applied by sagaApplyPackets
          questValue {empty 2, default 3, full 4}
 ```
 
