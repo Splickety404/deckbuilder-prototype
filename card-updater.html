@@ -286,10 +286,11 @@ async function readPage(n){
     // Lines wrap mid-word, so they're joined back together with nothing in between.
     // A PDF can carry one font under several internal names (HellBreak's record
     // switches between two copies of RobotoCondensed), so fonts are compared by
-    // their real name. pdf.js only knows those once the page's drawing
+    // their real name, minus the six-letter subset tag ("LAVGZS+") that can differ
+    // between copies. pdf.js only knows those names once the page's drawing
     // instructions are loaded; recordTextFromOperators reuses them.
     await page.getOperatorList();
-    const realName = f=> { try{ return page.commonObjs.get(f).name || f; }catch(e){ return f; } };
+    const realName = f=> { try{ return (page.commonObjs.get(f).name || f).replace(/^[A-Z]{6}\+/, ''); }catch(e){ return f; } };
     const recordFontName = realName(idItem.fontName);
     const size = sizeOf(idItem), x0 = idItem.transform[4];
     const same = items.filter(it=> realName(it.fontName)===recordFontName && Math.abs(sizeOf(it)-size)<0.01 && Math.abs(it.transform[1])<1e-6);
