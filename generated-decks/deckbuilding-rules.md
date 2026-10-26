@@ -77,7 +77,7 @@ Follows the EoO Set 1 Saga Deck Rules doc. Cards are drawn only from the chosen 
 - If a rarity has nothing left to draw, the nearest other rarity is used (fallback order, e.g. Rare → Legendary → Uncommon → Common).
 
 ### Per-card weighting (within a rarity, main deck only)
-Within a rarity, each card is drawn with its own **calibrated weight** (`SAGA_CARD_WEIGHTS` in `src/shared/js/saga-weights-private.js`, written by `scripts/calibrate-saga-weights.js`). The script simulates many decks through the real generator and tunes the weights until every card of a rarity appears in generated decks at nearly the same rate (currently within roughly ±3–6% of that rarity's average; Legendary is noisier because it is so rare). Re-run it whenever the card set or these rules change. A card with no calibrated weight falls back to the old loyalty modifier (**Loyal = 5/3**, **Standard = 1**, **Neutral = 5/9**). Leaders use no weights.
+Within a rarity, each card is drawn with its own **calibrated weight** (`SAGA_CARD_WEIGHTS` in `src/shared/js/saga-weights-private.js`, written by `scripts/calibrate-saga-weights.js`). The script simulates many decks through the real generator and tunes the weights until every card of a rarity appears in generated decks at nearly the same rate (currently: Champion within about ±4–6% of each rarity's average; Overlord Rare ±5%, Common/Uncommon ±10–11% since the encounter minimum pulls extra encounters, and Legendary ±13% only because it is so rare that sampling noise dominates). Re-run it whenever the card set or these rules change. A card with no calibrated weight falls back to the old loyalty modifier (**Loyal = 5/3**, **Standard = 1**, **Neutral = 5/9**). Leaders use no weights.
 
 ### Packets (`traits-to-packet`, Saga decks only)
 A card's `traits-to-packet` column lists traits, **one entry per copy wanted** (e.g. `Trap / Trap / Trap` = 3 Traps). The trait does not have to be one of the card's own traits. The column is not a filter in the deckbuilder.
@@ -90,6 +90,15 @@ A card's `traits-to-packet` column lists traits, **one entry per copy wanted** (
 - Added cards with packets of their own trigger the same rule.
 - If the legal pool cannot supply enough, a Common/Uncommon main-deck card that asked is swapped for a plain Common/Uncommon card. A Rare/Legendary asker is never swapped out. A leader, bonus, extra or scheme that asked just gets as many as the pool allows.
 - Calibration runs through this rule, so the extra pulls are offset in the per-card weights.
+
+### Encounter minimum (Overlord only)
+Every generated Overlord deck holds **at least 12 `O - Encounter` cards** in its 30-card main deck (copies count). Applied last, after packets, by `sagaApplyEncounterMinimum`.
+
+- While the deck is short, a **Common or Uncommon** encounter (legal, under its copy limit, with no packet of its own, picked by calibrated weight) replaces a **non-encounter** main-deck card of the same rarity (or the other of Common/Uncommon if that rarity has none).
+- **Rare and Legendary are never added or removed**, so their appearance rates stay equal to each other. Checked: 20,000 Overlord decks under the old and new rules gave the same Rare and Legendary rates, per-card differences within sampling noise.
+- The removed card is never one with a packet, or one carrying a trait a packet asks for, so packets stay satisfied.
+- The deck stays at 30 and the rarity mix does not change. Common/Uncommon per-card rates shift (encounters appear more often); this is accepted.
+- Every Overlord + Domination pairing in Set 1 has enough legal Common/Uncommon encounters to reach 12. Before this rule, 7% of decks had fewer than 12 (as few as 3).
 
 ---
 
@@ -124,6 +133,7 @@ Saga:    mainDeckSize 30 · schemeCount 5 · maxCopies 2 · minSchemeQuest 15
          mainDeckPlan {rare 3, uncommon 6, uncommonUpgradable 2, common 11} · rest fill
          loyaltyModifier {loyal 5/3, standard 1, neutral 5/9} (fallback only; see per-card weighting)
          packets: traits-to-packet column (one entry per wanted copy), applied by sagaApplyPackets
+         minEncounters 12 (Overlord main deck), applied by sagaApplyEncounterMinimum after packets
          questValue {empty 2, default 3, full 4}
 ```
 

@@ -37,6 +37,7 @@ const SAGA = {
   loyaltyModifier: { loyal:5/3, standard:1, neutral:5/9 },
   maxCopies: 2,
   mainDeckSize: 30,
+  minEncounters: 12,                                 // Overlord main deck holds at least this many O - Encounter cards (copies count)
   schemeCount: 5,
   // A scheme's "quest" value comes from its deckbuilding-requirement; a deck's 5 schemes must total at least 15.
   questValue: { empty:2, default:3, full:4 },
@@ -271,6 +272,36 @@ function sagaApplyPackets(fixed, out, counts, pool, leader){
   }
 }
 
+// Encounter minimum (Overlord only), applied after packets so nothing undoes it. While the main deck
+// holds fewer than SAGA.minEncounters encounters, a Common/Uncommon encounter with no packet of its own
+// (legal, under its copy limit, picked by calibrated weight) replaces a non-encounter main-deck card of the
+// same rarity (or the other of Common/Uncommon if that rarity has none). Like packets, it never touches
+// Rare or Legendary, and it never removes a card that has a packet or carries a trait a packet asks for.
+function sagaApplyEncounterMinimum(fixed, out, counts, pool, leader){
+  const isEnc = c=>c.type==='O - Encounter';
+  const asked = new Set();
+  fixed.concat(out).forEach(c=>packetNeeds(c).forEach(([t])=>asked.add(t)));
+  let have = out.filter(isEnc).length;
+  while(have < SAGA.minEncounters){
+    const open = pool.filter(c=>isEnc(c) && packetPullable(c) && !packetNeeds(c).length && (counts.get(c.id)||0) < sagaCopyLimit(c, leader));
+    const add = sagaWeightedPick(open);
+    if(!add) break;
+    let i = -1;
+    for(const t of PACKET_TIER_ORDER[rarityTier(add)]){
+      const idx = out.map((c,k)=>k).filter(k=>{
+        const c = out[k];
+        return !isEnc(c) && rarityTier(c)===t && !packetNeeds(c).length && !cardTraitList(c).some(x=>asked.has(x));
+      });
+      if(idx.length){ i = idx[Math.floor(Math.random()*idx.length)]; break; }
+    }
+    if(i<0) break;
+    counts.set(out[i].id, (counts.get(out[i].id)||0)-1);
+    counts.set(add.id, (counts.get(add.id)||0)+1);
+    out[i] = add;
+    have++;
+  }
+}
+
 // Draws cards one at a time into `counts` (id -> copies), never exceeding the copy limit.
 // `slots` (optional) is a list of rarity slots; otherwise n plain rarity-rolled draws.
 function sagaDrawMany(pool, n, counts, leader, opts){
@@ -320,7 +351,9 @@ function buildSagaDeck(cards, deckType, inSet){
   // 30 main-deck cards, drawn from fixed rarity slots (see sagaMainDeckSlots)
   const mainPool = legal(cards.filter(c=>isMainDeckEligibleType(c, deckType)));
   const drawn = sagaDrawMany(mainPool, SAGA.mainDeckSize, deck.deckCards, leader, {slots:sagaMainDeckSlots()});
-  sagaApplyPackets([leader, bonus, extra].filter(Boolean).concat(deck.schemeIds.map(id=>cards.find(c=>c.id===id))), drawn, deck.deckCards, mainPool, leader); // packets (traits-to-packet)
+  const fixed = [leader, bonus, extra].filter(Boolean).concat(deck.schemeIds.map(id=>cards.find(c=>c.id===id)));
+  sagaApplyPackets(fixed, drawn, deck.deckCards, mainPool, leader); // packets (traits-to-packet)
+  if(deckType==='overlord') sagaApplyEncounterMinimum(fixed, drawn, deck.deckCards, mainPool, leader); // 12+ encounters
   deck.deckCards.forEach((n,id)=>{ if(n<=0) deck.deckCards.delete(id); }); // cards swapped out entirely
   drawn.forEach(c=>{ if(!deck.deckOrder.includes(c.id)) deck.deckOrder.push(c.id); });
 

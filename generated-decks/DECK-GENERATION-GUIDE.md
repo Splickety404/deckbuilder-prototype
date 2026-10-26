@@ -67,7 +67,8 @@ Per deck (call it independently for each deck, since results are random and lead
    - For each trait a card asks for: `have` = cards in the whole deck (all zones, copies counted) with that trait, minus one if the asking card has the trait itself. While `have` is below the amount, a main-deck card of that trait (legal, under the copy limit, not the asking card, picked by calibrated weight) replaces a main-deck card of the same rarity. **Rare and Legendary are never pulled in or replaced** (`packetPullable`, `PACKET_TIER_ORDER`): only Common/Uncommon are candidates, and a Common/Uncommon victim falls back to the other of the two if its own rarity has none. Replaced cards never have a packet and never share a trait already asked for.
    - Added cards with packets are queued and handled the same way.
    - If the legal pool cannot supply enough and the asker is a Common/Uncommon main-deck card, it is swapped for a plain Common/Uncommon card; a Rare/Legendary asker is never swapped out. A fixed asker gets as many as the pool allows.
-8. Returns `{deck:{leaderId, bonusCardId, bonusAspect, extraCardId, schemeIds, deckCards, deckOrder, expectedSize}, leader, hasBonus}`. `expectedSize` is 32 for Champion (2 + 30) and 37 for Overlord (adds 5 schemes). This excludes the Stronghold/Resistance slot's own card, as the app's toast counts it.
+8. **Encounter minimum** (Overlord only, `sagaApplyEncounterMinimum`, runs after packets): while the main deck has fewer than `SAGA.minEncounters` (12) `O - Encounter` cards, a legal Common/Uncommon encounter with no packet (under its copy limit, picked by calibrated weight) replaces a non-encounter main-deck card of the same rarity (falling back to the other of Common/Uncommon). Rare/Legendary are never added or removed, and the removed card never has a packet or a trait a packet asks for.
+9. Returns `{deck:{leaderId, bonusCardId, bonusAspect, extraCardId, schemeIds, deckCards, deckOrder, expectedSize}, leader, hasBonus}`. `expectedSize` is 32 for Champion (2 + 30) and 37 for Overlord (adds 5 schemes). This excludes the Stronghold/Resistance slot's own card, as the app's toast counts it.
 
 Rarity weights: Common 65, Uncommon 30, Rare 5. Unspecified rarity counts as Common. See `deckbuilding-rules.md` for the constants.
 
@@ -140,6 +141,7 @@ Notes:
 - Each CSV deck column totals 30 main-deck cards (count `xN`), and Overlord columns have exactly 5 schemes.
 - No card above 2 copies (3 for Koross's Undying Legion cards).
 - Rare/Legendary unaffected: packets on vs off give the same Rare/Legendary appearance rates (compare 40,000 decks per side with `packetNeeds` stubbed to return `[]`).
+- Every Overlord deck has at least 12 `O - Encounter` cards in its main deck (count copies).
 - Packets hold: for every card with a `traits-to-packet` entry, the rest of the deck holds at least that many cards with the trait (a 3000-deck-per-side simulation found 0 unmet). Trait comparison is case-insensitive.
 - Domination/Quest aspect differs from the leader's aspect. All cards are legal for the leader and bonus aspects.
 - `pdftoppm` is not installed on this machine, so there was no visual render check. The Read tool can open a PDF with `pages` for a visual check.
