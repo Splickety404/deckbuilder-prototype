@@ -2,9 +2,9 @@
    CARD FLY-IN (private). When a booster is unwrapped or a sealed deck is built,
    each card spawns at the button you clicked, spins once and flies in an arc to
    where it now lives: its row in the open deck, the leader / Domination /
-   Stronghold chip, or — if that deck is hidden behind a tab — the tab itself,
-   which ripples as it absorbs the card. The counts on the Overlord / Champion /
-   Scheme Deck tabs tick up as each card lands. The whole thing is capped at
+   Stronghold section, or — if that deck is hidden behind a tab — the tab itself,
+   which ripples as it absorbs the card. The counts on the Overlord / Champion
+   tabs tick up as each card lands. The whole thing is capped at
    under one second however many cards there are.
 
    Usage (the state change itself happens first, exactly as before):
@@ -38,22 +38,22 @@ const FlyCards = (()=>{
     paintCounts();
   }
 
-  // Works out where a move ends up: an open-deck row, a setup chip, or a tab.
+  // Works out where a move ends up: an open-deck row, a setup section, or a tab.
+  const SLOT_SECTION = { 'deck-leader-slot':'leader', 'deck-bonus-slot':'bonus', 'deck-extra-slot':'extra' };
   function resolve(m){
     const tabFor = (key)=>document.querySelector(`#deckTypeTabs .tab[data-type="${key}"]`);
+    const zone = document.getElementById('deck-drop-zone');
     if(m.slot){
-      const chip = document.getElementById(m.slot);
-      if(m.side===state.deckType && chip && chip.offsetParent) return { kind:'chip', el:chip };
+      const box = zone.querySelector(`.deck-section[data-section="${SLOT_SECTION[m.slot]}"]`);
+      if(m.side===state.deckType && box && box.offsetParent) return { kind:'chip', el:box };
       return { kind:'tab', el:tabFor(m.side) };
     }
-    const open = m.key==='scheme' ? activeIsSchemeMode()
-               : (state.deckType===m.key && !activeIsSchemeMode());
-    if(open){
-      const zone = document.getElementById('deck-drop-zone');
+    const side = m.key==='scheme' ? 'overlord' : m.key; // the schemes are a section of the Overlord deck
+    if(state.deckType===side){
       const row = zone.querySelector(`.deck-stack[data-id="${CSS.escape(m.card.id)}"]`);
       return row ? { kind:'row', el:row, zone } : { kind:'chip', el:zone };
     }
-    return { kind:'tab', el:tabFor(m.key) };
+    return { kind:'tab', el:tabFor(side) };
   }
 
   function run(origin, moves, onDone){

@@ -100,7 +100,6 @@
 <!--PRIVATE-BEGIN-->
     <div class="tab-group" id="deckTypeTabs">
       <div class="tab" data-type="overlord">Overlord <span class="tab-count" data-count="overlord">0</span></div>
-      <div class="tab" data-type="scheme">Scheme Deck <span class="tab-count" data-count="scheme">0</span></div>
       <div class="tab" data-type="champion">Champion <span class="tab-count" data-count="champion">0</span></div>
     </div>
     <div class="btn" id="btnFeedbackInbox" style="display:none;" title="Read the card feedback people have sent">Feedback</div>
@@ -146,28 +145,6 @@
         </div>
       </div>
       <div id="deck-controls">
-<!--PRIVATE-BEGIN-->
-        <div class="mode-toggle" id="overlordModeToggle">
-          <div class="tab" data-mode="main">Main Deck (50)</div>
-          <div class="tab" data-mode="scheme">Scheme Deck (5)</div>
-        </div>
-        <details id="deckSetupPanel" open>
-          <summary>Deck Setup</summary>
-          <div id="deck-leader-slot" class="leader-chip">
-            <span class="placeholder">Click to choose a leader</span>
-          </div>
-          <div id="deck-bonus-slot" class="leader-chip">
-            <span class="placeholder" id="bonusSlotPlaceholder">Click to choose a Domination card</span>
-          </div>
-          <div id="deck-extra-slot" class="leader-chip">
-            <span class="placeholder" id="extraSlotPlaceholder">Click to choose a Stronghold</span>
-          </div>
-          <div id="aspectRow">
-            <label id="aspectLabel">Domination Aspect</label>
-            <span id="aspectValue" style="font-size:13px;color:var(--text-soft);">—</span>
-          </div>
-        </details>
-<!--PRIVATE-END-->
         <div id="deckHeaderLine">
           <h3 id="deckPanelTitle">Your Deck</h3>
           <span id="deckCountLabel">0 / 50</span>
@@ -219,16 +196,6 @@
     </aside>
 
   </div>
-
-<!--PRIVATE-BEGIN-->
-  <!-- Leader picker modal -->
-  <div class="modal-overlay hidden" id="cardPickerModal">
-    <div class="modal-box">
-      <div class="modal-header"><h2 id="cardPickerTitle">Choose a card</h2><div class="btn btn-icon" data-close="cardPickerModal">✕</div></div>
-      <div class="modal-body"><div class="leader-grid" id="cardPickerGrid"></div></div>
-    </div>
-  </div>
-<!--PRIVATE-END-->
 
   <!-- Card preview modal -->
   <div class="modal-overlay hidden" id="preview-modal">

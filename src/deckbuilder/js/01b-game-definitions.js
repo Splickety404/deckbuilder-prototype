@@ -101,6 +101,10 @@ const GenericGame = {
   // A second list the deck panel can be editing instead of the main deck (a side deck…) —
   // null, or an object with render(zone) / has(id) / order() / setOrder(arr) / removeOne(id) / removeAll(id) / add(ids).
   activeSideList(){ return null; },
+  // Which list a given card lives in — the same shape as activeSideList, or null for the main
+  // deck. A game whose panel shows several lists at once answers per card, so a row's own
+  // buttons always act on its own list whichever one is open.
+  listOf(id){ return this.activeSideList(); },
   // Optional extras a structured game draws around the deck panel — none for a plain card pool.
   renderTabs(){},
   renderDeckControlsExtras(){},

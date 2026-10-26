@@ -44,8 +44,6 @@
 body.generic-mode #deckTypeTabs,
 body.generic-mode #btnSealedDeck,
 body.generic-mode:not([data-game="hellbreak"]) #btnUnwrapBooster, /* HellBreak has its own booster (12c) */
-body.generic-mode #overlordModeToggle,
-body.generic-mode #deckSetupPanel,
 body.generic-mode #btnClearIllegal,
 body.generic-mode #deckRulesPanel,
 body.generic-mode #deckStatsPanel,

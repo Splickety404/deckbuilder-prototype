@@ -1,55 +1,23 @@
 /* =========================================================================
    ECHO — DECK CONTROLS, RULES CHECKLIST AND STATS (private). Everything the
    deck panel shows that only exists for Echo's structured decks: the Overlord/
-   Champion tabs, leader / Domination / Stronghold pickers, the rules checklist
+   Champion tabs, the illegal-card clean-up, the rules checklist
    and the deck + view statistics. Hooked into the shared renderers through the
    EchoGame definition (see 01b/01c); moved here unchanged.
    ========================================================================= */
 EchoGame.renderTabs = function(){
   document.querySelectorAll('#deckTypeTabs .tab').forEach(t=>{
-    const schemeOpen = state.deckType==='overlord' && curDeck().overlordMode==='scheme';
-    t.classList.toggle('active', t.dataset.type==='scheme' ? schemeOpen : t.dataset.type===state.deckType && !schemeOpen);
+    t.classList.toggle('active', t.dataset.type===state.deckType);
   });
   FlyCards.paintCounts();
 };
 
+// The leader / Domination / Stronghold and the schemes are sections of the deck list itself
+// (see 10b); what's left up here is the illegal-card clean-up, the rules checklist and the stats.
 EchoGame.renderDeckControlsExtras = function(){
-  document.getElementById('overlordModeToggle').style.display = state.deckType==='overlord' ? 'flex' : 'none';
-  document.querySelectorAll('#overlordModeToggle .tab').forEach(t=>{
-    t.classList.toggle('active', t.dataset.mode===curDeck().overlordMode);
-  });
-
-  const leader = getLeader();
-  renderPickChip('deck-leader-slot', leader, 'Click to choose a leader', curDeck().leaderId, ()=>{
-    curDeck().leaderId = null;
-    renderAll();
-  });
-
-  const isOverlord = state.deckType==='overlord';
-  const bonusCard = getBonusCard();
-  renderPickChip('deck-bonus-slot', bonusCard, isOverlord ? 'Click to choose a Domination card' : 'Click to choose a Quest card', curDeck().bonusCardId, ()=>{
-    curDeck().bonusCardId = null;
-    curDeck().bonusAspect = ''; // derived — clears along with the card that determined it
-    renderAll();
-  });
-
-  const extraCard = getExtraCard();
-  renderPickChip('deck-extra-slot', extraCard, isOverlord ? 'Click to choose a Stronghold' : 'Click to choose a Resistance', curDeck().extraCardId, ()=>{
-    curDeck().extraCardId = null;
-    renderAll();
-  });
-
-  document.getElementById('aspectLabel').textContent = isOverlord ? 'Domination Aspect' : 'Quest Aspect';
-  document.getElementById('aspectValue').textContent = curDeck().bonusAspect || '— choose a ' + (isOverlord?'Domination':'Quest') + ' card —';
-
-  const isScheme = activeIsSchemeMode();
-
   let illegalCount=0;
-  if(isScheme){
-    curDeck().schemeIds.forEach(id=>{ const c=state.byId.get(id); if(!c || !isLegalForCurrentPool(c)) illegalCount++; });
-  } else {
-    for(const id of curDeck().deckCards.keys()){ const c=state.byId.get(id); if(!c || !isLegalForCurrentPool(c)) illegalCount++; }
-  }
+  for(const id of curDeck().deckCards.keys()){ const c=state.byId.get(id); if(!c || !isLegalForCurrentPool(c)) illegalCount++; }
+  if(state.deckType==='overlord') curDeck().schemeIds.forEach(id=>{ const c=state.byId.get(id); if(!c || !isLegalForCurrentPool(c)) illegalCount++; });
   const btn = document.getElementById('btnClearIllegal');
   btn.style.display = illegalCount>0 ? 'inline-flex' : 'none';
   if(illegalCount>0) btn.textContent = `Remove ${illegalCount} illegal card${illegalCount>1?'s':''}`;
@@ -64,14 +32,14 @@ function renderDeckRulesChecklist(){
   const isOverlord = state.deckType==='overlord';
   const rules = [];
 
-  const mainCount = deckTotalCount();
+  const mainCount = echoSectionCount('deck'); // the main deck only — setup-card extras show in their own sections
   rules.push([mainCount>=DECK_LIMIT, mainCount>=DECK_LIMIT ? `${mainCount} cards (meets the ${DECK_LIMIT}-card minimum)` : `${mainCount} / ${DECK_LIMIT} cards — under the minimum`]);
 
   const overCopyIds = [...curDeck().deckCards.entries()].filter(([,n])=>n>3).map(([id])=>id);
   rules.push([overCopyIds.length===0, overCopyIds.length===0 ? 'No card exceeds 3 copies' : `${overCopyIds.length} card(s) have more than 3 copies`]);
 
   const extraLeaders = [...curDeck().deckCards.entries()].filter(([id])=>{ const c=state.byId.get(id); return c && c.type===leaderTypeName(state.deckType); }).reduce((n,[,q])=>n+q, 0);
-  if(extraLeaders>0) rules.push([false, `${extraLeaders} extra ${isOverlord?'Overlord':'Champion'} card${extraLeaders>1?'s':''} in the deck list (from boosters) — over the limit of 1; remove any time`]);
+  if(extraLeaders>0) rules.push([false, `${extraLeaders} extra ${isOverlord?'Overlord':'Champion'} card${extraLeaders>1?'s':''} — over the limit of 1; remove any time`]);
 
   if(isOverlord){
     const schemeCount = curDeck().schemeIds.length;
@@ -204,41 +172,7 @@ function renderCurrentViewStats(){
   const visibleCards = poolForCurrentMode().filter(c=>cardMatchesFilters(c));
   const weightOf = (c) => {
     if(!curFilters().deckViewOnly) return 1;
-    return activeIsSchemeMode() ? curDeck().schemeIds.filter(x=>x===c.id).length : (curDeck().deckCards.get(c.id)||0);
+    return EchoGame.listCount(c.id);
   };
   body.innerHTML = renderStatsPanelHtml(computeCardStats(visibleCards.map(c=>[c.id, weightOf(c)])));
 }
-
-function renderPickChip(elId, card, placeholderText, selectedId, onRemove){
-  const el = document.getElementById(elId);
-  el.classList.toggle('foil', !!card && isFoil(card.id));
-  if(!card && selectedId){
-    // A card WAS chosen, but no longer exists in the live feed — distinct from
-    // "nothing chosen" (which would show the plain placeholder instead).
-    const info = getRemovedCardInfo(selectedId);
-    const label = info==='loading' ? 'Loading…' : (info==='not-found' ? `(unknown card ${selectedId})` : (info.name || selectedId));
-    el.innerHTML = `<span class="removed-badge" data-act="removedinfo" title="Removed from the game — click for details">&#9888;</span><span>${escapeHtml(label)}</span><span class="chip-remove" data-act="remove" title="Remove">✕</span>`;
-    el.querySelector('[data-act=removedinfo]').addEventListener('click', (e)=>{
-      e.stopPropagation();
-      toast(info && info!=='loading' && info!=='not-found' ? `"${info.name}" was removed from the game (last known type: ${info.type||'unknown'}).` : 'This card was removed from the game — no further record found.');
-    });
-    if(onRemove) el.querySelector('[data-act=remove]').addEventListener('click', (e)=>{ e.stopPropagation(); onRemove(); });
-    return;
-  }
-  const imgHtml = card ? cardImageHtml(card, '', 150) : '';
-  const changed = card && cardChangedSinceExport(card);
-  el.innerHTML = card
-    ? `${imgHtml}<span>${escapeHtml(card.name)}</span>${changed?'<span class="changed-badge" data-act="changed" title="Changed since this deck was exported — click to see what changed">&#9888;</span>':''}<span class="chip-feedback feedback-btn" data-act="feedback" title="Send feedback on this card">💬</span><span class="chip-remove" data-act="remove" title="Remove">✕</span>`
-    : `<span class="placeholder">${escapeHtml(placeholderText)}</span>`;
-  if(card && card._isHorizontal) layoutLandscapeFrame(el.querySelector('.landscape-frame'));
-  if(card) wireHoverPreview(el, card);
-  if(changed) el.querySelector('[data-act=changed]').addEventListener('click', (e)=>{ e.stopPropagation(); openHistoryModal(card); });
-  if(card) el.querySelector('[data-act=feedback]').addEventListener('click', (e)=>{ e.stopPropagation(); openCardFeedback(card); });
-  if(card && onRemove){
-    el.querySelector('[data-act=remove]').addEventListener('click', (e)=>{
-      e.stopPropagation(); // don't also trigger the chip's own click-to-open-picker handler
-      onRemove();
-    });
-  }
-}
-

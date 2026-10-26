@@ -6,8 +6,13 @@
 const DECK_LIMIT = 50;
 const MAX_COPIES = 3;
 const SCHEME_DECK_SIZE = 5;
-// True while the Overlord's Scheme tab is open (the deck panel is then editing the scheme list).
-function activeIsSchemeMode(){ return state.game.structured && state.deckType==='overlord' && curDeck().overlordMode==='scheme'; }
+// The deck panel is split into sections (Overlord / Domination / Stronghold / Schemes / Deck, or
+// Champion / Quest / Resistance / Deck); clicking one shows the cards that can go in it. Which one
+// is open is remembered per deck: 'leader' | 'bonus' | 'extra' | 'schemes' | 'deck'.
+const echoOpenSection = { overlord:'deck', champion:'deck' };
+function echoActiveSection(){ return echoOpenSection[state.deckType] || 'deck'; }
+// True while the Overlord's Schemes section is open (adding then goes to the scheme list).
+function activeIsSchemeMode(){ return state.game.structured && state.deckType==='overlord' && echoActiveSection()==='schemes'; }
 
 const EchoGame = {
   id: 'echo',
@@ -15,7 +20,8 @@ const EchoGame = {
   aspectColors: { 'Corruption':'#6b3fa0','Wrath':'#a03f3f','Deceit':'#3f8f7a' },
   afterCardsLoaded(){ computeAndCacheAspects(); },
   deckKeys: ['overlord', 'champion', 'generic'],
-  filterKeys: ['overlord', 'champion', 'scheme', 'generic'],
+  filterKeys: ['overlord', 'champion', 'scheme', 'generic',
+               'overlord-leader', 'overlord-bonus', 'overlord-extra', 'champion-leader', 'champion-bonus', 'champion-extra'],
   defaultDeckType: 'overlord',
   // Overlord and Champion are built entirely independently — separate leader, aspect, scheme
   // deck, main deck and name.
@@ -28,10 +34,14 @@ const EchoGame = {
       bonusAspect:'',    // derived from bonusCardId's aspect whenever it's set — never chosen independently anymore
     };
   },
-  // The Overlord main-deck view and its Scheme view browse the same deck slot (schemeIds live on
-  // the overlord slot), but they're different card pools with different useful filters, so the
-  // Scheme view gets its own bucket.
-  filterKey(){ return activeIsSchemeMode() ? 'scheme' : activeDeckKey(); },
+  // Every section of a deck is a different card pool with different useful filters, so each gets
+  // its own bucket (the main deck keeps the deck's own key, the Overlord's Schemes keep 'scheme').
+  filterKey(){
+    const sec = echoActiveSection();
+    if(sec==='deck') return activeDeckKey();
+    if(sec==='schemes') return 'scheme';
+    return activeDeckKey() + '-' + sec;
+  },
   multiValueSplit: '/',
   commaSplits: false,
   matches(rawSetResults){
@@ -66,15 +76,17 @@ const EchoGame = {
       (r.type==='Z - Custom' && Object.values(EXTRA_CARD_PLACEHOLDER_NAME).includes(r.name)); // the Stronghold/Resistance placeholders are horizontal too
     r._rotate = r._isHorizontal ? 90 : 0; // Echo mode always rotates its horizontal cards the same way it always has
   },
-  copyLimit(card){ return (card && card._isScheme) ? 1 : MAX_COPIES; }, // schemes: documented 1-copy max
-  deckSummary(){
-    const isScheme = activeIsSchemeMode();
-    const count = isScheme ? curDeck().schemeIds.length : deckTotalCount();
-    const limit = isScheme ? SCHEME_DECK_SIZE : DECK_LIMIT;
-    return { title: isScheme ? 'Scheme Deck' : 'Your Deck', text: `${count} / ${limit}`, bad: count>limit };
+  copyLimit(card){
+    if(card && card._isScheme) return 1; // schemes: documented 1-copy max
+    const sec = card ? echoHomeSection(card) : 'deck';
+    return (sec==='leader' || sec==='bonus' || sec==='extra') ? 1 : MAX_COPIES; // one leader / Domination / Stronghold
   },
-  listCount(id){ return activeIsSchemeMode() ? curDeck().schemeIds.filter(x=>x===id).length : (curDeck().deckCards.get(id)||0); },
-  removeOne(id){ activeIsSchemeMode() ? removeScheme(id) : removeOneCopy(id); },
+  deckSummary(){
+    const count = echoSectionCount('deck');
+    return { title: 'Your Deck', text: `${count} / ${DECK_LIMIT}`, bad: count>DECK_LIMIT };
+  },
+  listCount(id){ const l = echoListOf(id); return l ? l.count(id) : (curDeck().deckCards.get(id)||0); },
+  removeOne(id){ removeOneCopy(id); },
   illegalHint: 'Not legal for this deck — wrong aspect for your leader/domination aspect.',
   renderViewStats(){ renderCurrentViewStats(); },
   inActiveView(card){ return true; },

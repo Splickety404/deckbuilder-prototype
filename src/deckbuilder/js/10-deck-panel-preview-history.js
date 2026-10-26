@@ -6,10 +6,10 @@ function renderDeckPanel(){
   zone.innerHTML='';
 
   const side = state.game.activeSideList();
-  if(side){
-    side.render(zone);
-  } else if(state.game.renderDeckList){
+  if(state.game.renderDeckList){
     state.game.renderDeckList(zone);
+  } else if(side){
+    side.render(zone);
   } else {
     if(!curDeck().deckOrder.length){
       zone.innerHTML = `<div id="deck-empty-hint">Drag cards here, or use the + button on a card.</div>`;
@@ -140,7 +140,8 @@ function wireRowDrag(row, id){
     try{ payload = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ return; }
     if(payload && payload.reorder){
       if(payload.id===id) return;
-      const side = state.game.activeSideList();
+      const side = state.game.listOf(payload.id);
+      if(side !== state.game.listOf(id)) return; // rows of different lists don't reorder into each other
       const orderArr = side ? side.order() : curDeck().deckOrder;
       const rect = row.getBoundingClientRect();
       const before = (e.clientY - rect.top) < rect.height/2;
@@ -157,7 +158,7 @@ function wireRowDrag(row, id){
 }
 
 function removeOneCopy(id){
-  const side = state.game.activeSideList();
+  const side = state.game.listOf(id);
   if(side){ side.removeOne(id); return; }
   const cur = curDeck().deckCards.get(id)||0;
   const nn = cur-1;
@@ -166,7 +167,7 @@ function removeOneCopy(id){
   renderAll();
 }
 function removeAllCopies(id){
-  const side = state.game.activeSideList();
+  const side = state.game.listOf(id);
   if(side){
     side.removeAll(id);
     renderAll();
@@ -177,12 +178,13 @@ function removeAllCopies(id){
   renderAll();
 }
 function addCardsToDeck(ids){
-  const side = state.game.activeSideList();
-  if(side){
-    side.add(ids);
-  } else {
+  // Each card goes to the list it belongs to (a side list, or the main deck when that's null).
+  const groups = new Map();
+  ids.forEach(id=>{ const l = state.game.listOf(id); groups.set(l, [...(groups.get(l)||[]), id]); });
+  groups.forEach((groupIds, side)=>{
+    if(side){ side.add(groupIds); return; }
     let added=0, skipped=0;
-    ids.forEach(id=>{
+    groupIds.forEach(id=>{
       const c = state.byId.get(id);
       if(!c || !isTypeEligible(c)) { skipped++; return; } // aspect-illegal cards ARE addable now — only wrong type is a hard block
       const cur = curDeck().deckCards.get(id)||0;
@@ -191,7 +193,7 @@ function addCardsToDeck(ids){
       added++;
     });
     toast(`Added ${added} card${added!==1?'s':''}${skipped?`, skipped ${skipped} (wrong card type for this deck)`:''}.`);
-  }
+  });
   renderAll();
 }
 

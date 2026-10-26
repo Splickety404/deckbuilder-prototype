@@ -57,7 +57,7 @@ dropZone.addEventListener('drop', (e)=>{
   let payload;
   try{ payload = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ return; }
   if(payload && payload.reorder){
-    const side = state.game.activeSideList();
+    const side = state.game.listOf(payload.id);
     const orderArr = side ? side.order() : curDeck().deckOrder;
     const filtered = orderArr.filter(x=>x!==payload.id);
     filtered.push(payload.id);

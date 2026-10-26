@@ -24,19 +24,28 @@ const HORIZONTAL_TYPES = new Set(['O - Domination','C - Quest','O - Stronghold',
 // manual switch-over needed.
 function extraCardPool(deckType){ return extraCardPoolFrom(state.cards, deckType); }
 
-// Type membership for whichever pool is currently active — this is a hard rule with
-// no leader dependency at all (a Champion card can never go in an Overlord deck,
-// leader chosen or not).
-EchoGame.isTypeEligible = function(card){
-  if(activeIsSchemeMode()) return card.type==='O - Scheme';
-  const prefix = prefixFor(state.deckType);
-  if(!card.type.startsWith(prefix)) return false;
-  if(card.type===leaderTypeName(state.deckType)) return false;
-  if(card.type===prefix+'Scheme') return false;
-  if(card.type===bonusCardTypeName(state.deckType)) return false;
-  if(card.type===extraCardTypeName(state.deckType)) return false;
-  if(card.type==='Z - Custom') return false; // the placeholder is only ever picked via the dedicated slot, never the general pool
-  return true;
+// Which section of the deck being edited a card belongs in, by its type — or null if it can't go
+// in this deck at all (a Champion card can never go in an Overlord deck, leader chosen or not).
+function echoHomeSection(card){
+  const deckType = state.deckType;
+  if(card.type==='Z - Custom') return card.name===EXTRA_CARD_PLACEHOLDER_NAME[deckType] ? 'extra' : null; // the Stronghold/Resistance stand-in
+  const prefix = prefixFor(deckType);
+  if(!card.type.startsWith(prefix)) return null;
+  if(card.type===leaderTypeName(deckType)) return 'leader';
+  if(card.type===bonusCardTypeName(deckType)) return 'bonus';
+  if(card.type===extraCardTypeName(deckType)) return 'extra';
+  if(card.type===prefix+'Scheme') return deckType==='overlord' ? 'schemes' : null;
+  return 'deck';
+}
+
+// Type membership is a hard rule: any card with a section in this deck may be added (it lands in
+// its own section). The card pool shows only the open section's cards (inActiveView).
+EchoGame.isTypeEligible = function(card){ return echoHomeSection(card)!==null; };
+EchoGame.inActiveView = function(card){
+  const sec = echoHomeSection(card);
+  // Same allowance the sealed-deck generator uses: the stand-in only shows while no real Stronghold/Resistance exists.
+  if(sec==='extra' && card.type==='Z - Custom') return echoActiveSection()==='extra' && extraCardPool(state.deckType).includes(card);
+  return sec===echoActiveSection();
 };
 
 // Aspect/loyalty eligibility — identical rule for the 50-card deck and the 5-scheme
@@ -58,7 +67,9 @@ function isAspectLegal(card){
 // leader is picked. This single function backs both what's addable and what gets
 // flagged as illegal in an existing deck.
 EchoGame.isLegal = function(card){
-  if(!isTypeEligible(card)) return false;
+  const sec = echoHomeSection(card);
+  if(!sec) return false;
+  if(sec!=='deck' && sec!=='schemes') return true; // the leader / Domination / Stronghold have no aspect rule
   if(!getLeader()) return true;
   return isAspectLegal(card);
 };
