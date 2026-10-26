@@ -2070,8 +2070,11 @@ const GenericGame = {
     // "rotate" column (0/90/180/270, defaulting to 0) — the data-driven equivalent
     // of a structured game's hardcoded rotation rules.
     r._doubleSided = String(r['is-double-sided']).trim().toUpperCase()==='TRUE';
+    // The sheet's "rotate" (written by the Card Updater) is how far the image must
+    // turn clockwise to read upright. _rotate counts the other way (90 is turned
+    // counter-clockwise — see .rotate-90-fill), so 90 and 270 swap.
     const rot = parseInt(r.rotate, 10);
-    r._rotate = [90,180,270].includes(rot) ? rot : 0;
+    r._rotate = rot===90 ? 270 : rot===270 ? 90 : rot===180 ? 180 : 0;
     r._isHorizontal = (r._rotate===90 || r._rotate===270);
   },
   copyLimit(card){ return Infinity; }, // generic mode restricts card counts for no reason at all
