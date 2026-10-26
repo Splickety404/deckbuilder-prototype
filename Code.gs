@@ -2067,23 +2067,27 @@ function cuWrite(target, records, email, comprehensive) {
 
 // =====================================================================
 // PRECONSTRUCTED DECKS — deck .json files (the deckbuilder's own "Export ›
-// JSON decklist" format) placed directly in a GAME's folder. Decks only
-// hold card ids, so loading one always shows the cards as they are now.
+// JSON decklist" format) kept in a "Precons" folder inside each SET's folder
+// (Game › Set › Precons, next to Cards). Decks only hold card ids, so loading
+// one always shows the cards as they are now.
 //
-// getPrecons (GET ?precons=<gameFolderId>): the decks this person may see.
-// A deck is shown only if they can access every set its cards are in —
-// worked out here from the card ids themselves, never from what the file
-// says, since deck files also carry card names. Ids that are in no set at
-// all (removed cards) don't count against anyone, and are reported as
-// `missing` so editors can see which decks are out of date.
-// canEdit: whether this person can edit the game folder (and so can add
-// or update decks there, via savePrecon).
+// getPrecons (GET ?precons=<gameFolderId>): the decks this person may see,
+// from the Precons folder of every set of that game they can see. A deck is
+// shown only if they can access every set its cards are in — worked out here
+// from the card ids themselves, never from what the file says, since deck
+// files also carry card names. Ids that are in no set at all (removed cards)
+// don't count against anyone, and are reported as `missing` so editors can
+// see which decks are out of date.
+// canEdit: whether this person can edit the game folder or one of its sets
+// (and so can add or update decks, via savePrecon).
 //
 // The same scan also returns `boards`: game-room layout files (the room's
-// Board ▾ › Export Layout — pieces/zones/tokens, no deckType) in the game
-// folder, with the same visibility rule applied to the cards placed on them.
+// Board ▾ › Export Layout — pieces/zones/tokens, no deckType) directly in the
+// game folder, with the same visibility rule applied to the cards placed on them.
 // When a game has any, the deckbuilder offers "Send deck to room" with one.
 // =====================================================================
+const PRECONS_FOLDER_NAME = 'Precons';
+
 function preconCardIds(d) {
   const ids = [];
   const add = id => { if (id) ids.push(String(id)); };
@@ -2092,6 +2096,49 @@ function preconCardIds(d) {
   (d.deckOrder || []).forEach(add);
   Object.keys(d.deckCards || {}).forEach(add);
   return ids.filter((id, i) => ids.indexOf(id) === i);
+}
+
+// Which set (folder id) every card id of a game is in. Reading every set's whole sheet is the
+// slow part, and it's the same for everyone, so it's remembered for a few minutes (a newly added
+// card can take that long to stop counting as "removed" in the stale-deck check).
+function cardSetIndex(gameFolderId, sets) {
+  const cache = CacheService.getScriptCache();
+  const setOfKey = 'setof:' + gameFolderId;
+  let setOf = null;
+  try { const hit = cache.get(setOfKey); if (hit) setOf = JSON.parse(hit); } catch (e) { setOf = null; }
+  if (setOf) return setOf;
+  setOf = {};
+  sets.forEach(s => {
+    try {
+      const sheet = SpreadsheetApp.openById(s.sheetId).getSheetByName('Sheet1');
+      if (!sheet) return;
+      const data = sheet.getDataRange().getValues();
+      const idCol = data[0].indexOf('id');
+      if (idCol === -1) return;
+      data.slice(1).forEach(r => { const id = String(r[idCol] || '').trim(); if (id && !setOf[id]) setOf[id] = s.folderId; });
+    } catch (e) { /* an unreadable set contributes no ids */ }
+  });
+  try { cache.put(setOfKey, JSON.stringify(setOf), 300); } catch (e) { /* too big to cache: just slower next time */ }
+  return setOf;
+}
+
+// A set's Precons folder, or null when it has none yet (create=true makes one).
+function setPreconsFolder(setFolderId, create) {
+  const setFolder = DriveApp.getFolderById(setFolderId);
+  const it = setFolder.getFoldersByName(PRECONS_FOLDER_NAME);
+  if (it.hasNext()) return it.next();
+  return create ? setFolder.createFolder(PRECONS_FOLDER_NAME) : null;
+}
+
+// Reads one .json file, remembering the parsed contents under its id + last-updated time
+// (a file's contents only change when that time does) instead of re-reading it from Drive.
+function readJsonFileCached(f, cache) {
+  const fileKey = 'pcf:' + f.getId() + ':' + f.getLastUpdated().getTime();
+  try { const hit = cache.get(fileKey); if (hit) return JSON.parse(hit); } catch (e) { /* re-read */ }
+  let text, d;
+  try { text = f.getBlob().getDataAsString(); d = JSON.parse(text); } catch (e) { return null; }
+  try { if (text.length < 90000) cache.put(fileKey, text, 21600); } catch (e) { /* skip */ }
+  return d;
 }
 
 function getPrecons(gameFolderId, idToken, callback) {
@@ -2106,60 +2153,49 @@ function getPrecons(gameFolderId, idToken, callback) {
     sets.forEach(s => { try { canSee[s.folderId] = emailCanAccessFolder(v.email, s.folderId); } catch (e) { canSee[s.folderId] = false; } });
     if (!sets.some(s => canSee[s.folderId])) throw new Error('You do not have access to this game.');
 
-    // Which set every card id is in. Reading every set's whole sheet is the slow part, and it's
-    // the same for everyone, so it's remembered for a few minutes (a newly added card can take
-    // that long to stop counting as "removed" in the stale-deck check).
+    const setOf = cardSetIndex(gameFolderId, sets);
     const cache = CacheService.getScriptCache();
-    const setOfKey = 'setof:' + gameFolderId;
-    let setOf = null;
-    try { const hit = cache.get(setOfKey); if (hit) setOf = JSON.parse(hit); } catch (e) { setOf = null; }
-    if (!setOf) {
-      setOf = {};
-      sets.forEach(s => {
-        try {
-          const sheet = SpreadsheetApp.openById(s.sheetId).getSheetByName('Sheet1');
-          if (!sheet) return;
-          const data = sheet.getDataRange().getValues();
-          const idCol = data[0].indexOf('id');
-          if (idCol === -1) return;
-          data.slice(1).forEach(r => { const id = String(r[idCol] || '').trim(); if (id && !setOf[id]) setOf[id] = s.folderId; });
-        } catch (e) { /* an unreadable set contributes no ids */ }
-      });
-      try { cache.put(setOfKey, JSON.stringify(setOf), 300); } catch (e) { /* too big to cache: just slower next time */ }
-    }
 
-    const decks = [], boards = [];
+    // Decks: the Precons folder of each set this person can see.
+    const decks = [];
+    sets.forEach(s => {
+      if (!canSee[s.folderId]) return;
+      let folder;
+      try { folder = setPreconsFolder(s.folderId, false); } catch (e) { folder = null; }
+      if (!folder) return;
+      const it = folder.getFiles();
+      while (it.hasNext()) {
+        const f = it.next();
+        if (!/\.json$/i.test(f.getName())) continue;
+        const d = readJsonFileCached(f, cache);
+        if (!d || !d.deckType) continue; // not a deck file
+        const ids = preconCardIds(d);
+        const missing = ids.filter(id => !setOf[id]);
+        if (ids.some(id => setOf[id] && !canSee[setOf[id]])) continue; // uses a set this person can't see
+        decks.push({ fileId: f.getId(), fileName: f.getName(), name: d.name || f.getName().replace(/\.json$/i, ''), updated: f.getLastUpdated().toISOString(), deck: d, missing: missing, setFolderId: s.folderId });
+      }
+    });
+
+    // Boards: room layout files directly in the game folder.
+    const boards = [];
     const it = DriveApp.getFolderById(gameFolderId).getFiles();
     while (it.hasNext()) {
       const f = it.next();
       if (!/\.json$/i.test(f.getName())) continue;
-      // A file's contents only change when its last-updated time does, so each parsed file is
-      // remembered under that pair (when small enough for the cache) instead of re-read from Drive.
-      let d = null;
-      const fileKey = 'pcf:' + f.getId() + ':' + f.getLastUpdated().getTime();
-      try { const hit = cache.get(fileKey); if (hit) d = JSON.parse(hit); } catch (e) { d = null; }
-      if (!d) {
-        let text;
-        try { text = f.getBlob().getDataAsString(); d = JSON.parse(text); } catch (e) { continue; }
-        try { if (text.length < 90000) cache.put(fileKey, text, 21600); } catch (e) { /* skip */ }
-      }
-      if (d && !d.deckType && Array.isArray(d.pieces) && (Array.isArray(d.zones) || Array.isArray(d.tokens))) {
-        const boardIds = [];
-        d.pieces.forEach(p => (p.cardIds || []).forEach(id => boardIds.push(String(id))));
-        if (boardIds.some(id => setOf[id] && !canSee[setOf[id]])) continue; // has cards from a set this person can't see
-        boards.push({ fileId: f.getId(), name: f.getName().replace(/\.json$/i, ''), updated: f.getLastUpdated().toISOString(), layout: d });
-        continue;
-      }
-      if (!d || !d.deckType) continue; // not a deck file
-      const ids = preconCardIds(d);
-      const missing = ids.filter(id => !setOf[id]);
-      if (ids.some(id => setOf[id] && !canSee[setOf[id]])) continue; // uses a set this person can't see
-      decks.push({ fileId: f.getId(), fileName: f.getName(), name: d.name || f.getName().replace(/\.json$/i, ''), updated: f.getLastUpdated().toISOString(), deck: d, missing: missing });
+      const d = readJsonFileCached(f, cache);
+      if (!(d && !d.deckType && Array.isArray(d.pieces) && (Array.isArray(d.zones) || Array.isArray(d.tokens)))) continue;
+      const boardIds = [];
+      d.pieces.forEach(p => (p.cardIds || []).forEach(id => boardIds.push(String(id))));
+      if (boardIds.some(id => setOf[id] && !canSee[setOf[id]])) continue; // has cards from a set this person can't see
+      boards.push({ fileId: f.getId(), name: f.getName().replace(/\.json$/i, ''), updated: f.getLastUpdated().toISOString(), layout: d });
     }
     decks.sort((a, b) => String(a.name).localeCompare(String(b.name)));
     boards.sort((a, b) => String(a.name).localeCompare(String(b.name)));
     let canEdit = false;
-    try { canEdit = emailCanEditFolder(v.email, gameFolderId); } catch (e) { /* treat as no */ }
+    try {
+      canEdit = emailCanEditFolder(v.email, gameFolderId)
+        || sets.some(s => canSee[s.folderId] && emailCanEditFolder(v.email, s.folderId));
+    } catch (e) { /* treat as no */ }
     result = { ok: true, canEdit: canEdit, decks: decks, boards: boards };
   } catch (err) {
     result = { ok: false, error: String((err && err.message) || err) };
@@ -2169,20 +2205,30 @@ function getPrecons(gameFolderId, idToken, callback) {
   return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
 }
 
-// Adds a deck to the game folder (fileId empty) or overwrites an existing
-// one in place (fileId given: must be a .json directly in that game folder).
-// Only for people who can edit the game folder. A new deck whose file name
-// is already taken is refused with `exists` (that file's id) unless
-// replace=true, so the person can choose to overwrite it.
+// Adds a deck (fileId empty) or overwrites an existing one in place (fileId
+// given: must be a .json in a Precons folder of one of this game's sets).
+// A new deck goes into the Precons folder of the set most of its cards come
+// from (the folder is created if the set has none yet). Only for people who
+// can edit that set's folder. A new deck whose file name is already taken
+// there is refused with `exists` (that file's id) unless replace=true, so the
+// person can choose to overwrite it.
 function savePrecon(gameFolderId, email, fileId, deck, replace) {
   const game = KNOWN_GAMES.find(g => g.folderId === gameFolderId);
   if (!game) throw new Error('Unknown game.');
-  if (!emailCanEditFolder(email, gameFolderId)) throw new Error('You need edit access to the game folder to change preconstructed decks.');
   if (!deck || !deck.deckType) throw new Error('That isn\'t a deck.');
+  const sets = getSetsForGame(game);
   const json = JSON.stringify(deck, null, 2);
-  const folder = DriveApp.getFolderById(gameFolderId);
-  const inFolder = f => { const p = f.getParents(); while (p.hasNext()) if (p.next().getId() === gameFolderId) return true; return false; };
+  const needEdit = setFolderId => {
+    if (!emailCanEditFolder(email, setFolderId)) throw new Error('You need edit access to this set\'s folder to change its preconstructed decks.');
+  };
   if (!fileId) {
+    const setOf = cardSetIndex(gameFolderId, sets);
+    const counts = {};
+    preconCardIds(deck).forEach(id => { if (setOf[id]) counts[setOf[id]] = (counts[setOf[id]] || 0) + 1; });
+    const home = sets.slice().sort((a, b) => (counts[b.folderId] || 0) - (counts[a.folderId] || 0))[0];
+    if (!home || !counts[home.folderId]) throw new Error('None of this deck\'s cards are in a set of this game.');
+    needEdit(home.folderId);
+    const folder = setPreconsFolder(home.folderId, true);
     const fileName = String(deck.name || 'Deck').replace(/[\\/:*?"<>|]+/g, '_').trim() + '.json';
     const same = folder.getFilesByName(fileName);
     if (same.hasNext()) {
@@ -2195,7 +2241,17 @@ function savePrecon(gameFolderId, email, fileId, deck, replace) {
     }
   }
   const f = DriveApp.getFileById(fileId);
-  if (!/\.json$/i.test(f.getName()) || !inFolder(f)) throw new Error('That deck file isn\'t in this game\'s folder.');
+  // Which of this game's sets the file sits in (as Set › Precons › file).
+  let setFolderId = null;
+  const parents = f.getParents();
+  while (parents.hasNext() && !setFolderId) {
+    const p = parents.next();
+    if (p.getName() !== PRECONS_FOLDER_NAME) continue;
+    const grand = p.getParents();
+    while (grand.hasNext()) { const g = grand.next().getId(); if (sets.some(s => s.folderId === g)) { setFolderId = g; break; } }
+  }
+  if (!/\.json$/i.test(f.getName()) || !setFolderId) throw new Error('That deck file isn\'t in a Precons folder of this game.');
+  needEdit(setFolderId);
   f.setContent(json); // same file, so Drive keeps the earlier version in its history
   return { fileId: fileId, fileName: f.getName(), created: false };
 }

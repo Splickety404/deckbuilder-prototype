@@ -878,7 +878,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     </div>
   </div>
 
-  <!-- Preconstructed deck: add / update (game-folder editors only) -->
+  <!-- Preconstructed deck: add / update (game or set folder editors only) -->
   <div class="modal-overlay hidden" id="preconModal">
     <div class="modal-box" style="width:min(440px,92vw);">
       <div class="modal-header"><h2>Preconstructed deck</h2><div class="btn btn-icon" data-close="preconModal">✕</div></div>
@@ -1908,7 +1908,7 @@ async function fetchHelpFromServer(folderId){
   }
 }
 
-// Saves (or replaces) one preconstructed deck file in the game's folder; throws on any failure.
+// Saves (or replaces) one preconstructed deck file (in its set's Precons folder); throws on any failure.
 async function savePreconToServer(fileId, deck, replace){
   const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
     body: JSON.stringify({ action:'precSave', idToken: state.idToken, gameFolderId: state.currentGameFolderId, fileId, deck, replace }) });
@@ -5703,9 +5703,10 @@ document.getElementById('btnExport').addEventListener('click', ()=>{
   document.getElementById('optExportTts').style.display = state.game.id==='echo' ? 'none' : '';
 });
 /* =========================================================================
-   PRECONSTRUCTED DECKS — deck .json files in the game's own folder (see
-   getPrecons/savePrecon in Code.gs). Decks hold card ids only, so a loaded
-   one always shows today's cards. People who can edit the game folder also
+   PRECONSTRUCTED DECKS — deck .json files in each set's Precons folder
+   (Game › Set › Precons; see getPrecons/savePrecon in Code.gs). Decks hold
+   card ids only, so a loaded one always shows today's cards. People who can
+   edit the game folder or one of its sets also
    get the Precon button (add the open deck as one, or update the one it was
    loaded from) and a heads-up when a deck has cards that no longer exist.
    ========================================================================= */
@@ -5833,7 +5834,7 @@ async function savePreconDeck(fileId){
     toast('Saving the preconstructed deck…');
     let res = await send(false);
     if(res.exists){
-      if(!confirm(`There's already a deck file named "${res.fileName}" in the game folder. Replace it with this deck?`)) return;
+      if(!confirm(`There's already a deck file named "${res.fileName}" in that set's Precons folder. Replace it with this deck?`)) return;
       res = await send(true);
     }
     curDeck().preconFileId = res.fileId;

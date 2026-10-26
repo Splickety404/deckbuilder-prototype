@@ -1,7 +1,8 @@
 /* =========================================================================
-   PRECONSTRUCTED DECKS — deck .json files in the game's own folder (see
-   getPrecons/savePrecon in Code.gs). Decks hold card ids only, so a loaded
-   one always shows today's cards. People who can edit the game folder also
+   PRECONSTRUCTED DECKS — deck .json files in each set's Precons folder
+   (Game › Set › Precons; see getPrecons/savePrecon in Code.gs). Decks hold
+   card ids only, so a loaded one always shows today's cards. People who can
+   edit the game folder or one of its sets also
    get the Precon button (add the open deck as one, or update the one it was
    loaded from) and a heads-up when a deck has cards that no longer exist.
    ========================================================================= */
@@ -129,7 +130,7 @@ async function savePreconDeck(fileId){
     toast('Saving the preconstructed deck…');
     let res = await send(false);
     if(res.exists){
-      if(!confirm(`There's already a deck file named "${res.fileName}" in the game folder. Replace it with this deck?`)) return;
+      if(!confirm(`There's already a deck file named "${res.fileName}" in that set's Precons folder. Replace it with this deck?`)) return;
       res = await send(true);
     }
     curDeck().preconFileId = res.fileId;

@@ -96,7 +96,7 @@ function openBoardRadialMenu(clientX, clientY){
   openRadialMenu(()=> done ? null : items, clientX, clientY);
 }
 /* ---- Import Precon: the game's preconstructed decks (deck .json files in its
-   game folder — see getPrecons in Code.gs; a player only sees decks whose
+   sets' Precons folders — see getPrecons in Code.gs; a player only sees decks whose
    cards they can access), listed fresh each time; picking one places it
    where you right-clicked, just like Import Deck. */
 // dropWorld: where the deck goes (default: the clicked spot).

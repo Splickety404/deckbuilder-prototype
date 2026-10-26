@@ -203,7 +203,7 @@ async function fetchHelpFromServer(folderId){
   }
 }
 
-// Saves (or replaces) one preconstructed deck file in the game's folder; throws on any failure.
+// Saves (or replaces) one preconstructed deck file (in its set's Precons folder); throws on any failure.
 async function savePreconToServer(fileId, deck, replace){
   const res = await fetch(WEBAPP_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
     body: JSON.stringify({ action:'precSave', idToken: state.idToken, gameFolderId: state.currentGameFolderId, fileId, deck, replace }) });
