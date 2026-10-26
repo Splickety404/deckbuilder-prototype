@@ -51,8 +51,10 @@ function openBooster(setName){
 }
 
 document.getElementById('btnUnwrapBooster').addEventListener('click', ()=>{
+  // A game with its own pack rules (HellBreak, 12c) supplies openBooster; Echo uses the one above.
+  const open = state.game.openBooster || openBooster;
   const sets = allSetNames();
-  if(boosterSetName && sets.includes(boosterSetName)){ openBooster(boosterSetName); return; }
-  if(sets.length===1){ boosterSetName = sets[0]; openBooster(boosterSetName); return; }
-  openSealedSetPicker((setName)=>{ boosterSetName = setName; openBooster(setName); });
+  if(boosterSetName && sets.includes(boosterSetName)){ open(boosterSetName); return; }
+  if(sets.length===1){ boosterSetName = sets[0]; open(boosterSetName); return; }
+  openSealedSetPicker((setName)=>{ boosterSetName = setName; open(setName); });
 });

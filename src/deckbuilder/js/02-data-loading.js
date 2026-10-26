@@ -70,6 +70,7 @@ function mergeCardSets(setCardLists){
 
 function applyModeUI(){
   document.body.classList.toggle('generic-mode', !state.game.structured);
+  document.body.dataset.game = state.game.id; // lets a game's own styles show or hide its controls
   const titleEl = document.getElementById('topbarTitle');
   // The current game's own name drives branding — it stays correct even if the game is renamed.
   const gameName = state.currentGameLabel || (state.authorizedSets[0] && state.authorizedSets[0].label) || 'Card Set';
