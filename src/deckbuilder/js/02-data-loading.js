@@ -80,7 +80,9 @@ function applyModeUI(){
 // Turns raw per-set rows into the live card list and shows it. Used for the saved copy
 // (shown instantly on a return visit) and again for the fresh server copy.
 function showLoadedCards(rawSetResults){
+  const prevGame = state.game;
   state.game = pickGame(rawSetResults);
+  if(state.game!==prevGame) state.sortField = state.game.defaultSort; // a resync of the same game keeps the chosen sort
   // The filters were set up before the game was known — give any view this game adds its own.
   state.game.filterKeys.forEach(k=>{ if(!state.filtersByType[k]) state.filtersByType[k] = freshFilters(); });
 

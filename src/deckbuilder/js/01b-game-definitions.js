@@ -7,6 +7,7 @@
                          which slot is open first, and the extra fields a deck holds
      filterKey()         which filter bucket the current view uses
      isTypeEligible(card) / isLegal(card)   hard "may it go in the deck" rule / softer legality
+     defaultSort         the card pool's sort field when this game is first loaded
      inActiveView(card)  does the card pool show this card in the current view (a game whose
                          deck panel has several boxes shows one box's cards at a time)
      aspectColors, afterCardsLoaded()       optional colors for named attributes / post-load hook
@@ -63,6 +64,7 @@ const GenericGame = {
   isTypeEligible(card){ return true; },  // may this card go in the deck being edited?
   isLegal(card){ return true; },         // is it legal there (a stricter, soft check)?
   inActiveView(card){ return true; },    // does the card pool show it in the current view?
+  defaultSort: 'name',
   aspectColors: {},                      // optional fixed colors for named card attributes
   afterCardsLoaded(){},                  // runs once a set's cards have been processed
   filterKey(){ return activeDeckKey(); },

@@ -1999,6 +1999,7 @@ state.userEmail = ''; // signed-in user's email, from the server's whoami respon
                          which slot is open first, and the extra fields a deck holds
      filterKey()         which filter bucket the current view uses
      isTypeEligible(card) / isLegal(card)   hard "may it go in the deck" rule / softer legality
+     defaultSort         the card pool's sort field when this game is first loaded
      inActiveView(card)  does the card pool show this card in the current view (a game whose
                          deck panel has several boxes shows one box's cards at a time)
      aspectColors, afterCardsLoaded()       optional colors for named attributes / post-load hook
@@ -2055,6 +2056,7 @@ const GenericGame = {
   isTypeEligible(card){ return true; },  // may this card go in the deck being edited?
   isLegal(card){ return true; },         // is it legal there (a stricter, soft check)?
   inActiveView(card){ return true; },    // does the card pool show it in the current view?
+  defaultSort: 'name',
   aspectColors: {},                      // optional fixed colors for named card attributes
   afterCardsLoaded(){},                  // runs once a set's cards have been processed
   filterKey(){ return activeDeckKey(); },
@@ -2192,6 +2194,7 @@ const EchoGame = {
   illegalHint: 'Not legal for this deck — wrong aspect for your leader/domination aspect.',
   renderViewStats(){ renderCurrentViewStats(); },
   inActiveView(card){ return true; },
+  defaultSort: 'name',
   renderDeckList: null,
 };
 gameDefinitions.push(EchoGame);
@@ -2371,7 +2374,9 @@ function applyModeUI(){
 // Turns raw per-set rows into the live card list and shows it. Used for the saved copy
 // (shown instantly on a return visit) and again for the fresh server copy.
 function showLoadedCards(rawSetResults){
+  const prevGame = state.game;
   state.game = pickGame(rawSetResults);
+  if(state.game!==prevGame) state.sortField = state.game.defaultSort; // a resync of the same game keeps the chosen sort
   // The filters were set up before the game was known — give any view this game adds its own.
   state.game.filterKeys.forEach(k=>{ if(!state.filtersByType[k]) state.filtersByType[k] = freshFilters(); });
 
@@ -5331,6 +5336,7 @@ const HellBreakGame = {
   id: 'hellbreak',
   filterKeys: ['monster', 'locations', 'deck'], // one set of filters per box
   filterKey(){ return hbActiveSection; },
+  defaultSort: 'cost',
   matches(rawSetResults){
     const has = (type)=> rawSetResults.some(s => s.rows.some(r => String(r.type||'').trim() === type));
     return has('Monster') && has('Location');

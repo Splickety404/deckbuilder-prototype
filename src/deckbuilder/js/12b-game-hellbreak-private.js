@@ -63,6 +63,7 @@ const HellBreakGame = {
   id: 'hellbreak',
   filterKeys: ['monster', 'locations', 'deck'], // one set of filters per box
   filterKey(){ return hbActiveSection; },
+  defaultSort: 'cost',
   matches(rawSetResults){
     const has = (type)=> rawSetResults.some(s => s.rows.some(r => String(r.type||'').trim() === type));
     return has('Monster') && has('Location');
