@@ -23,7 +23,14 @@
   "CARD UPDATER") applies the same rules and only lets people with edit
   access to the set's folder publish.
 -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script type="module">
+// pdf.js 4 ships only as a module. (3.11 drew outlined text that also has a
+// gradient fill — HellBreak's keyword badges — with a stroke ~16× too thick.)
+import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+window.pdfjsLib = pdfjsLib;
+dispatchEvent(new Event('pdfjs-ready'));
+</script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{
@@ -198,7 +205,8 @@ tr.empty td:last-child{color:var(--text-soft);}
 <div id="detail" class="hidden"><div class="panel" id="detailPanel"></div></div>
 
 <script>
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// pdf.js loads as a module (see the top of the page), which runs after this script.
+const pdfjsReady = new Promise(res=> window.pdfjsLib ? res() : addEventListener('pdfjs-ready', res, {once:true}));
 
 const BLEED_PT = 0.125 * 72;                      // cropped off every side
 const SIZES = { print:{w:750, h:1050}, screen:{w:375, h:525} }; // 2.5×3.5in at 300 and 150 dpi
@@ -240,6 +248,7 @@ async function loadFile(file){
   $('grid').innerHTML = ''; $('notices').innerHTML = ''; $('toolbar').classList.add('hidden');
   setStatus(`Opening ${file.name}…`, 0);
   try{
+    await pdfjsReady;
     doc = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
     await loadDoc();
   }catch(err){
@@ -905,7 +914,7 @@ async function publish(){
   const u = new URLSearchParams(location.search).get('pdf');
   if(!u) return;
   setStatus('Opening…', 0);
-  try{ doc = await pdfjsLib.getDocument(u).promise; await loadDoc(); }
+  try{ await pdfjsReady; doc = await pdfjsLib.getDocument(u).promise; await loadDoc(); }
   catch(err){ setStatus('Could not read that PDF: ' + err.message); }
 })();
 </script>
