@@ -8,6 +8,8 @@ function renderDeckPanel(){
   const side = state.game.activeSideList();
   if(side){
     side.render(zone);
+  } else if(state.game.renderDeckList){
+    state.game.renderDeckList(zone);
   } else {
     if(!curDeck().deckOrder.length){
       zone.innerHTML = `<div id="deck-empty-hint">Drag cards here, or use the + button on a card.</div>`;

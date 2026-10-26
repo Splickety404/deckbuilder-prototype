@@ -77,6 +77,8 @@ const EchoGame = {
   removeOne(id){ activeIsSchemeMode() ? removeScheme(id) : removeOneCopy(id); },
   illegalHint: 'Not legal for this deck — wrong aspect for your leader/domination aspect.',
   renderViewStats(){ renderCurrentViewStats(); },
+  inActiveView(card){ return true; },
+  renderDeckList: null,
 };
 gameDefinitions.push(EchoGame);
 

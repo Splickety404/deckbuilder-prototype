@@ -216,6 +216,16 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .deck-stack.over-limit{border-color:var(--danger);background:var(--danger-bg);}
 .deck-stack.dragover-row{background:var(--accent-soft);border-color:var(--accent);}
+/* A game whose deck is split into boxes (see renderDeckList in the game definition): the
+   active box is the one the card pool is showing; a ghost row is a card suggested but not added. */
+.deck-section{position:relative;display:flex;flex-direction:column;gap:5px;padding:6px;cursor:pointer;
+  border:1px solid var(--border);border-radius:var(--radius-sm);}
+.deck-section.active{border-color:var(--accent);background:var(--accent-soft);}
+.deck-section.tokens{cursor:default;border-style:dashed;}
+.deck-section-head{display:flex;justify-content:space-between;gap:8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-soft);}
+.deck-section-head .bad{color:var(--danger);}
+.deck-section-empty{font-size:12px;color:var(--text-soft);}
+.deck-stack.ghost{opacity:.55;border-style:dashed;cursor:default;}
 /* position:absolute (rather than being inserted into #deck-drop-zone's own flex flow
    as a sibling of the rows) is load-bearing, and pointer-events:none still matters too
    — together they're what stop the flicker:

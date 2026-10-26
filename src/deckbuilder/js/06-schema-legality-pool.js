@@ -107,6 +107,6 @@ function deckTotalCount(){ let n=0; for(const v of curDeck().deckCards.values())
 // filter here. isLegalForCurrentPool (type + aspect) still drives what counts as
 // "illegal" for graying/sorting/the red highlight/the Remove-illegal-cards button.
 function poolForCurrentMode(){
-  return state.cards.filter(isTypeEligible);
+  return state.cards.filter(c=> isTypeEligible(c) && state.game.inActiveView(c));
 }
 

@@ -81,6 +81,8 @@ function applyModeUI(){
 // (shown instantly on a return visit) and again for the fresh server copy.
 function showLoadedCards(rawSetResults){
   state.game = pickGame(rawSetResults);
+  // The filters were set up before the game was known — give any view this game adds its own.
+  state.game.filterKeys.forEach(k=>{ if(!state.filtersByType[k]) state.filtersByType[k] = freshFilters(); });
 
   // Every card's own _sheetId (see processRawRows) has to be the actual
   // sheet id (s.sheetId), NOT the set's folder id (s.folderId) — this was

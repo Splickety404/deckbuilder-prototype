@@ -230,6 +230,16 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .deck-stack.over-limit{border-color:var(--danger);background:var(--danger-bg);}
 .deck-stack.dragover-row{background:var(--accent-soft);border-color:var(--accent);}
+/* A game whose deck is split into boxes (see renderDeckList in the game definition): the
+   active box is the one the card pool is showing; a ghost row is a card suggested but not added. */
+.deck-section{position:relative;display:flex;flex-direction:column;gap:5px;padding:6px;cursor:pointer;
+  border:1px solid var(--border);border-radius:var(--radius-sm);}
+.deck-section.active{border-color:var(--accent);background:var(--accent-soft);}
+.deck-section.tokens{cursor:default;border-style:dashed;}
+.deck-section-head{display:flex;justify-content:space-between;gap:8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text-soft);}
+.deck-section-head .bad{color:var(--danger);}
+.deck-section-empty{font-size:12px;color:var(--text-soft);}
+.deck-stack.ghost{opacity:.55;border-style:dashed;cursor:default;}
 /* position:absolute (rather than being inserted into #deck-drop-zone's own flex flow
    as a sibling of the rows) is load-bearing, and pointer-events:none still matters too
    — together they're what stop the flicker:
@@ -1989,6 +1999,8 @@ state.userEmail = ''; // signed-in user's email, from the server's whoami respon
                          which slot is open first, and the extra fields a deck holds
      filterKey()         which filter bucket the current view uses
      isTypeEligible(card) / isLegal(card)   hard "may it go in the deck" rule / softer legality
+     inActiveView(card)  does the card pool show this card in the current view (a game whose
+                         deck panel has several boxes shows one box's cards at a time)
      aspectColors, afterCardsLoaded()       optional colors for named attributes / post-load hook
      id, structured      structured = extra deck setup, several deck tabs, side lists
                          (Echo); false = one free-form deck, any card
@@ -2001,6 +2013,7 @@ state.userEmail = ''; // signed-in user's email, from the server's whoami respon
      listCount(id) / removeOne(id)   how many of a card the active list holds / remove one
      illegalHint         tooltip for a card that isn't legal for the deck
      renderTabs() / renderDeckControlsExtras() / renderViewStats()   extra panel UI (optional)
+     renderDeckList      null, or a function(zone) that draws the deck list itself (grouped into boxes…)
      matches(rawSets)    (optional) true if this definition owns the loaded sets
    ========================================================================= */
 /* ---- DECK CODEC — how a deck is written to / read from a saved deck, a .json or .txt file,
@@ -2041,6 +2054,7 @@ const GenericGame = {
   slotExtras(){ return {}; },   // fields a deck holds beyond name / cards / order
   isTypeEligible(card){ return true; },  // may this card go in the deck being edited?
   isLegal(card){ return true; },         // is it legal there (a stricter, soft check)?
+  inActiveView(card){ return true; },    // does the card pool show it in the current view?
   aspectColors: {},                      // optional fixed colors for named card attributes
   afterCardsLoaded(){},                  // runs once a set's cards have been processed
   filterKey(){ return activeDeckKey(); },
@@ -2078,6 +2092,7 @@ const GenericGame = {
   renderTabs(){},
   renderDeckControlsExtras(){},
   renderViewStats(){},
+  renderDeckList: null,
 };
 
 
@@ -2173,6 +2188,8 @@ const EchoGame = {
   removeOne(id){ activeIsSchemeMode() ? removeScheme(id) : removeOneCopy(id); },
   illegalHint: 'Not legal for this deck — wrong aspect for your leader/domination aspect.',
   renderViewStats(){ renderCurrentViewStats(); },
+  inActiveView(card){ return true; },
+  renderDeckList: null,
 };
 gameDefinitions.push(EchoGame);
 
@@ -2352,6 +2369,8 @@ function applyModeUI(){
 // (shown instantly on a return visit) and again for the fresh server copy.
 function showLoadedCards(rawSetResults){
   state.game = pickGame(rawSetResults);
+  // The filters were set up before the game was known — give any view this game adds its own.
+  state.game.filterKeys.forEach(k=>{ if(!state.filtersByType[k]) state.filtersByType[k] = freshFilters(); });
 
   // Every card's own _sheetId (see processRawRows) has to be the actual
   // sheet id (s.sheetId), NOT the set's folder id (s.folderId) — this was
@@ -3566,7 +3585,7 @@ function deckTotalCount(){ let n=0; for(const v of curDeck().deckCards.values())
 // filter here. isLegalForCurrentPool (type + aspect) still drives what counts as
 // "illegal" for graying/sorting/the red highlight/the Remove-illegal-cards button.
 function poolForCurrentMode(){
-  return state.cards.filter(isTypeEligible);
+  return state.cards.filter(c=> isTypeEligible(c) && state.game.inActiveView(c));
 }
 
 /* =========================================================================
@@ -4290,6 +4309,8 @@ function renderDeckPanel(){
   const side = state.game.activeSideList();
   if(side){
     side.render(zone);
+  } else if(state.game.renderDeckList){
+    state.game.renderDeckList(zone);
   } else {
     if(!curDeck().deckOrder.length){
       zone.innerHTML = `<div id="deck-empty-hint">Drag cards here, or use the + button on a card.</div>`;
@@ -5242,6 +5263,122 @@ GenericGame.filterKeys = EchoGame.filterKeys;
 GenericGame.defaultDeckType = EchoGame.defaultDeckType;
 GenericGame.slotExtras = EchoGame.slotExtras;
 GenericGame.aspectColors = EchoGame.aspectColors; // the live site tints every game's fallback card faces with these
+/* =========================================================================
+   HELLBREAK GAME DEFINITION (private) — a deck is 1 Monster, 2 different
+   Locations and 50 or more other cards. The deck panel shows these as three
+   boxes; clicking a box switches the card pool (and its own filters) to that
+   box's cards, the same way Echo's Overlord / Champion / Scheme views each
+   have their own pool and filters. Tokens never count toward the deck: a token
+   that a card in the deck can create shows as a faded "ghost" row, which the
+   player can count up to put that many copies in the export.
+   Built on the free-form definition as the private build sets it up (see the
+   end of 12a), so saved decks and deck files keep the shape they already had. */
+const HB_DECK_MIN = 50;
+const HB_SECTIONS = [
+  { key:'monster',   title:'Monster',   target:1,           exact:true  },
+  { key:'locations', title:'Locations', target:2,           exact:true  },
+  { key:'deck',      title:'Deck',      target:HB_DECK_MIN, exact:false },
+];
+let hbActiveSection = 'deck'; // which box the card pool is showing
+
+// Which box a card belongs in, by its type.
+function hbSectionOf(card){
+  const t = String(card.type||'').trim();
+  if(t==='Monster') return 'monster';
+  if(t==='Location') return 'locations';
+  if(/token/i.test(t)) return 'tokens';
+  return 'deck';
+}
+function hbSectionCount(key){
+  let n = 0;
+  for(const [id,q] of curDeck().deckCards){ const c = state.byId.get(id); if(c && hbSectionOf(c)===key) n += q; }
+  return n;
+}
+function hbSectionOk(sec, n){ return sec.exact ? n===sec.target : n>=sec.target; }
+
+// Tokens some card in the deck can create — found by the token's name in that card's
+// ability text ("play 1 Bat token", "play 2 Shark tokens"), plus any token already counted up.
+function hbTokensForDeck(){
+  const texts = [...curDeck().deckCards.keys()].map(id=>state.byId.get(id))
+    .filter(c=> c && hbSectionOf(c)!=='tokens')
+    .map(c=> String(c.ability||'') + ' ' + String(c['ability-lurking']||''));
+  return state.cards.filter(c=> hbSectionOf(c)==='tokens').filter(tk=>{
+    if(curDeck().deckCards.get(tk.id)) return true;
+    const name = String(tk.name||'').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if(!name) return false;
+    const re = new RegExp('(?<![a-z])' + name + '\\s+tokens?(?![a-z])', 'i');
+    return texts.some(t=> re.test(t));
+  });
+}
+
+function hbSectionBox(cls, headHtml, onClick){
+  const box = document.createElement('div');
+  box.className = 'deck-section ' + cls;
+  box.innerHTML = `<div class="deck-section-head">${headHtml}</div>`;
+  if(onClick) box.addEventListener('click', (e)=>{
+    if(e.target.closest('.tile-actions, .changed-badge, .removed-badge')) return; // a row's own buttons
+    onClick();
+  });
+  return box;
+}
+
+const HellBreakGame = {
+  ...GenericGame,
+  id: 'hellbreak',
+  filterKeys: ['monster', 'locations', 'deck'], // one set of filters per box
+  filterKey(){ return hbActiveSection; },
+  matches(rawSetResults){
+    const has = (type)=> rawSetResults.some(s => s.rows.some(r => String(r.type||'').trim() === type));
+    return has('Monster') && has('Location');
+  },
+  isTypeEligible(card){ return true; }, // every card has a box (tokens get theirs from the ghost rows)
+  isLegal(card){ return true; },
+  inActiveView(card){ return hbSectionOf(card)===hbActiveSection; },
+  copyLimit(card){
+    if(!card) return MAX_COPIES;
+    const sec = hbSectionOf(card);
+    if(sec==='monster' || sec==='locations') return 1; // the 2 Locations must be different
+    if(sec==='tokens') return Infinity;
+    return MAX_COPIES;
+  },
+  deckSummary(){
+    const counts = HB_SECTIONS.map(sec=> hbSectionCount(sec.key));
+    const bad = HB_SECTIONS.some((sec,i)=> !hbSectionOk(sec, counts[i]));
+    const total = counts.reduce((a,b)=>a+b, 0); // each box shows its own count; this is the whole deck, tokens aside
+    return { title: 'Your Deck', text: `${total} card${total!==1?'s':''}`, bad };
+  },
+  renderDeckList(zone){
+    HB_SECTIONS.forEach(sec=>{
+      const n = hbSectionCount(sec.key);
+      const box = hbSectionBox(sec.key===hbActiveSection ? 'active' : '',
+        `<span>${sec.title}</span><span class="${hbSectionOk(sec, n) ? '' : 'bad'}">${n} / ${sec.target}${sec.exact ? '' : '+'}</span>`,
+        ()=>{ if(hbActiveSection===sec.key) return; hbActiveSection = sec.key; renderAll(); });
+      box.title = `Click to show only ${sec.title} cards in the card pool`;
+      // A card no longer in the live feed has no type — it shows in the Deck box so it can still be removed.
+      const ids = curDeck().deckOrder.filter(id=>{
+        if(!(curDeck().deckCards.get(id) > 0)) return false;
+        const c = state.byId.get(id);
+        return (c ? hbSectionOf(c) : 'deck') === sec.key;
+      });
+      if(!ids.length) box.insertAdjacentHTML('beforeend', `<div class="deck-section-empty">Click to browse ${sec.title} cards, then drag them here or use +.</div>`);
+      ids.forEach(id=> box.appendChild(buildDeckRow(id, state.byId.get(id), {qty:curDeck().deckCards.get(id), showStepper:true})));
+      zone.appendChild(box);
+    });
+
+    const tokens = hbTokensForDeck();
+    if(!tokens.length) return;
+    const box = hbSectionBox('tokens', `<span>Tokens</span><span>not part of the deck</span>`, null);
+    box.title = 'Tokens your cards can create — set how many of each to include in the export';
+    tokens.forEach(tk=>{
+      const qty = curDeck().deckCards.get(tk.id) || 0;
+      const row = buildDeckRow(tk.id, tk, {qty, showStepper:true});
+      if(!qty){ row.classList.add('ghost'); row.draggable = false; }
+      box.appendChild(row);
+    });
+    zone.appendChild(box);
+  },
+};
+gameDefinitions.push(HellBreakGame);
 /* =========================================================================
    EXPORT
    ========================================================================= */

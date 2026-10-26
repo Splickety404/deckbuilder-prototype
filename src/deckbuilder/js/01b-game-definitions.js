@@ -7,6 +7,8 @@
                          which slot is open first, and the extra fields a deck holds
      filterKey()         which filter bucket the current view uses
      isTypeEligible(card) / isLegal(card)   hard "may it go in the deck" rule / softer legality
+     inActiveView(card)  does the card pool show this card in the current view (a game whose
+                         deck panel has several boxes shows one box's cards at a time)
      aspectColors, afterCardsLoaded()       optional colors for named attributes / post-load hook
      id, structured      structured = extra deck setup, several deck tabs, side lists
                          (Echo); false = one free-form deck, any card
@@ -19,6 +21,7 @@
      listCount(id) / removeOne(id)   how many of a card the active list holds / remove one
      illegalHint         tooltip for a card that isn't legal for the deck
      renderTabs() / renderDeckControlsExtras() / renderViewStats()   extra panel UI (optional)
+     renderDeckList      null, or a function(zone) that draws the deck list itself (grouped into boxes…)
      matches(rawSets)    (optional) true if this definition owns the loaded sets
    ========================================================================= */
 /* ---- DECK CODEC — how a deck is written to / read from a saved deck, a .json or .txt file,
@@ -59,6 +62,7 @@ const GenericGame = {
   slotExtras(){ return {}; },   // fields a deck holds beyond name / cards / order
   isTypeEligible(card){ return true; },  // may this card go in the deck being edited?
   isLegal(card){ return true; },         // is it legal there (a stricter, soft check)?
+  inActiveView(card){ return true; },    // does the card pool show it in the current view?
   aspectColors: {},                      // optional fixed colors for named card attributes
   afterCardsLoaded(){},                  // runs once a set's cards have been processed
   filterKey(){ return activeDeckKey(); },
@@ -96,6 +100,7 @@ const GenericGame = {
   renderTabs(){},
   renderDeckControlsExtras(){},
   renderViewStats(){},
+  renderDeckList: null,
 };
 
 
