@@ -78,10 +78,10 @@ const EchoGame = {
   illegalHint: 'Not legal for this deck — wrong aspect for your leader/domination aspect.',
   renderViewStats(){ renderCurrentViewStats(); },
   inActiveView(card){ return true; },
-  defaultSort: 'name',
+  defaultSort: 'card-cost',
   renderDeckList: null,
 };
 gameDefinitions.push(EchoGame);
 
 state.game = defaultGame(); // Echo is registered first, so it is the default
-state.deckType = state.game.defaultDeckType; freshDeckState();
+state.deckType = state.game.defaultDeckType; state.sortField = state.game.defaultSort; freshDeckState();

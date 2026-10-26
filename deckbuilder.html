@@ -2117,7 +2117,7 @@ function pickGame(rawSetResults){
 function defaultGame(){ return gameDefinitions[0] || GenericGame; }
 
 state.game = defaultGame();
-state.deckType = state.game.defaultDeckType; freshDeckState();
+state.deckType = state.game.defaultDeckType; state.sortField = state.game.defaultSort; freshDeckState();
 /* =========================================================================
    ECHO OF OMENS GAME DEFINITION (private) — leaders, Domination/Quest cards,
    aspects, schemes, a 3-copy limit and a 50-card deck. See GAME DEFINITIONS
@@ -2198,13 +2198,13 @@ const EchoGame = {
   illegalHint: 'Not legal for this deck — wrong aspect for your leader/domination aspect.',
   renderViewStats(){ renderCurrentViewStats(); },
   inActiveView(card){ return true; },
-  defaultSort: 'name',
+  defaultSort: 'card-cost',
   renderDeckList: null,
 };
 gameDefinitions.push(EchoGame);
 
 state.game = defaultGame(); // Echo is registered first, so it is the default
-state.deckType = state.game.defaultDeckType; freshDeckState();
+state.deckType = state.game.defaultDeckType; state.sortField = state.game.defaultSort; freshDeckState();
 /* =========================================================================
    SAVED CARDS (private). After a successful load the browser keeps a copy of
    the signed-in person's game/set list and each set's card rows, so a return

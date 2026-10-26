@@ -121,4 +121,4 @@ function pickGame(rawSetResults){
 function defaultGame(){ return gameDefinitions[0] || GenericGame; }
 
 state.game = defaultGame();
-state.deckType = state.game.defaultDeckType; freshDeckState();
+state.deckType = state.game.defaultDeckType; state.sortField = state.game.defaultSort; freshDeckState();
