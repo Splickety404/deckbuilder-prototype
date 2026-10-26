@@ -211,7 +211,7 @@ const IMAGE_TYPE = 'image/jpeg', IMAGE_QUALITY = 0.9, IMAGE_EXT = 'jpg';
 const ABILITY_KEYS = ['ability','ability-overlord','ability-stage-2','ability-overlord-stage-2'];
 
 let doc = null;
-let pages = [];   // one per PDF page: {n, fields, rawRecord, recordFont, recordGlyphs, textAngle, issues}
+let pages = [];   // one per PDF page: {n, fields, rawRecord, recordFonts, recordGlyphs, textAngle, issues}
 let cards = [];   // {id, fields, front, back, rotate, issues, img:{front, back}}
 let notices = [];
 let filter = 'all';
@@ -267,35 +267,47 @@ async function readPage(n){
   const tc = await page.getTextContent();
   const items = tc.items.filter(it=> typeof it.str==='string');
   const sizeOf = it=> Math.hypot(it.transform[0], it.transform[1]);
-  const out = { n, fields:null, rawRecord:'', recordFont:null, recordGlyphs:0, textAngle:0, issues:[], view: page.view };
+  const out = { n, fields:null, rawRecord:'', recordFonts:[], recordGlyphs:0, textAngle:0, issues:[], view: page.view };
   const idItem = items.find(it=> /^\s*id=/.test(it.str));
   let recItems = [];
   if(idItem){
     // The record is one text frame: the "id=" line plus the lines below it, in
-    // the same font and size, horizontal, starting in the same column. Lines
-    // wrap mid-word, so they're joined back together with nothing in between.
+    // the same font and size, horizontal, lined up with the first line on the
+    // left (left-aligned) or the right (right-aligned, as on HellBreak cards).
+    // Lines wrap mid-word, so they're joined back together with nothing in between.
+    // A PDF can carry one font under several internal names (HellBreak's record
+    // switches between two copies of RobotoCondensed), so fonts are compared by
+    // their real name. pdf.js only knows those once the page's drawing
+    // instructions are loaded; recordTextFromOperators reuses them.
+    await page.getOperatorList();
+    const realName = f=> { try{ return page.commonObjs.get(f).name || f; }catch(e){ return f; } };
+    const recordFontName = realName(idItem.fontName);
     const size = sizeOf(idItem), x0 = idItem.transform[4];
-    const same = items.filter(it=> it.fontName===idItem.fontName && Math.abs(sizeOf(it)-size)<0.01 && Math.abs(it.transform[1])<1e-6 && it.transform[4] >= x0-0.5);
+    const same = items.filter(it=> realName(it.fontName)===recordFontName && Math.abs(sizeOf(it)-size)<0.01 && Math.abs(it.transform[1])<1e-6);
     const lines = new Map();
     same.forEach(it=>{ const y = Math.round(it.transform[5]*10)/10; if(!lines.has(y)) lines.set(y, []); lines.get(y).push(it); });
     const ys = [...lines.keys()].sort((a,b)=> b-a);
+    const rightEdge = line=> Math.max(...line.map(it=> it.transform[4] + it.width));
+    const x1 = rightEdge(lines.get(Math.round(idItem.transform[5]*10)/10));
     let prevY = null;
     for(const y of ys){
       if(y > idItem.transform[5] + 0.5) continue;              // above the record
       if(prevY!=null && prevY - y > size*2.2) break;            // a gap: the record frame has ended
       const line = lines.get(y);
-      if(!line.some(it=> Math.abs(it.transform[4]-x0) < 0.5) && prevY!=null) break; // a line that doesn't start in the record's column
+      const left = line.some(it=> Math.abs(it.transform[4]-x0) < 0.5);
+      const right = Math.abs(rightEdge(line)-x1) < size;
+      if(!left && !right && prevY!=null) break;                 // a line that isn't lined up with the record
       recItems.push(...line.sort((a,b)=> a.transform[4]-b.transform[4]));
       prevY = y;
     }
-    out.recordFont = idItem.fontName;
+    out.recordFonts = [...new Set(recItems.map(it=> it.fontName))];
     // The text above trims the space off the end of each line, which makes a
     // line that wrapped at a space ("Overlord Reference" / "Card") look the
     // same as one that broke mid-word ("is_double_si" / "ded"). The page's
     // drawing instructions still have every character, spaces included, so
     // the record's actual text is read from those, line by line.
     const recordYs = new Set(recItems.map(it=> Math.round(it.transform[5]*10)/10));
-    const fromOps = await recordTextFromOperators(page, idItem.fontName, recordYs);
+    const fromOps = await recordTextFromOperators(page, new Set(out.recordFonts), recordYs);
     out.rawRecord = fromOps.text || recItems.map(it=> it.str).join('');
     out.recordGlyphs = fromOps.glyphs; // how many characters drawing the record takes — see renderFace
     out.fields = parseRecord(out.rawRecord, out.issues);
@@ -320,23 +332,41 @@ async function readPage(n){
   out.hasOwnText = best!=null; // a back with no text of its own follows its front (see pairPages)
   return out;
 }
-// Every character drawn in the record's font on the record's lines, in drawing
+// Every character drawn in the record's fonts on the record's lines, in drawing
 // order (lines are drawn top to bottom), glued together with nothing added.
-async function recordTextFromOperators(page, fontName, lineYs){
+// Text drawn a second time in the same spot is left out: an outlined record
+// (HellBreak's has a white outline) draws each line twice — outline, then fill.
+async function recordTextFromOperators(page, fontNames, lineYs){
   const ops = await page.getOperatorList();
   const O = pdfjsLib.OPS;
   let font = null, tm = [1,0,0,1,0,0], text = '', lastY = null, autoHyphens = 0, glyphs = 0;
+  const runs = []; // each stretch of text from one starting point: {at, y, pieces}
+  let run = null;
   for(let i=0; i<ops.fnArray.length; i++){
     const fn = ops.fnArray[i], a = ops.argsArray[i];
     if(fn===O.setFont) font = a[0];
-    else if(fn===O.beginText) tm = [1,0,0,1,0,0];
-    else if(fn===O.setTextMatrix) tm = a.length===6 ? a : a[0];
-    else if((fn===O.showText || fn===O.showSpacedText) && font===fontName){
+    else if(fn===O.beginText){ tm = [1,0,0,1,0,0]; run = null; }
+    else if(fn===O.setTextMatrix){ tm = a.length===6 ? a : a[0]; run = null; }
+    else if((fn===O.showText || fn===O.showSpacedText) && fontNames.has(font)){
       const y = Math.round(tm[5]*10)/10;
       if(!lineYs.has(y)) continue;
       const drawn = a[0].filter(g=> g && typeof g==='object');
-      glyphs += drawn.length; // every one of these is a separate drawing call, spaces and auto-hyphens included
-      const piece = drawn.map(g=> g.unicode).join('');
+      // Each character pdf.js draws is a separate drawing call — spaces,
+      // auto-hyphens and repeats included — except ones the embedded font
+      // doesn't have (some HellBreak spaces), which it skips; an accent is one more.
+      const missingFile = page.commonObjs.get(font).missingFile;
+      drawn.forEach(g=>{ if(g.isInFont || missingFile) glyphs += g.accent ? 2 : 1; });
+      if(!run) runs.push(run = { at: Math.round(tm[4]*10)/10 + ',' + y, y, pieces: [] });
+      run.pieces.push(drawn.map(g=> g.unicode).join(''));
+    }
+  }
+  const seen = new Set();
+  for(const r of runs){
+    const key = r.at + '|' + r.pieces.join('');
+    if(seen.has(key)) continue; // the same text in the same spot again
+    seen.add(key);
+    const y = r.y;
+    for(const piece of r.pieces){
       // A lone "-" drawn after the rest of its line is a hyphen the layout
       // program added to split a word across lines ("le-" / "adership") — not
       // part of the text. Real hyphens ("ability-" / "overlord") are drawn as
@@ -412,7 +442,7 @@ function pairPages(){
 // ---------- Rendering a face to an image ----------
 // Crops the bleed and leaves the record out. The record is always the first
 // text drawn on its page, and pdf.js draws text one character per drawing call
-// — so while a page renders, the first N characters drawn in the record's font
+// — so while a page renders, the first N characters drawn in the record's fonts
 // (N = recordGlyphs, counted when the page was read) are simply skipped. This is
 // done on the canvas prototype rather than one canvas, because some pages (foil
 // cards, anything with transparency) are drawn onto a scratch canvas first and
@@ -446,7 +476,7 @@ async function renderFaceNow(pg, size){
   ctx.translate(-BLEED_PT*scale, -BLEED_PT*scale);
   const filter = pg.recordGlyphs ? {
     // pdf.js sets ctx.font like '16px g_d0_f1, sans-serif' (font name unquoted)
-    fontRe: new RegExp('(^|[\\s,"])' + pg.recordFont.replace(/[^\w-]/g,'') + '($|[\\s,"])'),
+    fontRe: new RegExp('(^|[\\s,"])(' + pg.recordFonts.map(f=> f.replace(/[^\w-]/g,'')).join('|') + ')($|[\\s,"])'),
     remaining: pg.recordGlyphs, skipped: 0,
   } : null;
   recordFilter = filter;
