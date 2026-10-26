@@ -29,7 +29,8 @@ function hbSectionCount(key){
   for(const [id,q] of curDeck().deckCards){ const c = state.byId.get(id); if(c && hbSectionOf(c)===key) n += q; }
   return n;
 }
-function hbSectionOk(sec, n){ return sec.exact ? n===sec.target : n>=sec.target; }
+// Red only once a box goes over its limit (2 Monsters, 3 Locations) — a box still being filled stays gray.
+function hbSectionOver(sec, n){ return sec.exact && n>sec.target; }
 
 // Tokens some card in the deck can create — found by the token's name in that card's
 // ability text ("play 1 Bat token", "play 2 Shark tokens"), plus any token already counted up.
@@ -78,7 +79,7 @@ const HellBreakGame = {
   },
   deckSummary(){
     const counts = HB_SECTIONS.map(sec=> hbSectionCount(sec.key));
-    const bad = HB_SECTIONS.some((sec,i)=> !hbSectionOk(sec, counts[i]));
+    const bad = HB_SECTIONS.some((sec,i)=> hbSectionOver(sec, counts[i]));
     const total = counts.reduce((a,b)=>a+b, 0); // each box shows its own count; this is the whole deck, tokens aside
     return { title: 'Your Deck', text: `${total} card${total!==1?'s':''}`, bad };
   },
@@ -86,7 +87,7 @@ const HellBreakGame = {
     HB_SECTIONS.forEach(sec=>{
       const n = hbSectionCount(sec.key);
       const box = hbSectionBox(sec.key===hbActiveSection ? 'active' : '',
-        `<span>${sec.title}</span><span class="${hbSectionOk(sec, n) ? '' : 'bad'}">${n} / ${sec.target}${sec.exact ? '' : '+'}</span>`,
+        `<span>${sec.title}</span><span class="${hbSectionOver(sec, n) ? 'bad' : ''}">${n} / ${sec.target}${sec.exact ? '' : '+'}</span>`,
         ()=>{ if(hbActiveSection===sec.key) return; hbActiveSection = sec.key; renderAll(); });
       box.title = `Click to show only ${sec.title} cards in the card pool`;
       // A card no longer in the live feed has no type — it shows in the Deck box so it can still be removed.
