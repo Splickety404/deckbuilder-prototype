@@ -149,6 +149,10 @@
           <h3 id="deckPanelTitle">Your Deck</h3>
           <span id="deckCountLabel">0 / 50</span>
         </div>
+        <label id="deckViewToggle" class="toggle-row" title="Show only this deck's cards in the grid — sort them, or drag them around to arrange them however you like">
+          <input type="checkbox" id="deckViewCheckbox">
+          <span>Deck View — lay out this deck's cards in the grid</span>
+        </label>
 <!--PRIVATE-BEGIN-->
         <div class="btn btn-sm" id="btnClearIllegal" style="display:none;">Remove illegal cards</div>
         <details id="deckRulesPanel">
@@ -185,10 +189,6 @@
       </details>
 <!--PRIVATE-END-->
       <h3>Filters</h3>
-      <label id="deckViewToggle" class="toggle-row">
-        <input type="checkbox" id="deckViewCheckbox">
-        <span>Deck View — only show cards currently in this deck</span>
-      </label>
       <div id="setFilterGroup" style="display:none;"></div>
       <input type="text" id="searchBox" placeholder="Search name / ability...">
       <div id="filterGroups"></div>

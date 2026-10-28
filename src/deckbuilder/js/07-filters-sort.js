@@ -121,7 +121,9 @@ function renderSortOptions(){
   const sel = document.getElementById('sortSelect');
   const prev = state.sortField;
   const opts = [{key:'name',label:'Name'}, ...state.fieldDefs.map(f=>({key:f.key,label:f.label}))];
-  sel.innerHTML = opts.map(o=>`<option value="${o.key}" ${o.key===prev?'selected':''}>${escapeHtml(o.label)}</option>`).join('');
+  const arranged = deckViewArranged();
+  sel.innerHTML = (arranged ? '<option value="" selected>Your arrangement</option>' : '') +
+    opts.map(o=>`<option value="${o.key}" ${!arranged && o.key===prev?'selected':''}>${escapeHtml(o.label)}</option>`).join('');
 }
 function sortPool(pool){
   const field = state.sortField || 'name';

@@ -18,6 +18,12 @@ function renderLibrary(){
   const grid = document.getElementById('library-grid');
   let pool = poolForCurrentMode().filter(c=>cardMatchesFilters(c));
   pool = sortPool(pool);
+  if(deckViewArranged()){
+    // Hand-arranged cards keep their spot; any card added since goes at the end, in sort order.
+    const pos = new Map(curDeck().viewArrangement.map((id,i)=>[id,i]));
+    const at = c => pos.has(c.id) ? pos.get(c.id) : Infinity;
+    pool = pool.map((c,i)=>({c,i})).sort((a,b)=> (at(a.c)-at(b.c)) || (a.i-b.i)).map(x=>x.c);
+  }
   state.visibleCardsOrder = pool.map(c=>c.id);
   document.getElementById('library-count').textContent = `${pool.length} card${pool.length!==1?'s':''}`;
 
@@ -83,6 +89,26 @@ function renderLibrary(){
   grid.appendChild(frag);
   layoutAllLandscapeFrames(grid);
   state.game.renderViewStats();
+}
+
+/* =========================================================================
+   DECK VIEW: ARRANGING CARDS BY HAND
+   ========================================================================= */
+// In Deck View the grid can be arranged by dragging cards around — this overrides the sort
+// until a sort is picked again. Only the on-screen layout changes; the deck itself doesn't.
+function deckViewArranged(){ return curFilters().deckViewOnly && !!curDeck().viewArrangement; }
+// Moves the dragged cards so they sit just before beforeId (or at the end when it's null).
+// Cards hidden right now (another section, a filter) keep their place in the arrangement.
+function arrangeDeckView(movedIds, beforeId){
+  const moved = movedIds.filter(id=> state.visibleCardsOrder.includes(id));
+  if(!moved.length || moved.includes(beforeId)) return;
+  const shown = state.visibleCardsOrder.filter(id=> !moved.includes(id));
+  const at = beforeId ? shown.indexOf(beforeId) : shown.length;
+  shown.splice(at<0 ? shown.length : at, 0, ...moved);
+  const hidden = (curDeck().viewArrangement||[]).filter(id=> !state.visibleCardsOrder.includes(id));
+  curDeck().viewArrangement = [...shown, ...hidden];
+  renderSortOptions();
+  renderLibrary();
 }
 
 function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }

@@ -57,6 +57,7 @@ initTheme();
 function freshDeckSlot(){
   return {
     name:'', deckCards:new Map(), deckOrder:[],
+    viewArrangement:null, // Deck View's hand-arranged card order (ids), or null to follow the sort — just for looking, never saved or exported
     sourceExportedAt:null, // timestamp this deck was last exported (or the imported file's own stamp) — the "changed since" baseline
     ...state.game.slotExtras(),
   };

@@ -301,6 +301,10 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .card-tile:hover{box-shadow:var(--shadow);transform:translateY(-2px);}
 .card-tile.selected{outline:2px solid var(--accent);outline-offset:-2px;}
+/* Deck View arranging: where dragged cards will land */
+.card-tile.arrange-before{box-shadow:-5px 0 0 var(--accent);}
+.card-tile.arrange-after{box-shadow:5px 0 0 var(--accent);}
+#deckViewToggle{margin:0;}
 .card-tile img{width:100%;display:block;aspect-ratio:5/7;object-fit:cover;background:var(--surface-2);}
 /* Sideways card art is authored on the same portrait-cut physical card as everything else,
    with its content printed sideways — so the frame itself must be landscape-shaped (not
@@ -665,6 +669,10 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
           <h3 id="deckPanelTitle">Your Deck</h3>
           <span id="deckCountLabel">0 / 50</span>
         </div>
+        <label id="deckViewToggle" class="toggle-row" title="Show only this deck's cards in the grid — sort them, or drag them around to arrange them however you like">
+          <input type="checkbox" id="deckViewCheckbox">
+          <span>Deck View — lay out this deck's cards in the grid</span>
+        </label>
         <div class="btn btn-sm" id="btnClearIllegal" style="display:none;">Remove illegal cards</div>
         <details id="deckRulesPanel">
           <summary>Rules Check</summary>
@@ -697,10 +705,6 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
         <div id="viewStatsBody"></div>
       </details>
       <h3>Filters</h3>
-      <label id="deckViewToggle" class="toggle-row">
-        <input type="checkbox" id="deckViewCheckbox">
-        <span>Deck View — only show cards currently in this deck</span>
-      </label>
       <div id="setFilterGroup" style="display:none;"></div>
       <input type="text" id="searchBox" placeholder="Search name / ability...">
       <div id="filterGroups"></div>
@@ -1630,6 +1634,7 @@ initTheme();
 function freshDeckSlot(){
   return {
     name:'', deckCards:new Map(), deckOrder:[],
+    viewArrangement:null, // Deck View's hand-arranged card order (ids), or null to follow the sort — just for looking, never saved or exported
     sourceExportedAt:null, // timestamp this deck was last exported (or the imported file's own stamp) — the "changed since" baseline
     ...state.game.slotExtras(),
   };
@@ -3813,7 +3818,9 @@ function renderSortOptions(){
   const sel = document.getElementById('sortSelect');
   const prev = state.sortField;
   const opts = [{key:'name',label:'Name'}, ...state.fieldDefs.map(f=>({key:f.key,label:f.label}))];
-  sel.innerHTML = opts.map(o=>`<option value="${o.key}" ${o.key===prev?'selected':''}>${escapeHtml(o.label)}</option>`).join('');
+  const arranged = deckViewArranged();
+  sel.innerHTML = (arranged ? '<option value="" selected>Your arrangement</option>' : '') +
+    opts.map(o=>`<option value="${o.key}" ${!arranged && o.key===prev?'selected':''}>${escapeHtml(o.label)}</option>`).join('');
 }
 function sortPool(pool){
   const field = state.sortField || 'name';
@@ -3856,6 +3863,12 @@ function renderLibrary(){
   const grid = document.getElementById('library-grid');
   let pool = poolForCurrentMode().filter(c=>cardMatchesFilters(c));
   pool = sortPool(pool);
+  if(deckViewArranged()){
+    // Hand-arranged cards keep their spot; any card added since goes at the end, in sort order.
+    const pos = new Map(curDeck().viewArrangement.map((id,i)=>[id,i]));
+    const at = c => pos.has(c.id) ? pos.get(c.id) : Infinity;
+    pool = pool.map((c,i)=>({c,i})).sort((a,b)=> (at(a.c)-at(b.c)) || (a.i-b.i)).map(x=>x.c);
+  }
   state.visibleCardsOrder = pool.map(c=>c.id);
   document.getElementById('library-count').textContent = `${pool.length} card${pool.length!==1?'s':''}`;
 
@@ -3921,6 +3934,26 @@ function renderLibrary(){
   grid.appendChild(frag);
   layoutAllLandscapeFrames(grid);
   state.game.renderViewStats();
+}
+
+/* =========================================================================
+   DECK VIEW: ARRANGING CARDS BY HAND
+   ========================================================================= */
+// In Deck View the grid can be arranged by dragging cards around — this overrides the sort
+// until a sort is picked again. Only the on-screen layout changes; the deck itself doesn't.
+function deckViewArranged(){ return curFilters().deckViewOnly && !!curDeck().viewArrangement; }
+// Moves the dragged cards so they sit just before beforeId (or at the end when it's null).
+// Cards hidden right now (another section, a filter) keep their place in the arrangement.
+function arrangeDeckView(movedIds, beforeId){
+  const moved = movedIds.filter(id=> state.visibleCardsOrder.includes(id));
+  if(!moved.length || moved.includes(beforeId)) return;
+  const shown = state.visibleCardsOrder.filter(id=> !moved.includes(id));
+  const at = beforeId ? shown.indexOf(beforeId) : shown.length;
+  shown.splice(at<0 ? shown.length : at, 0, ...moved);
+  const hidden = (curDeck().viewArrangement||[]).filter(id=> !state.visibleCardsOrder.includes(id));
+  curDeck().viewArrangement = [...shown, ...hidden];
+  renderSortOptions();
+  renderLibrary();
 }
 
 function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
@@ -4221,7 +4254,7 @@ function onTileDragStart(e, id){
     setTimeout(renderLibrary, 0);
   }
   e.dataTransfer.setData('text/plain', JSON.stringify(ids));
-  e.dataTransfer.effectAllowed='copy';
+  e.dataTransfer.effectAllowed='copyMove'; // copy into the deck list, or move within the grid in Deck View
 }
 
 /* =========================================================================
@@ -4809,7 +4842,47 @@ function renderAll(){
    ========================================================================= */
 document.getElementById('sortSelect').addEventListener('change', (e)=>{
   state.sortField = e.target.value;
+  curDeck().viewArrangement = null; // picking a sort undoes any hand arrangement
+  renderSortOptions();
   renderLibrary();
+});
+
+/* Deck View: drag cards within the grid to arrange them. A thin bar on the left or right
+   edge of the card under the cursor shows where the dragged cards will land. */
+const libraryGrid = document.getElementById('library-grid');
+let arrangeTarget = null;
+function clearArrangeMark(){
+  if(arrangeTarget) arrangeTarget.classList.remove('arrange-before','arrange-after');
+  arrangeTarget = null;
+}
+libraryGrid.addEventListener('dragover', (e)=>{
+  if(!curFilters().deckViewOnly) return;
+  const tile = e.target.closest('.card-tile');
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  if(tile!==arrangeTarget) clearArrangeMark();
+  if(!tile) return;
+  const r = tile.getBoundingClientRect();
+  const before = e.clientX < r.left + r.width/2;
+  tile.classList.toggle('arrange-before', before);
+  tile.classList.toggle('arrange-after', !before);
+  arrangeTarget = tile;
+});
+libraryGrid.addEventListener('dragleave', (e)=>{ if(!libraryGrid.contains(e.relatedTarget)) clearArrangeMark(); });
+libraryGrid.addEventListener('drop', (e)=>{
+  if(!curFilters().deckViewOnly) return;
+  e.preventDefault();
+  const tile = arrangeTarget, after = tile && tile.classList.contains('arrange-after');
+  clearArrangeMark();
+  let ids;
+  try{ ids = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ return; }
+  if(!Array.isArray(ids)) return; // a deck-list row, not a card from the grid
+  let beforeId = null;
+  if(tile){
+    const order = state.visibleCardsOrder, i = order.indexOf(tile.dataset.id);
+    beforeId = after ? order.slice(i+1).find(id=> !ids.includes(id)) || null : tile.dataset.id;
+  }
+  arrangeDeckView(ids, beforeId);
 });
 
 document.getElementById('searchBox').addEventListener('input', (e)=>{

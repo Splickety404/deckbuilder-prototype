@@ -15,7 +15,47 @@ function renderAll(){
    ========================================================================= */
 document.getElementById('sortSelect').addEventListener('change', (e)=>{
   state.sortField = e.target.value;
+  curDeck().viewArrangement = null; // picking a sort undoes any hand arrangement
+  renderSortOptions();
   renderLibrary();
+});
+
+/* Deck View: drag cards within the grid to arrange them. A thin bar on the left or right
+   edge of the card under the cursor shows where the dragged cards will land. */
+const libraryGrid = document.getElementById('library-grid');
+let arrangeTarget = null;
+function clearArrangeMark(){
+  if(arrangeTarget) arrangeTarget.classList.remove('arrange-before','arrange-after');
+  arrangeTarget = null;
+}
+libraryGrid.addEventListener('dragover', (e)=>{
+  if(!curFilters().deckViewOnly) return;
+  const tile = e.target.closest('.card-tile');
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  if(tile!==arrangeTarget) clearArrangeMark();
+  if(!tile) return;
+  const r = tile.getBoundingClientRect();
+  const before = e.clientX < r.left + r.width/2;
+  tile.classList.toggle('arrange-before', before);
+  tile.classList.toggle('arrange-after', !before);
+  arrangeTarget = tile;
+});
+libraryGrid.addEventListener('dragleave', (e)=>{ if(!libraryGrid.contains(e.relatedTarget)) clearArrangeMark(); });
+libraryGrid.addEventListener('drop', (e)=>{
+  if(!curFilters().deckViewOnly) return;
+  e.preventDefault();
+  const tile = arrangeTarget, after = tile && tile.classList.contains('arrange-after');
+  clearArrangeMark();
+  let ids;
+  try{ ids = JSON.parse(e.dataTransfer.getData('text/plain')); }catch(err){ return; }
+  if(!Array.isArray(ids)) return; // a deck-list row, not a card from the grid
+  let beforeId = null;
+  if(tile){
+    const order = state.visibleCardsOrder, i = order.indexOf(tile.dataset.id);
+    beforeId = after ? order.slice(i+1).find(id=> !ids.includes(id)) || null : tile.dataset.id;
+  }
+  arrangeDeckView(ids, beforeId);
 });
 
 document.getElementById('searchBox').addEventListener('input', (e)=>{

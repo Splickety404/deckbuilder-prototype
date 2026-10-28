@@ -286,6 +286,10 @@ html[data-theme="dark"] .changed-badge{background:#3f2e0a;color:#fbbf24;border-c
 }
 .card-tile:hover{box-shadow:var(--shadow);transform:translateY(-2px);}
 .card-tile.selected{outline:2px solid var(--accent);outline-offset:-2px;}
+/* Deck View arranging: where dragged cards will land */
+.card-tile.arrange-before{box-shadow:-5px 0 0 var(--accent);}
+.card-tile.arrange-after{box-shadow:5px 0 0 var(--accent);}
+#deckViewToggle{margin:0;}
 .card-tile img{width:100%;display:block;aspect-ratio:5/7;object-fit:cover;background:var(--surface-2);}
 /* Sideways card art is authored on the same portrait-cut physical card as everything else,
    with its content printed sideways — so the frame itself must be landscape-shaped (not

@@ -109,7 +109,7 @@ function onTileDragStart(e, id){
     setTimeout(renderLibrary, 0);
   }
   e.dataTransfer.setData('text/plain', JSON.stringify(ids));
-  e.dataTransfer.effectAllowed='copy';
+  e.dataTransfer.effectAllowed='copyMove'; // copy into the deck list, or move within the grid in Deck View
 }
 
 /* =========================================================================
