@@ -271,19 +271,21 @@ function emailCanAccessFolder_once(email, folderId) {
   const folder = DriveApp.getFolderById(folderId); // missing/genuinely inaccessible folder -> throws -> correctly denied by the retry wrapper above
 
   // Deliberate public toggle: if this folder's OWN Drive sharing is set to
-  // "Anyone with the link" (or fully public, or shared with your whole
-  // Workspace domain), that's honored as "everyone gets in" here too — same
-  // "Drive's sharing state is the one and only source of truth" idea as the
-  // named-grant checks below, just extended to cover Drive's built-in public
-  // settings as well as individual people. This is what lets a set be flipped
-  // from private to public (e.g. once it's officially released) purely by
-  // changing its folder's sharing in Drive — no code change, no redeploy.
+  // "Anyone with the link" (or fully public), that's honored as "everyone
+  // gets in" here too — same "Drive's sharing state is the one and only
+  // source of truth" idea as the named-grant checks below, just extended to
+  // cover Drive's built-in public settings as well as individual people. This
+  // is what lets a set be flipped from private to public (e.g. once it's
+  // officially released) purely by changing its folder's sharing in Drive —
+  // no code change, no redeploy.
+  // DOMAIN / DOMAIN_WITH_LINK are deliberately NOT treated as public: they
+  // mean "shared with some domain", and used to let in every signed-in person
+  // regardless of their own email. A domain share is matched against the
+  // person's email domain in the Drive API check at the bottom instead.
   try {
     const access = folder.getSharingAccess();
     if (access === DriveApp.Access.ANYONE ||
-        access === DriveApp.Access.ANYONE_WITH_LINK ||
-        access === DriveApp.Access.DOMAIN ||
-        access === DriveApp.Access.DOMAIN_WITH_LINK) {
+        access === DriveApp.Access.ANYONE_WITH_LINK) {
       return true;
     }
   } catch (shareErr) {
@@ -302,13 +304,17 @@ function emailCanAccessFolder_once(email, folderId) {
   if (folder.getEditors().some(u => u.getEmail().toLowerCase() === email)) return true;
 
   // Fallback: full permission list via the Drive API (advanced service), which also
-  // reflects Shared Drive membership roles that DriveApp's own methods miss above.
+  // reflects Shared Drive membership roles that DriveApp's own methods miss above,
+  // plus domain shares (e.g. "everyone at strangestars.com") — those only admit an
+  // email from that exact domain.
   try {
     const perms = Drive.Permissions.list(folderId, {
       supportsAllDrives: true,
-      fields: 'permissions(emailAddress,role)',
+      fields: 'permissions(type,emailAddress,domain,role)',
     }).permissions || [];
     if (perms.some(p => p.emailAddress && p.emailAddress.toLowerCase() === email)) return true;
+    const emailDomain = email.split('@').pop();
+    if (perms.some(p => p.type === 'domain' && p.domain && p.domain.toLowerCase() === emailDomain)) return true;
   } catch (driveApiErr) {
     // Drive API advanced service not enabled on this project, or some other Drive
     // API error — this fallback just doesn't apply; the DriveApp checks above still do.
