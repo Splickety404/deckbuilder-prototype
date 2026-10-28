@@ -1589,7 +1589,7 @@ const HOVER_FETCH_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 1.3); // fetched a bi
 // Bookkeeping columns the Card Updater writes alongside the card data (which
 // fields a card's record had, art fingerprints, small-image links) — never card fields.
 const CARD_UPDATER_COLUMNS = ['record-fields','image-hash','back-image-hash','front-image-sm-url','back-image-sm-url'];
-const NEVER_FIELDS = new Set(['traits-to-packet','name','ability','id','is_double_sided','front-image-url','back-image-url','last-updated','is-double-sided','rotate', ...CARD_UPDATER_COLUMNS]);
+const NEVER_FIELDS = new Set(['traits-to-packet','name','ability','ability-overlord','ability-stage-2','ability-overlord-stage-2','id','is_double_sided','front-image-url','back-image-url','last-updated','is-double-sided','rotate', ...CARD_UPDATER_COLUMNS]);
 // Numeric stat fields where a literal 0 means "doesn't have this stat" (as opposed to
 // cost/difficulty, which already correctly use a blank cell for "not applicable").
 const ZERO_AS_ABSENT = new Set(['health-number','attack','block','inherent-arcane','inherent-diplomacy','inherent-stealth','leadership','willpower']);
@@ -2161,6 +2161,14 @@ const EchoGame = {
   },
   tagCard(r){
     r._doubleSided = String(r.is_double_sided).trim().toUpperCase()==='TRUE';
+    // The sheet splits ability text 4 ways (Champion/Overlord x stage 1/2), but a card
+    // only ever has one side's version — so users just see one "Ability", with stage 2
+    // appended the same "Stage 2: ..." way the old single column wrote it. A sheet that
+    // still has only the old `ability` column passes through unchanged.
+    const txt = k => String(r[k]||'').trim();
+    const stage1 = txt('ability') || txt('ability-overlord');
+    const stage2 = txt('ability-stage-2') || txt('ability-overlord-stage-2');
+    r.ability = stage2 ? (stage1 ? stage1 + ' ' : '') + 'Stage 2: ' + stage2 : stage1;
     r._isScheme = r.type==='O - Scheme';
     // These 4 are physically the same portrait-cut card as everything else, with
     // content printed sideways — same treatment as schemes: rotated on screen for

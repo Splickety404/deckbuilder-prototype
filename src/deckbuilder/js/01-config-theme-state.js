@@ -17,7 +17,7 @@ const HOVER_FETCH_WIDTH = Math.round(HOVER_PREVIEW_WIDTH * 1.3); // fetched a bi
 // Bookkeeping columns the Card Updater writes alongside the card data (which
 // fields a card's record had, art fingerprints, small-image links) — never card fields.
 const CARD_UPDATER_COLUMNS = ['record-fields','image-hash','back-image-hash','front-image-sm-url','back-image-sm-url'];
-const NEVER_FIELDS = new Set(['traits-to-packet','name','ability','id','is_double_sided','front-image-url','back-image-url','last-updated','is-double-sided','rotate', ...CARD_UPDATER_COLUMNS]);
+const NEVER_FIELDS = new Set(['traits-to-packet','name','ability','ability-overlord','ability-stage-2','ability-overlord-stage-2','id','is_double_sided','front-image-url','back-image-url','last-updated','is-double-sided','rotate', ...CARD_UPDATER_COLUMNS]);
 // Numeric stat fields where a literal 0 means "doesn't have this stat" (as opposed to
 // cost/difficulty, which already correctly use a blank cell for "not applicable").
 const ZERO_AS_ABSENT = new Set(['health-number','attack','block','inherent-arcane','inherent-diplomacy','inherent-stealth','leadership','willpower']);
