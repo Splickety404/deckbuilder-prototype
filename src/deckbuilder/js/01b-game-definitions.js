@@ -11,6 +11,7 @@
      inActiveView(card)  does the card pool show this card in the current view (a game whose
                          deck panel has several boxes shows one box's cards at a time)
      aspectColors, afterCardsLoaded()       optional colors for named attributes / post-load hook
+     discordShare        card feedback may also be posted to the game's Discord (Echo only)
      id, structured      structured = extra deck setup, several deck tabs, side lists
                          (Echo); false = one free-form deck, any card
      multiValueSplit     how "Fire/Water"-style fields split into values
@@ -67,6 +68,7 @@ const GenericGame = {
   defaultSort: 'name',
   aspectColors: {},                      // optional fixed colors for named card attributes
   afterCardsLoaded(){},                  // runs once a set's cards have been processed
+  discordShare: false,                   // the feedback Discord channel is Echo's
   filterKey(){ return activeDeckKey(); },
   multiValueSplit: /[/,]/,
   commaSplits: true,

@@ -25,6 +25,7 @@ const EchoGame = {
   structured: true,
   aspectColors: { 'Corruption':'#6b3fa0','Wrath':'#a03f3f','Deceit':'#3f8f7a' },
   afterCardsLoaded(){ computeAndCacheAspects(); },
+  discordShare: true,
   deckKeys: ['overlord', 'champion', 'generic'],
   filterKeys: ['overlord', 'champion', 'scheme', 'generic',
                'overlord-leader', 'overlord-bonus', 'overlord-extra', 'champion-leader', 'champion-bonus', 'champion-extra'],

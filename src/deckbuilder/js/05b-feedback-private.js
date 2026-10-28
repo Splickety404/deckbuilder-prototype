@@ -27,13 +27,15 @@ function openCardFeedback(card){
 
 // The "also share in Discord" checkbox only appears once a Discord handle has been typed,
 // and starts ticked each time it newly appears. Unticking it sticks while they keep typing.
+// Games without a Discord channel (state.game.discordShare false) never show it.
 function syncFeedbackDiscordShare(){
   const row = document.getElementById('feedbackDiscordShareRow');
   const box = document.getElementById('feedbackDiscordShare');
   const hasHandle = !!document.getElementById('feedbackDiscord').value.trim();
+  const offer = hasHandle && !!state.game.discordShare;
   const wasShown = row.style.display !== 'none';
-  if(hasHandle && !wasShown) box.checked = true;
-  row.style.display = hasHandle ? 'flex' : 'none';
+  if(offer && !wasShown) box.checked = true;
+  row.style.display = offer ? 'flex' : 'none';
 }
 document.getElementById('feedbackDiscord').addEventListener('input', syncFeedbackDiscordShare);
 
@@ -65,7 +67,7 @@ document.getElementById('btnSubmitFeedback').addEventListener('click', async ()=
   // Close the form right away and finish sending in the background, so the user can keep browsing.
   // If the send fails, the form is reopened with what they wrote so nothing is lost.
   const c = feedbackCard;
-  const share = !!discord && document.getElementById('feedbackDiscordShare').checked;
+  const share = !!discord && !!state.game.discordShare && document.getElementById('feedbackDiscordShare').checked;
   if(discord) lsSet(LS_FEEDBACK_DISCORD_KEY, discord);
   document.getElementById('feedbackModal').classList.add('hidden');
   toast('Sending your feedback on "' + c.name + '"…');
