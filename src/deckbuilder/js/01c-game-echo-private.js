@@ -13,6 +13,12 @@ const echoOpenSection = { overlord:'deck', champion:'deck' };
 function echoActiveSection(){ return echoOpenSection[state.deckType] || 'deck'; }
 // True while the Overlord's Schemes section is open (adding then goes to the scheme list).
 function activeIsSchemeMode(){ return state.game.structured && state.deckType==='overlord' && echoActiveSection()==='schemes'; }
+// The ability columns tagCard merges into one Ability, plus export columns not shown yet
+// (setup, scripted icon/modifier lists) — none of them become filters or preview rows.
+const ECHO_SPLIT_ABILITY_COLUMNS = ['ability-overlord','ability-stage-2','ability-overlord-stage-2'];
+[...ECHO_SPLIT_ABILITY_COLUMNS, 'setup','modifiers-scripted','collect-icons','collect-modifiers-scripted',
+ 'collect-icons-stage-2','outcome-icons-stage-2-scripted','tactics-modifiers-stage-2-scripted',
+ 'collect-modifiers-stage-2-scripted'].forEach(k=> NEVER_FIELDS.add(k));
 
 const EchoGame = {
   id: 'echo',
@@ -75,6 +81,7 @@ const EchoGame = {
     const stage1 = txt('ability') || txt('ability-overlord');
     const stage2 = txt('ability-stage-2') || txt('ability-overlord-stage-2');
     r.ability = stage2 ? (stage1 ? stage1 + ' ' : '') + 'Stage 2: ' + stage2 : stage1;
+    ECHO_SPLIT_ABILITY_COLUMNS.forEach(k=> delete r[k]); // merged above, so a card's version history compares Ability alone
     r._isScheme = r.type==='O - Scheme';
     // These 4 are physically the same portrait-cut card as everything else, with
     // content printed sideways — same treatment as schemes: rotated on screen for

@@ -102,6 +102,9 @@ function showLoadedCards(rawSetResults){
   // does (folderId already uniquely identifies a set internally), but meant
   // every deck exported to JSON carried a bogus "sheetId" the game room app
   // could never actually look up, failing with "Unknown sheet" on import.
+  rawSetResults.forEach(s=>{ // rebuilt key by key so a renamed column keeps its place
+    s.rows = s.rows.map(r=> Object.fromEntries(Object.entries(r).map(([k,v])=> [LEGACY_COLUMN_NAMES[k]||k, v])));
+  });
   state.headers = unionHeaders(rawSetResults);
   state.hasImages = state.headers.includes('front-image-url');
   const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.sheetId, state.game));

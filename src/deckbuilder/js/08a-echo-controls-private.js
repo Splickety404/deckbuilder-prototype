@@ -67,7 +67,7 @@ const SKILL_CHECK_TYPES = ['Arcane','Diplomacy','Stealth'];
 
 function computeCardStats(idCountPairs){
   const aspectCounts = {}, typeCounts = {}, iconCounts = {};
-  const skillTotals = { 'inherent-arcane':0, 'inherent-diplomacy':0, 'inherent-stealth':0, 'attack':0, 'block':0 };
+  const skillTotals = { 'arcane':0, 'diplomacy':0, 'stealth':0, 'attack':0, 'block':0 };
   // Echo of Omens only: a skill-check card carries a Skill Check Type (Arcane/
   // Diplomacy/Stealth) plus a separate Difficulty column — summed per type so a
   // deck's checks can be compared at a glance (e.g. "this deck leans Stealth-heavy").
@@ -137,9 +137,9 @@ function statBarGroupHtml(title, counts){
 function renderStatsPanelHtml(stats){
   if(!stats.totalCards) return '<div class="stat-empty-msg">Nothing here yet.</div>';
   const skillCounts = {
-    'Arcane': stats.skillTotals['inherent-arcane'],
-    'Diplomacy': stats.skillTotals['inherent-diplomacy'],
-    'Stealth': stats.skillTotals['inherent-stealth'],
+    'Arcane': stats.skillTotals['arcane'],
+    'Diplomacy': stats.skillTotals['diplomacy'],
+    'Stealth': stats.skillTotals['stealth'],
     'Attack': stats.skillTotals['attack'],
     'Block': stats.skillTotals['block'],
   };

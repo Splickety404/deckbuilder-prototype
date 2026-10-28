@@ -281,6 +281,10 @@ async function openHistoryModal(card){
 // field, ignoring structural/meta columns. Art is compared separately since it's
 // shown as images, not text.
 function computeCardDiff(oldRow, currentCard){
+  // Read the old snapshot the way today's card was read (renamed columns, the game's own
+  // merging), so a renamed or merged column doesn't show up as a change.
+  oldRow = Object.fromEntries(Object.entries(oldRow).map(([k,v])=> [LEGACY_COLUMN_NAMES[k]||k, v]));
+  state.game.tagCard(oldRow);
   const skip = new Set(['id','is_double_sided','front-image-url','back-image-url','last-updated','archived-at','archive-reason','changed-fields','rotate', ...CARD_UPDATER_COLUMNS]);
   const keys = new Set([...Object.keys(oldRow), ...Object.keys(currentCard)]);
   const diffs = [];
