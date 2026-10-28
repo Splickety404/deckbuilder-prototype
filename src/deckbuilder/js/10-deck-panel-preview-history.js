@@ -25,7 +25,7 @@ function renderDeckPanel(){
 
 function buildDeckRow(id, card, {qty, showStepper}){
   const row = document.createElement('div');
-  row.className = 'deck-stack' + (card && card._isHorizontal ? ' landscape-row' : '');
+  row.className = 'deck-stack' + (card && card._isHorizontal ? ' landscape-row' + (card._rotate===270 ? ' landscape270' : '') : '');
   row.draggable = true;
   row.dataset.id = id;
   if(typeof isFoil==='function' && isFoil(id)) row.classList.add('foil');

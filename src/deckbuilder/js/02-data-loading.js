@@ -64,6 +64,15 @@ function mergeCardSets(setCardLists){
 
 
 
+// Every column any loaded set has — not just the first set's — so a field only a newer,
+// fuller set has (HellBreak Set 2's prowl/haunt/rarity…) still becomes a filter. The set
+// with the most columns leads, so its column order is the one the filters follow.
+function unionHeaders(rawSetResults){
+  const lists = rawSetResults.filter(s=> s.rows.length).map(s=> Object.keys(s.rows[0]))
+    .sort((a,b)=> b.length - a.length);
+  return [...new Set(lists.flat())];
+}
+
 // Which game definition owns the loaded cards is decided once per load by pickGame() (see the game
 // definitions) from the union of every set's RAW rows, before any row-filtering, since that
 // filtering itself depends on the definition.
@@ -93,6 +102,8 @@ function showLoadedCards(rawSetResults){
   // does (folderId already uniquely identifies a set internally), but meant
   // every deck exported to JSON carried a bogus "sheetId" the game room app
   // could never actually look up, failing with "Unknown sheet" on import.
+  state.headers = unionHeaders(rawSetResults);
+  state.hasImages = state.headers.includes('front-image-url');
   const setCardLists = rawSetResults.map(s => processRawRows(s.rows, s.setName, s.sheetId, state.game));
   const rows = mergeCardSets(setCardLists);
 
@@ -126,11 +137,6 @@ async function loadData(silent){
   let savedJson = null;
   if(saved){
     savedJson = JSON.stringify(saved.map(s=>s.rows));
-    const firstWithRows = saved.find(s=>s.rows.length);
-    if(!state.headers.length && firstWithRows){
-      state.headers = Object.keys(firstWithRows.rows[0]);
-      state.hasImages = state.headers.includes('front-image-url');
-    }
     if(typeof registerForgeSets==='function') registerForgeSets(saved);
     showLoadedCards(saved);
     setSyncStatus('showing saved cards — checking for updates…');
@@ -159,10 +165,6 @@ async function loadData(silent){
         return;
       }
       const result = res.value;
-      if(!state.headers.length && result.rows.length){
-        state.headers = Object.keys(result.rows[0]);
-        state.hasImages = state.headers.includes('front-image-url');
-      }
       rawSetResults.push({
         rows: result.rows,
         setName: result.setName || entry.label,
