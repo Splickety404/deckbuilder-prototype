@@ -7,8 +7,6 @@
    3 Overlord Commons instead of 4, plus a foil card.
    The slot rules themselves live in src/shared/js/booster-rules-private.js.
    ========================================================================= */
-let boosterSetName = null; // the set you picked; remembered for the rest of the session
-
 function openBooster(setName){
   // What's in the pack is decided by rollBooster (src/shared/js/booster-rules-private.js, also used
   // by the booster generation script); everything below just deals the cards into the decks.
@@ -53,8 +51,8 @@ function openBooster(setName){
 document.getElementById('btnUnwrapBooster').addEventListener('click', ()=>{
   // A game with its own pack rules (HellBreak, 12c) supplies openBooster; Echo uses the one above.
   const open = state.game.openBooster || openBooster;
+  // With more than one set loaded, ask every time which set the pack comes from.
   const sets = allSetNames();
-  if(boosterSetName && sets.includes(boosterSetName)){ open(boosterSetName); return; }
-  if(sets.length===1){ boosterSetName = sets[0]; open(boosterSetName); return; }
-  openSealedSetPicker((setName)=>{ boosterSetName = setName; open(setName); });
+  if(sets.length===1){ open(sets[0]); return; }
+  openSealedSetPicker(open, 'The booster\'s cards will be drawn from this set only.');
 });

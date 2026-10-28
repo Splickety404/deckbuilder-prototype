@@ -47,7 +47,8 @@ document.getElementById('btnSealedDeck').addEventListener('click', ()=>{
   if(sets.length===1){ generateSagaDeck(sets[0], deckType); return; }
   openSealedSetPicker((setName)=>generateSagaDeck(setName, deckType));
 });
-function openSealedSetPicker(generatorFn){
+function openSealedSetPicker(generatorFn, note){
+  document.getElementById('sealedSetNote').textContent = note || 'All cards in the sealed deck will be drawn from this set only.';
   const listEl = document.getElementById('sealedSetList');
   listEl.innerHTML = allSetNames().map(n=>`<div class="row-item" data-set="${escapeHtml(n)}">${escapeHtml(n)}</div>`).join('');
   listEl.querySelectorAll('[data-set]').forEach(el=>{

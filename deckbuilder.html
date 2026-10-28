@@ -812,7 +812,7 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
     <div class="modal-box" style="width:min(420px,92vw);">
       <div class="modal-header"><h2>Choose a Set</h2><div class="btn btn-icon" data-close="sealedSetModal">✕</div></div>
       <div class="modal-body">
-        <p style="font-size:13px;color:var(--text-soft);margin-top:0;">All cards in the sealed deck will be drawn from this set only.</p>
+        <p id="sealedSetNote" style="font-size:13px;color:var(--text-soft);margin-top:0;">All cards in the sealed deck will be drawn from this set only.</p>
         <div id="sealedSetList"></div>
       </div>
     </div>
@@ -3049,7 +3049,8 @@ document.getElementById('btnSealedDeck').addEventListener('click', ()=>{
   if(sets.length===1){ generateSagaDeck(sets[0], deckType); return; }
   openSealedSetPicker((setName)=>generateSagaDeck(setName, deckType));
 });
-function openSealedSetPicker(generatorFn){
+function openSealedSetPicker(generatorFn, note){
+  document.getElementById('sealedSetNote').textContent = note || 'All cards in the sealed deck will be drawn from this set only.';
   const listEl = document.getElementById('sealedSetList');
   listEl.innerHTML = allSetNames().map(n=>`<div class="row-item" data-set="${escapeHtml(n)}">${escapeHtml(n)}</div>`).join('');
   listEl.querySelectorAll('[data-set]').forEach(el=>{
@@ -3069,8 +3070,6 @@ function openSealedSetPicker(generatorFn){
    3 Overlord Commons instead of 4, plus a foil card.
    The slot rules themselves live in src/shared/js/booster-rules-private.js.
    ========================================================================= */
-let boosterSetName = null; // the set you picked; remembered for the rest of the session
-
 function openBooster(setName){
   // What's in the pack is decided by rollBooster (src/shared/js/booster-rules-private.js, also used
   // by the booster generation script); everything below just deals the cards into the decks.
@@ -3115,10 +3114,10 @@ function openBooster(setName){
 document.getElementById('btnUnwrapBooster').addEventListener('click', ()=>{
   // A game with its own pack rules (HellBreak, 12c) supplies openBooster; Echo uses the one above.
   const open = state.game.openBooster || openBooster;
+  // With more than one set loaded, ask every time which set the pack comes from.
   const sets = allSetNames();
-  if(boosterSetName && sets.includes(boosterSetName)){ open(boosterSetName); return; }
-  if(sets.length===1){ boosterSetName = sets[0]; open(boosterSetName); return; }
-  openSealedSetPicker((setName)=>{ boosterSetName = setName; open(setName); });
+  if(sets.length===1){ open(sets[0]); return; }
+  openSealedSetPicker(open, 'The booster\'s cards will be drawn from this set only.');
 });
 /* =========================================================================
    CARD FEEDBACK (private). A 💬 button on every card (library tile, deck row,
