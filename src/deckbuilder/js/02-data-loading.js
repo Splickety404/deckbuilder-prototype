@@ -119,8 +119,26 @@ function showLoadedCards(rawSetResults){
   renderAll();
 }
 
+// Exports wait on this so they never use art links from before the latest art scan: it
+// settles once the current load's card data AND art scan are both done — true if every set's
+// art came in, false if something failed (the export then warns and carries on).
+let latestArtReady = Promise.resolve(true);
+let artStillLoading = false;
+async function waitForLatestArt(){
+  for(;;){ // a Resync partway through replaces the promise — wait for the newest one
+    const p = latestArtReady;
+    const ok = await p;
+    if(p===latestArtReady) return ok;
+  }
+}
+
 async function loadData(silent){
   if(typeof perfMark==='function') perfMark('loading card data');
+  let markArtReady;
+  latestArtReady = new Promise(r=> markArtReady = r);
+  artStillLoading = true;
+  const thisLoad = latestArtReady;
+  const finishArt = (ok)=>{ if(thisLoad===latestArtReady) artStillLoading = false; markArtReady(ok); };
   if(!silent) setSyncStatus('loading card data…');
   // Don't wait for the cards: the room-boards / preconstructed-deck listing is a slow server
   // call of its own, so start it now (in parallel), and meanwhile show the last-known result
@@ -191,28 +209,33 @@ async function loadData(silent){
     if(typeof perfMark==='function') perfMark('cards up to date');
     if(state.hasImages && rawSetResults.length){
       setSyncStatus('synced ' + syncTime() + ' — loading art…');
-      syncAllSetImages(rawSetResults);
+      syncAllSetImages(rawSetResults).then(ok=> finishArt(ok && !anySetFailed));
     } else {
       setSyncStatus('synced ' + syncTime() + (state.hasImages?'':' — no art columns found yet'));
+      finishArt(!anySetFailed);
     }
   }catch(err){
     console.error(err);
     setSyncStatus('sync failed — check your connection ('+err.message+')');
     if(!saved) toast('Could not load card data: '+err.message);
     hideLoadingOverlay();
+    finishArt(false);
   }
 }
 
 // Runs each authorized set's slow art-folder scan independently in the background —
 // as each one resolves, that set's cards update their art in place (see
-// applySetImages) rather than waiting for every set to finish first.
+// applySetImages) rather than waiting for every set to finish first. Resolves once every
+// set is done: true if all of them came in, false if any failed.
 function syncAllSetImages(rawSetResults){
   let pending = rawSetResults.length;
-  rawSetResults.forEach(async (s)=>{
+  return Promise.all(rawSetResults.map(async (s)=>{
+    let ok = true;
     try{
       const result = await cardSource.loadSetImages(s.folderId);
       applySetImages(result.images || []);
     }catch(e){
+      ok = false;
       console.error('Could not sync art for set '+s.folderId+':', e);
       toast(`Could not load art for "${s.setName}": ${e.message}`);
     }
@@ -221,7 +244,8 @@ function syncAllSetImages(rawSetResults){
       setSyncStatus('synced ' + syncTime());
       if(typeof perfMark==='function'){ perfMark('art synced'); perfReport(); }
     }
-  });
+    return ok;
+  })).then(results=> results.every(Boolean));
 }
 
 // Merges freshly-synced image URLs (see the syncSetImages endpoint in Code.gs) into

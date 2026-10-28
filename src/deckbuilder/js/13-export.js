@@ -110,9 +110,12 @@ async function urlToDataUrl(url){
 }
 
 document.getElementById('optExportPdf').addEventListener('click', async ()=>{
-  warnAboutMissingCards();
   const prog = document.getElementById('export-progress');
   prog.style.display='block';
+  // The print list is built only after this, since a finishing load can swap in fresh card objects.
+  if(artStillLoading) prog.textContent = 'Waiting for the latest card art…';
+  if(!await waitForLatestArt()) toast('Could not confirm the latest card art — this export may show older art for some cards.');
+  warnAboutMissingCards();
   const list = buildPrintList();
   if(!list.length){ toast('Nothing to export yet.'); return; }
 

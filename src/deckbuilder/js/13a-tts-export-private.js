@@ -30,7 +30,9 @@ function buildTtsCsv(){
   return { csv: rows.map(r=> r.map(csvCell).join(',')).join('\r\n') + '\r\n', count: rows.length-1, noFront, noBack };
 }
 
-document.getElementById('optExportTts').addEventListener('click', ()=>{
+document.getElementById('optExportTts').addEventListener('click', async ()=>{
+  if(artStillLoading) toast('Waiting for the latest card art…');
+  if(!await waitForLatestArt()) toast('Could not confirm the latest card art — this export may link older art for some cards.');
   const {csv, count, noFront, noBack} = buildTtsCsv();
   if(!count){ toast('Nothing to export yet.'); return; }
   downloadBlob(csv, deckFileBase()+'-tts.csv', 'text/csv;charset=utf-8');
