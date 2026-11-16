@@ -41,6 +41,17 @@ function renderDeckRulesChecklist(){
   const extraLeaders = [...curDeck().deckCards.entries()].filter(([id])=>{ const c=state.byId.get(id); return c && c.type===leaderTypeName(state.deckType); }).reduce((n,[,q])=>n+q, 0);
   if(extraLeaders>0) rules.push([false, `${extraLeaders} extra ${isOverlord?'Overlord':'Champion'} card${extraLeaders>1?'s':''} — over the limit of 1; remove any time`]);
 
+  // Oathsworn Stronghold/Resistance: leader and Domination/Quest must share an aspect (see oathswornCheck)
+  const extra = getExtraCard(), oath = oathswornCheck(extra);
+  if(oath){
+    const leaderWord = isOverlord ? 'Overlord' : 'Champion', bonusWord = isOverlord ? 'Domination' : 'Quest';
+    const leader = getLeader(), bonus = getBonusCard();
+    rules.push([oath==='ok',
+      oath==='ok'      ? `Oathsworn ${extra.name}: ${leaderWord} and ${bonusWord} share the ${leader.aspect} aspect`
+    : oath==='pending' ? `Oathsworn ${extra.name} is only legal if your ${leaderWord} and ${bonusWord} share the same aspect`
+    : `Oathsworn ${extra.name} is not legal — your ${leaderWord} (${leader.aspect||'no aspect'}) and ${bonusWord} (${bonus.aspect||'no aspect'}) must share the same aspect`]);
+  }
+
   if(isOverlord){
     const schemeCount = curDeck().schemeIds.length;
     rules.push([schemeCount===SCHEME_DECK_SIZE, `${schemeCount} / ${SCHEME_DECK_SIZE} schemes` + (schemeCount===SCHEME_DECK_SIZE?' — exact':'')]);

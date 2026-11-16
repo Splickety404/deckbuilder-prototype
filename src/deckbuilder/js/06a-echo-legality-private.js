@@ -69,7 +69,20 @@ function isAspectLegal(card){
 EchoGame.isLegal = function(card){
   const sec = echoHomeSection(card);
   if(!sec) return false;
-  if(sec!=='deck' && sec!=='schemes') return true; // the leader / Domination / Stronghold have no aspect rule
+  if(sec==='extra') return oathswornCheck(card)!=='mismatch'; // see oathswornCheck
+  if(sec!=='deck' && sec!=='schemes') return true; // the leader / Domination have no aspect rule
   if(!getLeader()) return true;
   return isAspectLegal(card);
 };
+
+// Oathsworn Stronghold/Resistance cards (loyalty "Oathsworn") are only legal when the leader and
+// the Domination/Quest share the same aspect. Returns null for any other card, 'pending' until both
+// the leader and the Domination/Quest are chosen, then 'ok' or 'mismatch'. Only a 'mismatch' flags
+// the card as illegal — it can still be picked first and the rest of the deck built around it.
+function isOathsworn(card){ return !!card && String(card.loyalty||'').trim().toLowerCase()==='oathsworn'; }
+function oathswornCheck(card){
+  if(!isOathsworn(card)) return null;
+  const leader = getLeader(), bonus = getBonusCard();
+  if(!leader || !bonus) return 'pending';
+  return leader.aspect && leader.aspect===bonus.aspect ? 'ok' : 'mismatch';
+}
