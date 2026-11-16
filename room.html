@@ -1613,7 +1613,11 @@ function buildSagaDeck(cards, deckType, inSet){
   if(bonus){ deck.bonusCardId = bonus.id; deck.bonusAspect = bonus.aspect||''; }
 
   // Stronghold / Resistance — see extraCardPoolFrom's comment on the Z-Custom placeholder
-  const extra = randomOf(extraCardPoolFrom(cards, deckType).filter(c=>inSet(c) || c.type==='Z - Custom'));
+  // Generated decks never roll an Oathsworn Stronghold/Resistance (loyalty "Oathsworn"); those are
+  // for hand-built decks only. If nothing else is left, fall back to the full pool.
+  const extraPool = extraCardPoolFrom(cards, deckType).filter(c=>inSet(c) || c.type==='Z - Custom');
+  const nonOathsworn = extraPool.filter(c=>String(c.loyalty||'').trim().toLowerCase()!=='oathsworn');
+  const extra = randomOf(nonOathsworn.length ? nonOathsworn : extraPool);
   if(extra) deck.extraCardId = extra.id;
 
   const legal = (list)=>pick(list).filter(c=>isSagaLegal(c, leader, deck.bonusAspect));

@@ -58,7 +58,7 @@ Follows the EoO Set 1 Saga Deck Rules doc. Cards are drawn only from the chosen 
 ### Order of building
 1. **Leader**: rarity roll, no loyalty modifier.
 2. **Domination / Quest**: random, but **never one sharing the leader's aspect**.
-3. **Stronghold / Resistance**: random from the real cards, or the placeholder.
+3. **Stronghold / Resistance**: random from the real cards, or the placeholder. **Oathsworn** ones (loyalty `Oathsworn`) are never rolled; today that leaves Threshold to Darkness / Banding Together. They can still be picked when building by hand.
 4. **Schemes** (Overlord only): 5 different legal schemes totalling **at least 15 quest** (redraws up to 200 times, then swaps the lowest-quest scheme for a higher one).
 5. **30 main-deck cards** from legal cards (leader aspect, bonus aspect, Neutral; Loyal only matches the leader).
 
