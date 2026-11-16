@@ -144,6 +144,7 @@ document.getElementById('importFileInput').addEventListener('change', (e)=>{
 })();
 
 function importDeckFromJson(d){
+  if(d && !d.deckType && Array.isArray(d.cards)){ importBoosterFromJson(d); return; }
   if(!d || !d.deckType) throw new Error('not a recognized deck file');
   state.deckType = d.deckType; deckCodec().applyJson(d, curDeck());
   curDeck().deckCards = new Map(Object.entries(d.deckCards||{}));
@@ -153,6 +154,22 @@ function importDeckFromJson(d){
   curDeck().preconFileId = null; // set again by loadPreconDeck when this came from one
   renderAll();
   toast('Deck imported.');
+}
+
+// A booster .json file ({special, cards:[{id, name, foil, ...}]}, as written by the booster
+// generation script) — its cards are ADDED to the current decks, just like Unwrap a Booster.
+function importBoosterFromJson(d){
+  if(typeof dealBoosterCards!=='function') throw new Error('this game has no boosters to import');
+  const byId = new Map(state.cards.map(c=>[c.id, c]));
+  const byName = new Map(); state.cards.forEach(c=>{ if(!byName.has(c.name)) byName.set(c.name, c); });
+  const pulled = [], unmatched = [];
+  d.cards.forEach(e=>{
+    const card = (e && byId.get(e.id)) || (e && byName.get(e.name));
+    if(card) pulled.push({card, foil:!!e.foil}); else unmatched.push((e && e.name) || '?');
+  });
+  if(!pulled.length) throw new Error('none of the booster\'s cards are in the loaded card sets');
+  dealBoosterCards(pulled, null); // fly in from the Unwrap a Booster button (the import window closes)
+  if(unmatched.length) toast(`Booster imported; ${unmatched.length} card(s) not found: ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}.`);
 }
 
 // Smart plain-text import. Works on a bare pasted list of cards (no header needed) as well
