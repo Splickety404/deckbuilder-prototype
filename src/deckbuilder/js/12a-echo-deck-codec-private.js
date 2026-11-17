@@ -129,6 +129,9 @@ const EchoDeckCodec = {
     curDeck().schemeIds = [];
     schemeNames.forEach(n=>{ const c=byName.get(n); c ? curDeck().schemeIds.push(c.id) : unmatched.push(n); });
   },
+  textSideNames(ctx){
+    return [ctx.leaderName, ctx.bonusCardName, ctx.extraCardName, ...(ctx.schemeNames||[])].filter(Boolean);
+  },
   printLead(d){
     const lead = [getLeader(), getBonusCard(), getExtraCard()];
     if(state.deckType==='overlord') d.schemeIds.forEach(id=> lead.push(state.byId.get(id)));
@@ -137,6 +140,9 @@ const EchoDeckCodec = {
   referencedIds(d){ return [d.leaderId, d.bonusCardId, d.extraCardId, ...d.schemeIds]; },
 };
 EchoGame.deckCodec = EchoDeckCodec;
+// "Add to my decks" imports (12-save-load.js) deal the cards out just like an opened booster:
+// each to its Overlord/Champion deck, leader/setup cards into an empty slot or else the deck list.
+EchoGame.addImportedCards = (cards)=> dealBoosterCards(cards.map(card=>({card, foil:false})), null, 'Cards added to your decks.');
 // Private build only: free-form games keep the live site's deck shape (same slots, extras and files).
 GenericGame.deckCodec = EchoDeckCodec;
 GenericGame.deckKeys = EchoGame.deckKeys;

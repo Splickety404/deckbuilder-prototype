@@ -37,6 +37,7 @@
      parseTextLine(line, ctx)                  true if the line is a game-specific one
      parseTextItem(ctx, match)                 true if a "3x Name" line belongs to a game-specific section
      finishTextImport(ctx, byName, unmatched)  turn parsed names back into the deck
+     textSideNames(ctx)                        (optional) card names parsed outside the main list, for "add to decks" imports
      printLead(d)                              cards printed before the deck itself
      referencedIds(d)                          card ids the deck points at besides its main cards */
 const PlainDeckCodec = {

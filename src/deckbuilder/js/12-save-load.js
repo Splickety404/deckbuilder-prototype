@@ -99,8 +99,9 @@ function handleImportFile(file){
   const reader = new FileReader();
   reader.onload = ()=>{
     try{
-      if(file.name.toLowerCase().endsWith('.json')) importDeckFromJson(JSON.parse(reader.result));
-      else importDeckFromText(String(reader.result));
+      const opts = {add: keepExistingOnImport()};
+      if(file.name.toLowerCase().endsWith('.json')) importDeckFromJson(JSON.parse(reader.result), opts);
+      else importDeckFromText(String(reader.result), opts);
       document.getElementById('loadModal').classList.add('hidden');
     }catch(err){ toast('Import failed: '+err.message); }
   };
@@ -143,9 +144,41 @@ document.getElementById('importFileInput').addEventListener('change', (e)=>{
   });
 })();
 
-function importDeckFromJson(d){
+// "Keep the cards already in my decks" box in the import window. When ticked, a pasted list or
+// deck file is ADDED to your decks instead of replacing the current one — so several booster
+// lists from outside the app can be pasted one after another and built into a deck.
+function keepExistingOnImport(){
+  const box = document.getElementById('importKeepExisting');
+  return !!(box && box.checked);
+}
+// Adds cards (one entry per copy) to the decks. A game can say where each card goes (Echo deals
+// them like an opened booster); otherwise they all go into the deck you're looking at.
+function addImportedCards(cards){
+  if(state.game.addImportedCards){ state.game.addImportedCards(cards); return; }
+  const deck = curDeck();
+  cards.forEach(c=>{
+    deck.deckCards.set(c.id, (deck.deckCards.get(c.id)||0)+1);
+    if(!deck.deckOrder.includes(c.id)) deck.deckOrder.push(c.id);
+  });
+  renderAll();
+  toast(`${cards.length} card${cards.length===1?'':'s'} added to your deck.`);
+}
+
+function importDeckFromJson(d, opts={}){
   if(d && !d.deckType && Array.isArray(d.cards)){ importBoosterFromJson(d); return; }
   if(!d || !d.deckType) throw new Error('not a recognized deck file');
+  if(opts.add){
+    // Read the file into a scratch deck, then add every card it names (main deck + any
+    // leader/side cards) on top of what you already have.
+    const tmp = freshDeckSlot();
+    deckCodec().applyJson(d, tmp);
+    const ids = deckCodec().referencedIds(tmp).filter(Boolean);
+    Object.entries(d.deckCards||{}).forEach(([id,n])=>{ for(let i=0;i<n;i++) ids.push(id); });
+    const cards = ids.map(id=>state.byId.get(id)).filter(Boolean);
+    if(!cards.length) throw new Error('none of that deck\'s cards are in the loaded card sets');
+    addImportedCards(cards);
+    return;
+  }
   state.deckType = d.deckType; deckCodec().applyJson(d, curDeck());
   curDeck().deckCards = new Map(Object.entries(d.deckCards||{}));
   curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
@@ -176,7 +209,7 @@ function importBoosterFromJson(d){
 // as our own exported format. Recognises "3x Name", "3 Name", "Name x3", "Name" (= 1 copy),
 // matches names ignoring case/punctuation/extra spaces, and picks up an export date from a
 // line like "# Exported: …" / "Export date: …" if one is present (used for "changed since").
-function importDeckFromText(text){
+function importDeckFromText(text, opts={}){
   const norm = s=> String(s).toLowerCase().replace(/[\u2018\u2019]/g,"'").replace(/[\u201c\u201d]/g,'"').replace(/'/g,'').replace(/[^a-z0-9]+/g,' ').trim();
   const byName = new Map(), byNorm = new Map();
   state.cards.forEach(c=>{
@@ -215,6 +248,19 @@ function importDeckFromText(text){
   if(!ctx.deckLines.length && !sawCountLine && !ctx.leaderName) throw new Error('no cards recognized in that text');
 
   const unmatched=[];
+  if(opts.add){
+    // Add mode: every named card (main list + any leader/side cards the game reads) is added
+    // on top of your current decks; nothing already there is cleared.
+    const names = [];
+    ctx.deckLines.forEach(({name,count})=>{ for(let i=0;i<count;i++) names.push(name); });
+    names.push(...(deckCodec().textSideNames ? deckCodec().textSideNames(ctx) : []));
+    const cards = [];
+    names.forEach(n=>{ const c = findCard(n); if(c) cards.push(c); else if(!unmatched.includes(n)) unmatched.push(n); });
+    if(!cards.length) throw new Error('none of those cards are in the loaded card sets');
+    addImportedCards(cards);
+    if(unmatched.length) toast(`Added ${cards.length} card${cards.length===1?'':'s'}; ${unmatched.length} line(s) not matched: ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}.`);
+    return;
+  }
   deckCodec().finishTextImport(ctx, { get:findCard }, unmatched);
 
   curDeck().deckCards = new Map(); curDeck().deckOrder = [];
@@ -240,7 +286,7 @@ document.getElementById('btnImportPaste').addEventListener('click', ()=>{
   const box = document.getElementById('importPasteText');
   if(!box.value.trim()){ toast('Paste a decklist first.'); return; }
   try{
-    importDeckFromText(box.value);
+    importDeckFromText(box.value, {add: keepExistingOnImport()});
     box.value = '';
     document.getElementById('loadModal').classList.add('hidden');
   }catch(err){ toast('Import failed: '+err.message); }

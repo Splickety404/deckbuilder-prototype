@@ -328,7 +328,10 @@
           </div>
           <input type="file" id="importFileInput" accept=".txt,.json">
           <textarea id="importPasteText" rows="5" placeholder="…or paste a decklist here (e.g. &quot;3x Card Name&quot; per line — no header needed)" style="width:100%;box-sizing:border-box;margin-bottom:6px;font:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:inherit;resize:vertical;"></textarea>
-          <div class="btn" id="btnImportPaste" style="justify-content:center;margin-bottom:10px;">Load pasted text</div>
+          <div class="btn" id="btnImportPaste" style="justify-content:center;margin-bottom:6px;">Load pasted text</div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-soft);margin-bottom:10px;cursor:pointer;" title="Ticked: pasted text and deck files are added to your decks (e.g. several booster lists). Unticked: they replace the current deck.">
+            <input type="checkbox" id="importKeepExisting"> Keep the cards already in my decks (add to them)
+          </label>
           <div id="loadModalBody"></div>
         </div>
       </div>

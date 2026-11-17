@@ -838,7 +838,10 @@ body.generic-mode #viewStatsPanel{ display:none !important; }
           </div>
           <input type="file" id="importFileInput" accept=".txt,.json">
           <textarea id="importPasteText" rows="5" placeholder="…or paste a decklist here (e.g. &quot;3x Card Name&quot; per line — no header needed)" style="width:100%;box-sizing:border-box;margin-bottom:6px;font:inherit;font-size:13px;padding:6px;border:1px solid var(--border);border-radius:var(--radius-sm);background:transparent;color:inherit;resize:vertical;"></textarea>
-          <div class="btn" id="btnImportPaste" style="justify-content:center;margin-bottom:10px;">Load pasted text</div>
+          <div class="btn" id="btnImportPaste" style="justify-content:center;margin-bottom:6px;">Load pasted text</div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-soft);margin-bottom:10px;cursor:pointer;" title="Ticked: pasted text and deck files are added to your decks (e.g. several booster lists). Unticked: they replace the current deck.">
+            <input type="checkbox" id="importKeepExisting"> Keep the cards already in my decks (add to them)
+          </label>
           <div id="loadModalBody"></div>
         </div>
       </div>
@@ -2021,6 +2024,7 @@ state.userEmail = ''; // signed-in user's email, from the server's whoami respon
      parseTextLine(line, ctx)                  true if the line is a game-specific one
      parseTextItem(ctx, match)                 true if a "3x Name" line belongs to a game-specific section
      finishTextImport(ctx, byName, unmatched)  turn parsed names back into the deck
+     textSideNames(ctx)                        (optional) card names parsed outside the main list, for "add to decks" imports
      printLead(d)                              cards printed before the deck itself
      referencedIds(d)                          card ids the deck points at besides its main cards */
 const PlainDeckCodec = {
@@ -3111,7 +3115,7 @@ function openBooster(setName){
 
 // Adds a booster's cards ({card, foil} list) to the decks. Used by Unwrap a Booster and by
 // importing a booster .json file (12-save-load.js).
-function dealBoosterCards(pulled, flyFrom){
+function dealBoosterCards(pulled, flyFrom, doneMsg){
   // Deal them out. A leader / Domination-Quest / Stronghold-Resistance goes into its own slot if
   // that slot is empty, otherwise it's added to the deck list as an extra (flagged in the rules
   // checklist).
@@ -3141,7 +3145,8 @@ function dealBoosterCards(pulled, flyFrom){
   renderAll();
   FlyCards.run(flyFrom || document.getElementById('btnUnwrapBooster'), moves);
   const foilCard = pulled.find(p=>p.foil);
-  if(extras) toast(`Your booster had ${extras} extra leader/setup card${extras>1?'s':''} — you now have more than one in a deck. Remove one any time.`);
+  if(extras) toast(`${doneMsg?'That list':'Your booster'} had ${extras} extra leader/setup card${extras>1?'s':''} — you now have more than one in a deck. Remove one any time.`);
+  else if(doneMsg) toast(doneMsg);
   else if(foilCard) toast(`Special booster! ✦ Foil: ${foilCard.card.name}`);
   else toast('Booster opened — cards added to your decks.');
 }
@@ -5140,8 +5145,9 @@ function handleImportFile(file){
   const reader = new FileReader();
   reader.onload = ()=>{
     try{
-      if(file.name.toLowerCase().endsWith('.json')) importDeckFromJson(JSON.parse(reader.result));
-      else importDeckFromText(String(reader.result));
+      const opts = {add: keepExistingOnImport()};
+      if(file.name.toLowerCase().endsWith('.json')) importDeckFromJson(JSON.parse(reader.result), opts);
+      else importDeckFromText(String(reader.result), opts);
       document.getElementById('loadModal').classList.add('hidden');
     }catch(err){ toast('Import failed: '+err.message); }
   };
@@ -5184,9 +5190,41 @@ document.getElementById('importFileInput').addEventListener('change', (e)=>{
   });
 })();
 
-function importDeckFromJson(d){
+// "Keep the cards already in my decks" box in the import window. When ticked, a pasted list or
+// deck file is ADDED to your decks instead of replacing the current one — so several booster
+// lists from outside the app can be pasted one after another and built into a deck.
+function keepExistingOnImport(){
+  const box = document.getElementById('importKeepExisting');
+  return !!(box && box.checked);
+}
+// Adds cards (one entry per copy) to the decks. A game can say where each card goes (Echo deals
+// them like an opened booster); otherwise they all go into the deck you're looking at.
+function addImportedCards(cards){
+  if(state.game.addImportedCards){ state.game.addImportedCards(cards); return; }
+  const deck = curDeck();
+  cards.forEach(c=>{
+    deck.deckCards.set(c.id, (deck.deckCards.get(c.id)||0)+1);
+    if(!deck.deckOrder.includes(c.id)) deck.deckOrder.push(c.id);
+  });
+  renderAll();
+  toast(`${cards.length} card${cards.length===1?'':'s'} added to your deck.`);
+}
+
+function importDeckFromJson(d, opts={}){
   if(d && !d.deckType && Array.isArray(d.cards)){ importBoosterFromJson(d); return; }
   if(!d || !d.deckType) throw new Error('not a recognized deck file');
+  if(opts.add){
+    // Read the file into a scratch deck, then add every card it names (main deck + any
+    // leader/side cards) on top of what you already have.
+    const tmp = freshDeckSlot();
+    deckCodec().applyJson(d, tmp);
+    const ids = deckCodec().referencedIds(tmp).filter(Boolean);
+    Object.entries(d.deckCards||{}).forEach(([id,n])=>{ for(let i=0;i<n;i++) ids.push(id); });
+    const cards = ids.map(id=>state.byId.get(id)).filter(Boolean);
+    if(!cards.length) throw new Error('none of that deck\'s cards are in the loaded card sets');
+    addImportedCards(cards);
+    return;
+  }
   state.deckType = d.deckType; deckCodec().applyJson(d, curDeck());
   curDeck().deckCards = new Map(Object.entries(d.deckCards||{}));
   curDeck().deckOrder = d.deckOrder || [...curDeck().deckCards.keys()];
@@ -5217,7 +5255,7 @@ function importBoosterFromJson(d){
 // as our own exported format. Recognises "3x Name", "3 Name", "Name x3", "Name" (= 1 copy),
 // matches names ignoring case/punctuation/extra spaces, and picks up an export date from a
 // line like "# Exported: …" / "Export date: …" if one is present (used for "changed since").
-function importDeckFromText(text){
+function importDeckFromText(text, opts={}){
   const norm = s=> String(s).toLowerCase().replace(/[\u2018\u2019]/g,"'").replace(/[\u201c\u201d]/g,'"').replace(/'/g,'').replace(/[^a-z0-9]+/g,' ').trim();
   const byName = new Map(), byNorm = new Map();
   state.cards.forEach(c=>{
@@ -5256,6 +5294,19 @@ function importDeckFromText(text){
   if(!ctx.deckLines.length && !sawCountLine && !ctx.leaderName) throw new Error('no cards recognized in that text');
 
   const unmatched=[];
+  if(opts.add){
+    // Add mode: every named card (main list + any leader/side cards the game reads) is added
+    // on top of your current decks; nothing already there is cleared.
+    const names = [];
+    ctx.deckLines.forEach(({name,count})=>{ for(let i=0;i<count;i++) names.push(name); });
+    names.push(...(deckCodec().textSideNames ? deckCodec().textSideNames(ctx) : []));
+    const cards = [];
+    names.forEach(n=>{ const c = findCard(n); if(c) cards.push(c); else if(!unmatched.includes(n)) unmatched.push(n); });
+    if(!cards.length) throw new Error('none of those cards are in the loaded card sets');
+    addImportedCards(cards);
+    if(unmatched.length) toast(`Added ${cards.length} card${cards.length===1?'':'s'}; ${unmatched.length} line(s) not matched: ${unmatched.slice(0,3).join(', ')}${unmatched.length>3?'…':''}.`);
+    return;
+  }
   deckCodec().finishTextImport(ctx, { get:findCard }, unmatched);
 
   curDeck().deckCards = new Map(); curDeck().deckOrder = [];
@@ -5281,7 +5332,7 @@ document.getElementById('btnImportPaste').addEventListener('click', ()=>{
   const box = document.getElementById('importPasteText');
   if(!box.value.trim()){ toast('Paste a decklist first.'); return; }
   try{
-    importDeckFromText(box.value);
+    importDeckFromText(box.value, {add: keepExistingOnImport()});
     box.value = '';
     document.getElementById('loadModal').classList.add('hidden');
   }catch(err){ toast('Import failed: '+err.message); }
@@ -5417,6 +5468,9 @@ const EchoDeckCodec = {
     curDeck().schemeIds = [];
     schemeNames.forEach(n=>{ const c=byName.get(n); c ? curDeck().schemeIds.push(c.id) : unmatched.push(n); });
   },
+  textSideNames(ctx){
+    return [ctx.leaderName, ctx.bonusCardName, ctx.extraCardName, ...(ctx.schemeNames||[])].filter(Boolean);
+  },
   printLead(d){
     const lead = [getLeader(), getBonusCard(), getExtraCard()];
     if(state.deckType==='overlord') d.schemeIds.forEach(id=> lead.push(state.byId.get(id)));
@@ -5425,6 +5479,9 @@ const EchoDeckCodec = {
   referencedIds(d){ return [d.leaderId, d.bonusCardId, d.extraCardId, ...d.schemeIds]; },
 };
 EchoGame.deckCodec = EchoDeckCodec;
+// "Add to my decks" imports (12-save-load.js) deal the cards out just like an opened booster:
+// each to its Overlord/Champion deck, leader/setup cards into an empty slot or else the deck list.
+EchoGame.addImportedCards = (cards)=> dealBoosterCards(cards.map(card=>({card, foil:false})), null, 'Cards added to your decks.');
 // Private build only: free-form games keep the live site's deck shape (same slots, extras and files).
 GenericGame.deckCodec = EchoDeckCodec;
 GenericGame.deckKeys = EchoGame.deckKeys;

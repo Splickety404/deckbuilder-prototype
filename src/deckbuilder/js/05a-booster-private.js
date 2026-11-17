@@ -17,7 +17,7 @@ function openBooster(setName){
 
 // Adds a booster's cards ({card, foil} list) to the decks. Used by Unwrap a Booster and by
 // importing a booster .json file (12-save-load.js).
-function dealBoosterCards(pulled, flyFrom){
+function dealBoosterCards(pulled, flyFrom, doneMsg){
   // Deal them out. A leader / Domination-Quest / Stronghold-Resistance goes into its own slot if
   // that slot is empty, otherwise it's added to the deck list as an extra (flagged in the rules
   // checklist).
@@ -47,7 +47,8 @@ function dealBoosterCards(pulled, flyFrom){
   renderAll();
   FlyCards.run(flyFrom || document.getElementById('btnUnwrapBooster'), moves);
   const foilCard = pulled.find(p=>p.foil);
-  if(extras) toast(`Your booster had ${extras} extra leader/setup card${extras>1?'s':''} — you now have more than one in a deck. Remove one any time.`);
+  if(extras) toast(`${doneMsg?'That list':'Your booster'} had ${extras} extra leader/setup card${extras>1?'s':''} — you now have more than one in a deck. Remove one any time.`);
+  else if(doneMsg) toast(doneMsg);
   else if(foilCard) toast(`Special booster! ✦ Foil: ${foilCard.card.name}`);
   else toast('Booster opened — cards added to your decks.');
 }
